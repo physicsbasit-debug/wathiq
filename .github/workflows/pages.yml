@@ -34,6 +34,9 @@ jobs:
         run: npm install --no-audit --no-fund
 
       - name: بناء واثق
+        env:
+          WATHIQ_SUPABASE_URL: ${{ vars.WATHIQ_SUPABASE_URL }}
+          WATHIQ_SUPABASE_PUBLISHABLE_KEY: ${{ vars.WATHIQ_SUPABASE_PUBLISHABLE_KEY }}
         run: npm run build
 
       - name: إعداد GitHub Pages

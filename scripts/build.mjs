@@ -15,6 +15,16 @@ if (result.status !== 0) process.exit(result.status ?? 1);
 await cp("index.html", "dist/index.html");
 await cp("src/styles.css", "dist/assets/styles.css");
 
+const runtimeConfig = {
+  supabaseUrl: process.env.WATHIQ_SUPABASE_URL ?? "",
+  supabasePublishableKey: process.env.WATHIQ_SUPABASE_PUBLISHABLE_KEY ?? "",
+};
+await (await import("node:fs/promises")).writeFile(
+  "dist/runtime-config.js",
+  `window.__WATHIQ_CONFIG__ = ${JSON.stringify(runtimeConfig)};\n`,
+  "utf8",
+);
+
 let html = await (await import("node:fs/promises")).readFile("dist/index.html", "utf8");
 html = html.replace("</head>", '    <link rel="stylesheet" href="./assets/styles.css" />\n  </head>');
 await (await import("node:fs/promises")).writeFile("dist/index.html", html, "utf8");
