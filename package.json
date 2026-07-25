@@ -1,9 +1,9 @@
 {
   "name": "wathiq",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "private": true,
   "type": "module",
-  "description": "واثق: نموذج تجربة المستخدم للنسخة الأولى من منشئ الاختبارات القصيرة في مواد العلوم",
+  "description": "واثق: تجربة المعلم وإدارة المصادر المحلية للمرحلة 0-C",
   "scripts": {
     "build": "node scripts/build.mjs",
     "dev": "node scripts/serve.mjs",

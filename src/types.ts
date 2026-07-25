@@ -100,3 +100,53 @@ export interface LibraryExam {
   progress?: number;
   hasModelB?: boolean;
 }
+
+
+export type SourceMode = "file" | "url";
+export type SourceKind =
+  | "كتاب الطالب"
+  | "دليل المعلم"
+  | "نواتج التعلم"
+  | "جدول المواصفات"
+  | "اختبار كامبريدج"
+  | "مصدر عالمي";
+export type SourceStatus = "جاهز للفهرسة" | "مفهرس" | "يحتاج مراجعة" | "مؤرشف";
+
+export interface SourceDraft {
+  mode: SourceMode;
+  title: string;
+  kind: SourceKind;
+  grade: number | null;
+  subjectId: string;
+  version: string;
+  fileName: string;
+  url: string;
+  rightsConfirmed: boolean;
+}
+
+export interface ManagedSource {
+  id: string;
+  title: string;
+  kind: SourceKind;
+  mode: SourceMode;
+  grade: number;
+  subjectId: string;
+  version: string;
+  fileName?: string;
+  url?: string;
+  rightsConfirmed: boolean;
+  status: SourceStatus;
+  drivePath: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SourceValidationIssue {
+  field: keyof SourceDraft | "general";
+  message: string;
+}
+
+export interface SourceValidation {
+  valid: boolean;
+  issues: SourceValidationIssue[];
+}

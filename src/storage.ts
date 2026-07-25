@@ -1,7 +1,8 @@
-import type { ExamDraft } from "./types.js";
+import type { ExamDraft, ManagedSource } from "./types.js";
 
 const DRAFT_KEY = "wathiq.phase0b.latestDraft";
 const PROFILE_KEY = "wathiq.phase0b.profile";
+const SOURCES_KEY = "wathiq.phase0c.sources";
 
 export interface SavedProfile {
   school: string;
@@ -38,6 +39,22 @@ export function loadProfile(): SavedProfile | null {
     return JSON.parse(raw) as SavedProfile;
   } catch {
     localStorage.removeItem(PROFILE_KEY);
+    return null;
+  }
+}
+
+
+export function saveSources(sources: ManagedSource[]): void {
+  localStorage.setItem(SOURCES_KEY, JSON.stringify(sources));
+}
+
+export function loadSources(): ManagedSource[] | null {
+  const raw = localStorage.getItem(SOURCES_KEY);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as ManagedSource[];
+  } catch {
+    localStorage.removeItem(SOURCES_KEY);
     return null;
   }
 }

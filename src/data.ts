@@ -1,4 +1,4 @@
-import type { LibraryExam, SubjectOption } from "./types.js";
+import type { LibraryExam, ManagedSource, SubjectOption } from "./types.js";
 
 const demoOutcomes = (prefix: string) => [
   { id: `${prefix}-o1`, label: "يصف المفهوم العلمي باستخدام مصطلحات دقيقة" },
@@ -109,26 +109,50 @@ export const MOCK_LIBRARY: LibraryExam[] = [
   },
 ];
 
-export const MOCK_SOURCES = [
+export const MOCK_SOURCES: ManagedSource[] = [
   {
-    name: "كتاب الطالب التجريبي",
+    id: "source-demo-1",
+    title: "كتاب الطالب التجريبي",
     kind: "كتاب الطالب",
-    subject: "الفيزياء",
+    mode: "file",
     grade: 10,
+    subjectId: "physics",
+    version: "2026",
+    fileName: "physics-grade-10-demo.pdf",
+    rightsConfirmed: true,
     status: "مفهرس",
+    drivePath: "واثق/01_مصادر_المنصة/المنهج_العماني/الصف_10/الفيزياء/كتاب_الطالب/",
+    createdAt: "2026-07-25T08:00:00.000Z",
+    updatedAt: "2026-07-25T08:00:00.000Z",
   },
   {
-    name: "دليل المعلم التجريبي",
+    id: "source-demo-2",
+    title: "دليل المعلم التجريبي",
     kind: "دليل المعلم",
-    subject: "الفيزياء",
+    mode: "file",
     grade: 10,
-    status: "مفهرس",
+    subjectId: "physics",
+    version: "2026",
+    fileName: "teacher-guide-grade-10-demo.pdf",
+    rightsConfirmed: true,
+    status: "جاهز للفهرسة",
+    drivePath: "واثق/01_مصادر_المنصة/المنهج_العماني/الصف_10/الفيزياء/دليل_المعلم/",
+    createdAt: "2026-07-25T08:10:00.000Z",
+    updatedAt: "2026-07-25T08:10:00.000Z",
   },
   {
-    name: "رابط مصدر عالمي تجريبي",
-    kind: "رابط موقع",
-    subject: "العلوم",
+    id: "source-demo-3",
+    title: "رابط مصدر عالمي تجريبي",
+    kind: "مصدر عالمي",
+    mode: "url",
     grade: 8,
-    status: "بانتظار الفحص",
+    subjectId: "science",
+    version: "صفحة حية",
+    url: "https://example.org/science-assessment",
+    rightsConfirmed: true,
+    status: "يحتاج مراجعة",
+    drivePath: "واثق/01_مصادر_المنصة/مصادر_عالمية_إضافية/العلوم/الصف_08/",
+    createdAt: "2026-07-25T08:20:00.000Z",
+    updatedAt: "2026-07-25T08:20:00.000Z",
   },
 ];

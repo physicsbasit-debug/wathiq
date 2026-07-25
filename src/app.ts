@@ -7,9 +7,10 @@ import {
   selectedProposal,
   validateExamSetup,
 } from "./domain.js";
-import { clearDraft, loadDraft, loadProfile, saveDraft, saveProfile } from "./storage.js";
-import type { ExamDraft, PlanItem, QuestionCounts, ViewName, WizardStep } from "./types.js";
+import { clearDraft, loadDraft, loadProfile, loadSources, saveDraft, saveProfile, saveSources } from "./storage.js";
+import type { ExamDraft, ManagedSource, PlanItem, QuestionCounts, SourceDraft, SourceStatus, ViewName, WizardStep } from "./types.js";
 import { escapeHtml, formatArabicDate, icon } from "./ui.js";
+import { buildSourceDrivePath, changeSourceStatus, createEmptySourceDraft, createManagedSource, SOURCE_KINDS, validateSourceDraft } from "./source-domain.js";
 
 const appRoot = document.querySelector<HTMLDivElement>("#app");
 if (!appRoot) throw new Error("تعذر العثور على جذر التطبيق.");
@@ -21,6 +22,10 @@ interface AppState {
   saveState: "محفوظ" | "جارٍ الحفظ" | "غير محفوظ";
   libraryFilter: "الكل" | "مسودة" | "معتمد";
   toast: string;
+  sources: ManagedSource[];
+  sourceFormOpen: boolean;
+  sourceDraft: SourceDraft;
+  sourceFilter: "الكل" | SourceStatus;
 }
 
 const savedDraft = loadDraft();
@@ -37,6 +42,10 @@ const state: AppState = {
   saveState: savedDraft ? "محفوظ" : "غير محفوظ",
   libraryFilter: "الكل",
   toast: "",
+  sources: loadSources() ?? MOCK_SOURCES,
+  sourceFormOpen: false,
+  sourceDraft: createEmptySourceDraft(),
+  sourceFilter: "الكل",
 };
 
 let saveTimer: number | undefined;
@@ -148,7 +157,7 @@ function renderHome(): string {
   return `
     <section class="hero-panel">
       <div class="hero-copy">
-        <span class="eyebrow">نسخة المرحلة 0-B</span>
+        <span class="eyebrow">نسخة المرحلة 0-C</span>
         <h1>أنشئ اختبارك القصير بثقة.</h1>
         <p>أربع خطوات واضحة. المصادر والفحوص وجدول المواصفات تعمل في الخلفية، حيث تنتمي التفاصيل المزعجة.</p>
         <div class="hero-actions">
@@ -383,26 +392,91 @@ function renderExamCard(exam: (typeof MOCK_LIBRARY)[number]): string {
   return `<article class="exam-card" data-search-text="${escapeHtml(`${exam.title} ${exam.subject} ${exam.grade}`)}"><div class="exam-card-head"><span class="status-badge ${exam.status === "معتمد" ? "approved" : "draft"}">${exam.status}</span>${exam.hasModelB ? `<span class="model-badge">أ + ب</span>` : ""}</div><h2>${escapeHtml(exam.title)}</h2><p>${escapeHtml(exam.subject)} · الصف ${exam.grade || "غير محدد"}</p><div class="exam-meta"><span>${formatArabicDate(exam.date)}</span>${exam.progress ? `<span>${exam.progress}% مكتمل</span>` : ""}</div>${exam.progress ? `<div class="progress-track"><span style="width:${exam.progress}%"></span></div>` : ""}<div class="exam-actions">${exam.status === "مسودة" ? `<button class="primary-btn compact" data-action="resume-draft">متابعة</button><button class="ghost-btn compact" data-action="delete-draft">حذف</button>` : `<button class="secondary-btn compact" data-action="mock-download">تنزيل Word</button><button class="ghost-btn compact" data-action="mock-download">تنزيل PDF</button>`}</div></article>`;
 }
 
+
 function renderAdmin(): string {
+  const activeSources = state.sources.filter((source) => source.status !== "مؤرشف").length;
+  const indexedSources = state.sources.filter((source) => source.status === "مفهرس").length;
+  const reviewSources = state.sources.filter((source) => source.status === "يحتاج مراجعة").length;
+  const visibleSources = state.sources.filter((source) => state.sourceFilter === "الكل" || source.status === state.sourceFilter);
   return `
-    <section class="page-heading"><div><span class="eyebrow">لوحة مالك المنصة</span><h1>إدارة المحتوى</h1><p>هيكل أولي فقط. الربط الحقيقي مع Google Drive واستخراج PDF يأتي في مراحله المخصصة، لا في حفلة واحدة.</p></div><span class="demo-badge">محاكاة محلية</span></section>
-    <section class="admin-grid">
-      <article class="admin-action"><span>${icon("files")}</span><h2>إضافة ملف PDF</h2><p>حدد نوع المصدر والصف والمادة، ثم يوجّه واثق الملف لاحقًا إلى مكانه الصحيح في Drive.</p><button class="secondary-btn" data-action="open-source-modal" data-source-kind="file">تهيئة مصدر ملف</button></article>
-      <article class="admin-action"><span>${icon("spark")}</span><h2>إضافة رابط عالمي</h2><p>تسجيل موقع موثوق كمصدر، مع حفظ الرابط وتاريخ الجلب وحالة حقوق الاستخدام.</p><button class="secondary-btn" data-action="open-source-modal" data-source-kind="url">تهيئة رابط مصدر</button></article>
+    <section class="page-heading"><div><span class="eyebrow">لوحة مالك المنصة</span><h1>إدارة المصادر</h1><p>أضف المصدر في نموذج واحد، ويعرض واثق مكانه المقترح في Drive قبل الحفظ. الربط الفعلي ما زال مؤجلًا، فالبرنامج لا يدّعي أنه رفع ملفًا وهو بالكاد حفظ اسمه محليًا.</p></div><span class="demo-badge">محاكاة محلية قابلة للاختبار</span></section>
+
+    <section class="source-stats" aria-label="ملخص المصادر">
+      <article><span>المصادر النشطة</span><strong>${activeSources}</strong></article>
+      <article><span>المفهرسة</span><strong>${indexedSources}</strong></article>
+      <article><span>تحتاج مراجعة</span><strong>${reviewSources}</strong></article>
+      <article><span>المؤرشفة</span><strong>${state.sources.filter((source) => source.status === "مؤرشف").length}</strong></article>
     </section>
-    <section class="source-layout-card"><div><h2>ترتيب Drive المعتمد</h2><p>المصادر والمخرجات في مسارين منفصلين. أخيرًا مجلد لا يحتاج عرّافًا لفهمه.</p></div><pre>واثق/
-├── 01_مصادر_المنصة/
-│   ├── المنهج_العماني/
-│   ├── اختبارات_كامبريدج/
-│   ├── مصادر_عالمية_إضافية/
-│   └── أرشيف_الإصدارات/
-└── 02_الاختبارات_المنتجة/
-    ├── العلوم/
-    ├── الفيزياء/
-    ├── الكيمياء/
-    └── الأحياء/</pre></section>
-    <section class="source-table-wrap"><div class="selection-header"><div><h2>مصادر تجريبية</h2><p>لا توجد عمليات رفع حقيقية في هذه المرحلة.</p></div></div><div class="source-table">${MOCK_SOURCES.map((source) => `<div class="source-row"><div><strong>${source.name}</strong><small>${source.kind}</small></div><span>${source.subject} · الصف ${source.grade}</span><b class="source-status">${source.status}</b></div>`).join("")}</div></section>
+
+    <section class="admin-grid">
+      <article class="admin-action"><span>${icon("files")}</span><h2>إضافة ملف PDF</h2><p>كتاب طالب أو دليل معلم أو نواتج تعلم أو جدول مواصفات أو ورقة كامبريدج.</p><button class="secondary-btn" data-action="open-source-form" data-source-kind="file">إضافة ملف</button></article>
+      <article class="admin-action"><span>${icon("spark")}</span><h2>إضافة رابط عالمي</h2><p>سجّل رابطًا موثوقًا بعد مراجعة حقوق الاستخدام، ثم اربطه بالمادة والصف.</p><button class="secondary-btn" data-action="open-source-form" data-source-kind="url">إضافة رابط</button></article>
+    </section>
+
+    ${state.sourceFormOpen ? renderSourceForm() : ""}
+
+    <section class="source-table-wrap">
+      <div class="source-list-heading">
+        <div><h2>مكتبة المصادر</h2><p>القائمة محفوظة محليًا في Phase 0-C لاختبار التجربة قبل ربط Drive وقاعدة البيانات.</p></div>
+        <label class="search-field"><span>بحث</span><input id="source-search" placeholder="اسم المصدر أو المادة أو الإصدار"/></label>
+      </div>
+      <div class="source-filter-row">${(["الكل", "جاهز للفهرسة", "مفهرس", "يحتاج مراجعة", "مؤرشف"] as const).map((filter) => `<button class="filter-chip ${state.sourceFilter === filter ? "active" : ""}" data-source-filter="${filter}">${filter}</button>`).join("")}</div>
+      <div class="source-table">${visibleSources.map(renderSourceRow).join("") || `<div class="empty-state"><h3>لا توجد مصادر هنا</h3><p>المرشح الحالي نظيف أكثر من اللازم، وهي مشكلة نادرة في حياة البشر.</p></div>`}</div>
+    </section>
   `;
+}
+
+function renderSourceForm(): string {
+  const draft = state.sourceDraft;
+  const validation = validateSourceDraft(draft);
+  const path = buildSourceDrivePath(draft);
+  const availableSourceSubjects = draft.grade
+    ? SUBJECTS.filter((subject) => subject.grades.includes(draft.grade as number))
+    : SUBJECTS;
+  const issueFor = (field: string) => validation.issues.find((issue) => issue.field === field)?.message ?? "";
+  return `
+    <section class="source-form-card" aria-label="إضافة مصدر جديد">
+      <header><div><span class="eyebrow">${draft.mode === "file" ? "مصدر PDF" : "رابط عالمي"}</span><h2>${draft.mode === "file" ? "إضافة ملف إلى مكتبة المصادر" : "إضافة رابط إلى مكتبة المصادر"}</h2></div><button class="ghost-btn compact" data-action="close-source-form">إغلاق</button></header>
+      <div class="form-grid two-columns">
+        <label class="field full"><span>اسم المصدر</span><input id="source-title" value="${escapeHtml(draft.title)}" placeholder="مثال: كتاب الطالب للفيزياء"/>${issueFor("title") ? `<small class="field-error">${issueFor("title")}</small>` : ""}</label>
+        <label class="field"><span>نوع المصدر</span><select id="source-kind">${SOURCE_KINDS.map((kind) => `<option value="${kind}" ${draft.kind === kind ? "selected" : ""}>${kind}</option>`).join("")}</select></label>
+        <label class="field"><span>الإصدار أو السنة</span><input id="source-version" value="${escapeHtml(draft.version)}" placeholder="مثال: 2026 أو الإصدار الثاني"/>${issueFor("version") ? `<small class="field-error">${issueFor("version")}</small>` : ""}</label>
+        <label class="field"><span>الصف</span><select id="source-grade"><option value="">اختر الصف</option>${Array.from({ length: 12 }, (_, index) => index + 1).map((grade) => `<option value="${grade}" ${draft.grade === grade ? "selected" : ""}>الصف ${grade}</option>`).join("")}</select>${issueFor("grade") ? `<small class="field-error">${issueFor("grade")}</small>` : ""}</label>
+        <label class="field"><span>المادة</span><select id="source-subject" ${draft.grade ? "" : "disabled"}><option value="">اختر المادة</option>${availableSourceSubjects.map((subject) => `<option value="${subject.id}" ${draft.subjectId === subject.id ? "selected" : ""}>${subject.label}</option>`).join("")}</select>${issueFor("subjectId") ? `<small class="field-error">${issueFor("subjectId")}</small>` : ""}</label>
+        ${draft.mode === "file" ? `
+          <label class="field full"><span>ملف PDF</span><input id="source-file" type="file" accept="application/pdf,.pdf"/><small>${draft.fileName ? `الملف المختار: ${escapeHtml(draft.fileName)}` : "في هذه المرحلة نحفظ اسم الملف فقط لاختبار الواجهة."}</small>${issueFor("fileName") ? `<small class="field-error">${issueFor("fileName")}</small>` : ""}</label>
+        ` : `
+          <label class="field full"><span>رابط المصدر</span><input id="source-url" type="url" value="${escapeHtml(draft.url)}" placeholder="https://example.org/source"/>${issueFor("url") ? `<small class="field-error">${issueFor("url")}</small>` : ""}</label>
+          <label class="rights-check full"><input id="source-rights" type="checkbox" ${draft.rightsConfirmed ? "checked" : ""}/><span>راجعت حقوق الاستخدام وسياسة الموقع، وأسمح بتسجيل الرابط كمصدر مركزي.</span></label>
+          ${issueFor("rightsConfirmed") ? `<p class="field-error full">${issueFor("rightsConfirmed")}</p>` : ""}
+        `}
+      </div>
+      <div class="drive-path-preview"><span>المسار المقترح في Google Drive</span><code>${escapeHtml(path)}</code><small>معاينة فقط. النقل الحقيقي إلى Drive سيأتي في مرحلة تكامل مستقلة.</small></div>
+      <footer><button class="secondary-btn" data-action="close-source-form">إلغاء</button><button class="primary-btn" data-action="save-source">حفظ المصدر محليًا</button></footer>
+    </section>
+  `;
+}
+
+function renderSourceRow(source: ManagedSource): string {
+  const subject = SUBJECTS.find((item) => item.id === source.subjectId)?.label ?? "غير محددة";
+  const sourceRef = source.mode === "file" ? source.fileName ?? "ملف PDF" : source.url ?? "رابط";
+  const actions = source.status === "مؤرشف"
+    ? `<button class="text-btn" data-action="restore-source" data-source-id="${source.id}">استعادة</button>`
+    : `${source.status !== "مفهرس" ? `<button class="text-btn" data-action="index-source" data-source-id="${source.id}">محاكاة الفهرسة</button>` : ""}<button class="text-btn danger-text" data-action="archive-source" data-source-id="${source.id}">أرشفة</button>`;
+  return `<article class="source-row-card" data-source-search="${escapeHtml(`${source.title} ${source.kind} ${subject} ${source.grade} ${source.version} ${sourceRef}`)}">
+    <div class="source-main"><span class="source-mode-icon">${source.mode === "file" ? icon("files") : icon("spark")}</span><div><strong>${escapeHtml(source.title)}</strong><small>${escapeHtml(source.kind)} · ${escapeHtml(source.version)}</small></div></div>
+    <div class="source-meta"><span>${escapeHtml(subject)} · الصف ${source.grade}</span><small title="${escapeHtml(sourceRef)}">${escapeHtml(sourceRef)}</small></div>
+    <span class="source-status status-${sourceStatusSlug(source.status)}">${source.status}</span>
+    <div class="source-actions">${actions}</div>
+    <code class="source-path">${escapeHtml(source.drivePath)}</code>
+  </article>`;
+}
+
+function sourceStatusSlug(status: SourceStatus): string {
+  if (status === "مفهرس") return "indexed";
+  if (status === "يحتاج مراجعة") return "review";
+  if (status === "مؤرشف") return "archived";
+  return "ready";
 }
 
 function bindEvents(): void {
@@ -422,6 +496,7 @@ function bindEvents(): void {
   bindSetupStep();
   bindPlanStep();
   bindLibrary();
+  bindAdmin();
 }
 
 function handleAction(action: string, element: HTMLElement): void {
@@ -464,9 +539,24 @@ function handleAction(action: string, element: HTMLElement): void {
     showToast("التصدير الحقيقي مؤجل لمرحلة التصدير.");
     return;
   }
-  if (action === "open-source-modal") {
-    showToast(element.dataset.sourceKind === "url" ? "واجهة إضافة الروابط ستنفذ في مرحلة المصادر." : "واجهة رفع الملفات ستنفذ في مرحلة المصادر.");
+  if (action === "open-source-form") {
+    const mode = element.dataset.sourceKind === "url" ? "url" : "file";
+    state.sourceDraft = createEmptySourceDraft(mode);
+    state.sourceFormOpen = true;
+    render();
+    window.setTimeout(() => document.querySelector(".source-form-card")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+    return;
   }
+  if (action === "close-source-form") {
+    state.sourceFormOpen = false;
+    render();
+    return;
+  }
+  if (action === "save-source") return saveSourceFromForm();
+  const sourceId = element.dataset.sourceId;
+  if (action === "archive-source" && sourceId) return updateSourceStatus(sourceId, "مؤرشف", "تمت أرشفة المصدر دون حذفه.");
+  if (action === "restore-source" && sourceId) return updateSourceStatus(sourceId, "جاهز للفهرسة", "تمت استعادة المصدر إلى المكتبة.");
+  if (action === "index-source" && sourceId) return updateSourceStatus(sourceId, "مفهرس", "تمت محاكاة فهرسة المصدر بنجاح.");
 }
 
 function nextStep(): void {
@@ -680,6 +770,82 @@ function bindLibrary(): void {
       card.hidden = !(card.dataset.searchText ?? "").toLowerCase().includes(query);
     });
   });
+}
+
+
+function bindAdmin(): void {
+  document.querySelectorAll<HTMLElement>("[data-source-filter]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.sourceFilter = button.dataset.sourceFilter as AppState["sourceFilter"];
+      render();
+    });
+  });
+
+  document.querySelector<HTMLInputElement>("#source-search")?.addEventListener("input", (event) => {
+    const query = (event.target as HTMLInputElement).value.trim().toLowerCase();
+    document.querySelectorAll<HTMLElement>("[data-source-search]").forEach((row) => {
+      row.hidden = !(row.dataset.sourceSearch ?? "").toLowerCase().includes(query);
+    });
+  });
+
+  bindSourceTextInput("source-title", "title");
+  bindSourceTextInput("source-version", "version");
+  bindSourceTextInput("source-url", "url");
+
+  document.querySelector<HTMLSelectElement>("#source-kind")?.addEventListener("change", (event) => {
+    state.sourceDraft.kind = (event.target as HTMLSelectElement).value as SourceDraft["kind"];
+    render();
+  });
+  document.querySelector<HTMLSelectElement>("#source-grade")?.addEventListener("change", (event) => {
+    const value = (event.target as HTMLSelectElement).value;
+    state.sourceDraft.grade = value ? Number(value) : null;
+    const subjectStillValid = SUBJECTS.some(
+      (subject) => subject.id === state.sourceDraft.subjectId && state.sourceDraft.grade !== null && subject.grades.includes(state.sourceDraft.grade),
+    );
+    if (!subjectStillValid) state.sourceDraft.subjectId = "";
+    render();
+  });
+  document.querySelector<HTMLSelectElement>("#source-subject")?.addEventListener("change", (event) => {
+    state.sourceDraft.subjectId = (event.target as HTMLSelectElement).value;
+    render();
+  });
+  document.querySelector<HTMLInputElement>("#source-file")?.addEventListener("change", (event) => {
+    const file = (event.target as HTMLInputElement).files?.[0];
+    state.sourceDraft.fileName = file?.name ?? "";
+    render();
+  });
+  document.querySelector<HTMLInputElement>("#source-rights")?.addEventListener("change", (event) => {
+    state.sourceDraft.rightsConfirmed = (event.target as HTMLInputElement).checked;
+  });
+}
+
+function bindSourceTextInput(id: string, key: "title" | "version" | "url"): void {
+  document.querySelector<HTMLInputElement>(`#${id}`)?.addEventListener("input", (event) => {
+    state.sourceDraft[key] = (event.target as HTMLInputElement).value;
+  });
+}
+
+function saveSourceFromForm(): void {
+  const validation = validateSourceDraft(state.sourceDraft);
+  if (!validation.valid) {
+    render();
+    showToast(validation.issues[0]?.message ?? "أكمل بيانات المصدر.");
+    return;
+  }
+  const source = createManagedSource(state.sourceDraft);
+  state.sources = [source, ...state.sources];
+  saveSources(state.sources);
+  state.sourceFormOpen = false;
+  state.sourceDraft = createEmptySourceDraft();
+  render();
+  showToast("تم حفظ المصدر محليًا وأصبح جاهزًا للفهرسة.");
+}
+
+function updateSourceStatus(sourceId: string, status: SourceStatus, message: string): void {
+  state.sources = changeSourceStatus(state.sources, sourceId, status);
+  saveSources(state.sources);
+  render();
+  showToast(message);
 }
 
 function renderTopSaveState(): void {
