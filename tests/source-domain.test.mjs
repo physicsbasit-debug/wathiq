@@ -5,6 +5,7 @@ import {
   changeSourceStatus,
   createEmptySourceDraft,
   createManagedSource,
+  findDuplicateSource,
   validateSourceDraft,
 } from "../dist/assets/source-domain.js";
 
@@ -66,4 +67,18 @@ test("يؤرشف المصدر دون حذفه", () => {
   const updated = changeSourceStatus([source], source.id, "مؤرشف", new Date("2026-07-25T11:00:00Z"));
   assert.equal(updated.length, 1);
   assert.equal(updated[0].status, "مؤرشف");
+});
+
+test("يمنح المصدر رقم فهرسة وجهة وبصمة", () => {
+  const source = createManagedSource(validFileDraft(), new Date("2026-07-25T10:00:00Z"));
+  assert.match(source.catalogCode, /^WTH-OM-G10-PHY-STU-2026-/);
+  assert.equal(source.authority, "منهج عُماني");
+  assert.equal(source.fingerprint, "file|كتاب الطالب|10|physics|2026|physics.pdf");
+});
+
+
+test("يكشف المصدر المكرر قبل الحفظ", () => {
+  const existing = createManagedSource(validFileDraft(), new Date("2026-07-25T10:00:00Z"));
+  const duplicate = findDuplicateSource([existing], validFileDraft());
+  assert.equal(duplicate?.id, existing.id);
 });

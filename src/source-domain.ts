@@ -1,6 +1,7 @@
 import { SUBJECTS } from "./data.js";
 import type {
   ManagedSource,
+  SourceAuthority,
   SourceDraft,
   SourceKind,
   SourceMode,
@@ -15,6 +16,68 @@ export const SOURCE_KINDS: SourceKind[] = [
   "اختبار كامبريدج",
   "مصدر عالمي",
 ];
+
+const SUBJECT_CODES: Record<string, string> = {
+  science: "SCI",
+  physics: "PHY",
+  chemistry: "CHM",
+  biology: "BIO",
+};
+
+const KIND_CODES: Record<SourceKind, string> = {
+  "كتاب الطالب": "STU",
+  "دليل المعلم": "TCH",
+  "نواتج التعلم": "OUT",
+  "جدول المواصفات": "SPC",
+  "اختبار كامبريدج": "CAM",
+  "مصدر عالمي": "WEB",
+};
+
+export function authorityForKind(kind: SourceKind): SourceAuthority {
+  if (kind === "اختبار كامبريدج") return "كامبريدج";
+  if (kind === "مصدر عالمي") return "مصدر عالمي";
+  return "منهج عُماني";
+}
+
+function normalizeFingerprintPart(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+export function buildSourceFingerprint(
+  source: Pick<SourceDraft, "mode" | "kind" | "grade" | "subjectId" | "version" | "fileName" | "url">,
+): string {
+  const reference = source.mode === "file" ? source.fileName : source.url;
+  return [
+    source.mode,
+    source.kind,
+    String(source.grade ?? ""),
+    source.subjectId,
+    normalizeFingerprintPart(source.version),
+    normalizeFingerprintPart(reference),
+  ].join("|");
+}
+
+export function findDuplicateSource(sources: ManagedSource[], draft: SourceDraft): ManagedSource | undefined {
+  const fingerprint = buildSourceFingerprint(draft);
+  return sources.find((source) => source.fingerprint === fingerprint || buildSourceFingerprint({
+    mode: source.mode,
+    kind: source.kind,
+    grade: source.grade,
+    subjectId: source.subjectId,
+    version: source.version,
+    fileName: source.fileName ?? "",
+    url: source.url ?? "",
+  }) === fingerprint);
+}
+
+function buildCatalogCode(draft: SourceDraft, now: Date): string {
+  const authorityCode = authorityForKind(draft.kind) === "منهج عُماني" ? "OM" : authorityForKind(draft.kind) === "كامبريدج" ? "CA" : "GL";
+  const subjectCode = SUBJECT_CODES[draft.subjectId] ?? "GEN";
+  const kindCode = KIND_CODES[draft.kind];
+  const versionCode = draft.version.replace(/[^0-9A-Za-z]+/g, "").slice(0, 8).toUpperCase() || "V1";
+  const sequence = now.getTime().toString(36).slice(-6).toUpperCase();
+  return `WTH-${authorityCode}-G${String(draft.grade ?? 0).padStart(2, "0")}-${subjectCode}-${kindCode}-${versionCode}-${sequence}`;
+}
 
 export function createEmptySourceDraft(mode: SourceMode = "file"): SourceDraft {
   return {
@@ -91,6 +154,9 @@ export function createManagedSource(draft: SourceDraft, now = new Date()): Manag
   const timestamp = now.toISOString();
   return {
     id: `source-${now.getTime()}-${Math.random().toString(36).slice(2, 7)}`,
+    catalogCode: buildCatalogCode(draft, now),
+    fingerprint: buildSourceFingerprint(draft),
+    authority: authorityForKind(draft.kind),
     title: draft.title.trim(),
     kind: draft.kind,
     mode: draft.mode,

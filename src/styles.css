@@ -346,3 +346,123 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
   .source-meta, .source-actions { grid-column: auto; grid-row: auto; }
   .source-actions { flex-direction: row; justify-content: start; flex-wrap: wrap; }
 }
+
+/* Phase 0-D: سجل المصادر والنسخ الاحتياطية */
+.registry-actions,
+.source-details-card {
+  margin-top: 18px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 20px 22px;
+}
+
+.registry-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.registry-actions h2,
+.source-details-card h2 {
+  margin: 0 0 7px;
+  color: var(--navy-deep);
+}
+
+.registry-actions p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.registry-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: end;
+}
+
+.file-button {
+  cursor: pointer;
+}
+
+.file-button input {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.source-details-card {
+  border-color: #b9cbe0;
+  box-shadow: 0 16px 38px rgba(27, 54, 92, .08);
+  scroll-margin-top: 94px;
+}
+
+.source-details-card > header {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.source-details-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.source-details-grid > div {
+  padding: 13px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #f9fbfd;
+  min-width: 0;
+}
+
+.source-details-grid span,
+.source-reference span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.source-details-grid strong {
+  display: block;
+  color: var(--navy-deep);
+  overflow-wrap: anywhere;
+}
+
+.source-reference {
+  margin-top: 10px;
+  padding: 13px 14px;
+  border-radius: 12px;
+  background: #f5f7fa;
+}
+
+.source-reference code {
+  display: block;
+  direction: ltr;
+  text-align: left;
+  color: #40516a;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 900px) {
+  .source-details-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 620px) {
+  .registry-actions,
+  .source-details-card > header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .registry-buttons > * { flex: 1 1 auto; justify-content: center; }
+  .source-details-grid { grid-template-columns: 1fr; }
+}
