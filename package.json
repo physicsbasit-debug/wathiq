@@ -1,9 +1,9 @@
 {
-  "name": "wathiq-phase-0b-ux-shell",
-  "version": "0.1.0",
+  "name": "wathiq",
+  "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "نموذج تفاعلي محلي لمرحلة 0-B من منصة واثق",
+  "description": "واثق: نموذج تجربة المستخدم للنسخة الأولى من منشئ الاختبارات القصيرة في مواد العلوم",
   "scripts": {
     "build": "node scripts/build.mjs",
     "dev": "node scripts/serve.mjs",
@@ -15,5 +15,9 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/physicsbasit-debug/wathiq.git"
   }
 }
