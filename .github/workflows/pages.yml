@@ -1,0 +1,58 @@
+name: نشر معاينة واثق
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: بناء المعاينة
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: جلب الملفات
+        uses: actions/checkout@v4
+
+      - name: إعداد Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: تثبيت الاعتماديات
+        run: npm install --no-audit --no-fund
+
+      - name: بناء واثق
+        run: npm run build
+
+      - name: إعداد GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: رفع ملفات المعاينة
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    name: نشر المعاينة
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: نشر GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
