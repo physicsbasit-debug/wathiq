@@ -112,6 +112,9 @@ export const MOCK_LIBRARY: LibraryExam[] = [
 export const MOCK_SOURCES: ManagedSource[] = [
   {
     id: "source-demo-1",
+    catalogCode: "WTH-OM-G10-PHY-STU-2026-DEMO01",
+    fingerprint: "file|كتاب الطالب|10|physics|2026|physics-grade-10-demo.pdf",
+    authority: "منهج عُماني",
     title: "كتاب الطالب التجريبي",
     kind: "كتاب الطالب",
     mode: "file",
@@ -127,6 +130,9 @@ export const MOCK_SOURCES: ManagedSource[] = [
   },
   {
     id: "source-demo-2",
+    catalogCode: "WTH-OM-G10-PHY-TCH-2026-DEMO02",
+    fingerprint: "file|دليل المعلم|10|physics|2026|teacher-guide-grade-10-demo.pdf",
+    authority: "منهج عُماني",
     title: "دليل المعلم التجريبي",
     kind: "دليل المعلم",
     mode: "file",
@@ -142,6 +148,9 @@ export const MOCK_SOURCES: ManagedSource[] = [
   },
   {
     id: "source-demo-3",
+    catalogCode: "WTH-GL-G08-SCI-WEB-PAGE-DEMO03",
+    fingerprint: "url|مصدر عالمي|8|science|صفحة حية|https://example.org/science-assessment",
+    authority: "مصدر عالمي",
     title: "رابط مصدر عالمي تجريبي",
     kind: "مصدر عالمي",
     mode: "url",

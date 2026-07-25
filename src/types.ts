@@ -111,6 +111,7 @@ export type SourceKind =
   | "اختبار كامبريدج"
   | "مصدر عالمي";
 export type SourceStatus = "جاهز للفهرسة" | "مفهرس" | "يحتاج مراجعة" | "مؤرشف";
+export type SourceAuthority = "منهج عُماني" | "كامبريدج" | "مصدر عالمي";
 
 export interface SourceDraft {
   mode: SourceMode;
@@ -126,6 +127,9 @@ export interface SourceDraft {
 
 export interface ManagedSource {
   id: string;
+  catalogCode: string;
+  fingerprint: string;
+  authority: SourceAuthority;
   title: string;
   kind: SourceKind;
   mode: SourceMode;
@@ -149,4 +153,23 @@ export interface SourceValidationIssue {
 export interface SourceValidation {
   valid: boolean;
   issues: SourceValidationIssue[];
+}
+
+export interface SourceRegistryBackup {
+  schemaVersion: 1;
+  product: "واثق";
+  exportedAt: string;
+  sources: ManagedSource[];
+}
+
+export interface SourceImportResult {
+  valid: boolean;
+  sources: ManagedSource[];
+  issues: string[];
+}
+
+export interface SourceMergeResult {
+  sources: ManagedSource[];
+  addedCount: number;
+  skippedCount: number;
 }

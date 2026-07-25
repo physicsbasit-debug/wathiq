@@ -10,7 +10,8 @@ import {
 import { clearDraft, loadDraft, loadProfile, loadSources, saveDraft, saveProfile, saveSources } from "./storage.js";
 import type { ExamDraft, ManagedSource, PlanItem, QuestionCounts, SourceDraft, SourceStatus, ViewName, WizardStep } from "./types.js";
 import { escapeHtml, formatArabicDate, icon } from "./ui.js";
-import { buildSourceDrivePath, changeSourceStatus, createEmptySourceDraft, createManagedSource, SOURCE_KINDS, validateSourceDraft } from "./source-domain.js";
+import { buildSourceDrivePath, changeSourceStatus, createEmptySourceDraft, createManagedSource, findDuplicateSource, SOURCE_KINDS, validateSourceDraft } from "./source-domain.js";
+import { createRegistryBackup, mergeSourceRegistry, parseRegistryBackup } from "./source-registry.js";
 
 const appRoot = document.querySelector<HTMLDivElement>("#app");
 if (!appRoot) throw new Error("تعذر العثور على جذر التطبيق.");
@@ -26,6 +27,7 @@ interface AppState {
   sourceFormOpen: boolean;
   sourceDraft: SourceDraft;
   sourceFilter: "الكل" | SourceStatus;
+  selectedSourceId: string;
 }
 
 const savedDraft = loadDraft();
@@ -46,6 +48,7 @@ const state: AppState = {
   sourceFormOpen: false,
   sourceDraft: createEmptySourceDraft(),
   sourceFilter: "الكل",
+  selectedSourceId: "",
 };
 
 let saveTimer: number | undefined;
@@ -157,7 +160,7 @@ function renderHome(): string {
   return `
     <section class="hero-panel">
       <div class="hero-copy">
-        <span class="eyebrow">نسخة المرحلة 0-C</span>
+        <span class="eyebrow">نسخة المرحلة 0-D</span>
         <h1>أنشئ اختبارك القصير بثقة.</h1>
         <p>أربع خطوات واضحة. المصادر والفحوص وجدول المواصفات تعمل في الخلفية، حيث تنتمي التفاصيل المزعجة.</p>
         <div class="hero-actions">
@@ -398,8 +401,9 @@ function renderAdmin(): string {
   const indexedSources = state.sources.filter((source) => source.status === "مفهرس").length;
   const reviewSources = state.sources.filter((source) => source.status === "يحتاج مراجعة").length;
   const visibleSources = state.sources.filter((source) => state.sourceFilter === "الكل" || source.status === state.sourceFilter);
+  const selectedSource = state.sources.find((source) => source.id === state.selectedSourceId);
   return `
-    <section class="page-heading"><div><span class="eyebrow">لوحة مالك المنصة</span><h1>إدارة المصادر</h1><p>أضف المصدر في نموذج واحد، ويعرض واثق مكانه المقترح في Drive قبل الحفظ. الربط الفعلي ما زال مؤجلًا، فالبرنامج لا يدّعي أنه رفع ملفًا وهو بالكاد حفظ اسمه محليًا.</p></div><span class="demo-badge">محاكاة محلية قابلة للاختبار</span></section>
+    <section class="page-heading"><div><span class="eyebrow">لوحة مالك المنصة</span><h1>إدارة المصادر</h1><p>سجل منظم للمصادر قبل ربط التخزين السحابي. كل مصدر له رقم فهرسة، ومسار، وحالة واضحة، والنسخة الاحتياطية بيدك بدل أن تكون رهينة لمتصفح قرر النسيان.</p></div><span class="demo-badge">Phase 0-D · سجل محلي منظم</span></section>
 
     <section class="source-stats" aria-label="ملخص المصادر">
       <article><span>المصادر النشطة</span><strong>${activeSources}</strong></article>
@@ -413,12 +417,21 @@ function renderAdmin(): string {
       <article class="admin-action"><span>${icon("spark")}</span><h2>إضافة رابط عالمي</h2><p>سجّل رابطًا موثوقًا بعد مراجعة حقوق الاستخدام، ثم اربطه بالمادة والصف.</p><button class="secondary-btn" data-action="open-source-form" data-source-kind="url">إضافة رابط</button></article>
     </section>
 
+    <section class="registry-actions" aria-label="نسخ سجل المصادر">
+      <div><h2>نسخة احتياطية لسجل المصادر</h2><p>التصدير يحفظ بيانات السجل فقط، لا ملفات PDF نفسها. الملفات الفعلية ستدخل Drive في مرحلة التكامل.</p></div>
+      <div class="registry-buttons">
+        <button class="secondary-btn compact" data-action="export-source-registry">تصدير JSON</button>
+        <label class="ghost-btn compact file-button">استيراد JSON<input id="source-registry-file" type="file" accept="application/json,.json"/></label>
+      </div>
+    </section>
+
     ${state.sourceFormOpen ? renderSourceForm() : ""}
+    ${selectedSource ? renderSourceDetails(selectedSource) : ""}
 
     <section class="source-table-wrap">
       <div class="source-list-heading">
-        <div><h2>مكتبة المصادر</h2><p>القائمة محفوظة محليًا في Phase 0-C لاختبار التجربة قبل ربط Drive وقاعدة البيانات.</p></div>
-        <label class="search-field"><span>بحث</span><input id="source-search" placeholder="اسم المصدر أو المادة أو الإصدار"/></label>
+        <div><h2>مكتبة المصادر</h2><p>يكشف واثق التكرار قبل الحفظ، ويمنح كل مصدر رقمًا ثابتًا يسهل تتبعه لاحقًا عند ربط Drive والفهرسة.</p></div>
+        <label class="search-field"><span>بحث</span><input id="source-search" placeholder="اسم المصدر أو المادة أو رقم الفهرسة"/></label>
       </div>
       <div class="source-filter-row">${(["الكل", "جاهز للفهرسة", "مفهرس", "يحتاج مراجعة", "مؤرشف"] as const).map((filter) => `<button class="filter-chip ${state.sourceFilter === filter ? "active" : ""}" data-source-filter="${filter}">${filter}</button>`).join("")}</div>
       <div class="source-table">${visibleSources.map(renderSourceRow).join("") || `<div class="empty-state"><h3>لا توجد مصادر هنا</h3><p>المرشح الحالي نظيف أكثر من اللازم، وهي مشكلة نادرة في حياة البشر.</p></div>`}</div>
@@ -457,15 +470,37 @@ function renderSourceForm(): string {
   `;
 }
 
+function renderSourceDetails(source: ManagedSource): string {
+  const subject = SUBJECTS.find((item) => item.id === source.subjectId)?.label ?? "غير محددة";
+  const reference = source.mode === "file" ? source.fileName ?? "ملف PDF" : source.url ?? "رابط";
+  return `
+    <section class="source-details-card" aria-label="تفاصيل المصدر">
+      <header><div><span class="eyebrow">تفاصيل المصدر</span><h2>${escapeHtml(source.title)}</h2></div><button class="ghost-btn compact" data-action="close-source-details">إغلاق</button></header>
+      <div class="source-details-grid">
+        <div><span>رقم الفهرسة</span><strong dir="ltr">${escapeHtml(source.catalogCode)}</strong></div>
+        <div><span>الجهة</span><strong>${escapeHtml(source.authority)}</strong></div>
+        <div><span>النوع</span><strong>${escapeHtml(source.kind)}</strong></div>
+        <div><span>المادة والصف</span><strong>${escapeHtml(subject)} · الصف ${source.grade}</strong></div>
+        <div><span>الإصدار</span><strong>${escapeHtml(source.version)}</strong></div>
+        <div><span>الحالة</span><strong>${escapeHtml(source.status)}</strong></div>
+        <div><span>أضيف في</span><strong>${formatArabicDate(source.createdAt.slice(0, 10))}</strong></div>
+        <div><span>آخر تحديث</span><strong>${formatArabicDate(source.updatedAt.slice(0, 10))}</strong></div>
+      </div>
+      <div class="source-reference"><span>${source.mode === "file" ? "اسم الملف" : "الرابط"}</span><code>${escapeHtml(reference)}</code></div>
+      <div class="source-reference"><span>مسار Google Drive المقترح</span><code>${escapeHtml(source.drivePath)}</code></div>
+    </section>
+  `;
+}
+
 function renderSourceRow(source: ManagedSource): string {
   const subject = SUBJECTS.find((item) => item.id === source.subjectId)?.label ?? "غير محددة";
   const sourceRef = source.mode === "file" ? source.fileName ?? "ملف PDF" : source.url ?? "رابط";
   const actions = source.status === "مؤرشف"
-    ? `<button class="text-btn" data-action="restore-source" data-source-id="${source.id}">استعادة</button>`
-    : `${source.status !== "مفهرس" ? `<button class="text-btn" data-action="index-source" data-source-id="${source.id}">محاكاة الفهرسة</button>` : ""}<button class="text-btn danger-text" data-action="archive-source" data-source-id="${source.id}">أرشفة</button>`;
-  return `<article class="source-row-card" data-source-search="${escapeHtml(`${source.title} ${source.kind} ${subject} ${source.grade} ${source.version} ${sourceRef}`)}">
-    <div class="source-main"><span class="source-mode-icon">${source.mode === "file" ? icon("files") : icon("spark")}</span><div><strong>${escapeHtml(source.title)}</strong><small>${escapeHtml(source.kind)} · ${escapeHtml(source.version)}</small></div></div>
-    <div class="source-meta"><span>${escapeHtml(subject)} · الصف ${source.grade}</span><small title="${escapeHtml(sourceRef)}">${escapeHtml(sourceRef)}</small></div>
+    ? `<button class="text-btn" data-action="view-source" data-source-id="${source.id}">تفاصيل</button><button class="text-btn" data-action="restore-source" data-source-id="${source.id}">استعادة</button>`
+    : `<button class="text-btn" data-action="view-source" data-source-id="${source.id}">تفاصيل</button>${source.status !== "مفهرس" ? `<button class="text-btn" data-action="index-source" data-source-id="${source.id}">محاكاة الفهرسة</button>` : ""}<button class="text-btn danger-text" data-action="archive-source" data-source-id="${source.id}">أرشفة</button>`;
+  return `<article class="source-row-card" data-source-search="${escapeHtml(`${source.title} ${source.catalogCode} ${source.authority} ${source.kind} ${subject} ${source.grade} ${source.version} ${sourceRef}`)}">
+    <div class="source-main"><span class="source-mode-icon">${source.mode === "file" ? icon("files") : icon("spark")}</span><div><strong>${escapeHtml(source.title)}</strong><small>${escapeHtml(source.catalogCode)}</small></div></div>
+    <div class="source-meta"><span>${escapeHtml(subject)} · الصف ${source.grade}</span><small>${escapeHtml(source.authority)} · ${escapeHtml(source.version)}</small></div>
     <span class="source-status status-${sourceStatusSlug(source.status)}">${source.status}</span>
     <div class="source-actions">${actions}</div>
     <code class="source-path">${escapeHtml(source.drivePath)}</code>
@@ -553,7 +588,19 @@ function handleAction(action: string, element: HTMLElement): void {
     return;
   }
   if (action === "save-source") return saveSourceFromForm();
+  if (action === "export-source-registry") return exportSourceRegistry();
+  if (action === "close-source-details") {
+    state.selectedSourceId = "";
+    render();
+    return;
+  }
   const sourceId = element.dataset.sourceId;
+  if (action === "view-source" && sourceId) {
+    state.selectedSourceId = sourceId;
+    render();
+    window.setTimeout(() => document.querySelector(".source-details-card")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+    return;
+  }
   if (action === "archive-source" && sourceId) return updateSourceStatus(sourceId, "مؤرشف", "تمت أرشفة المصدر دون حذفه.");
   if (action === "restore-source" && sourceId) return updateSourceStatus(sourceId, "جاهز للفهرسة", "تمت استعادة المصدر إلى المكتبة.");
   if (action === "index-source" && sourceId) return updateSourceStatus(sourceId, "مفهرس", "تمت محاكاة فهرسة المصدر بنجاح.");
@@ -817,6 +864,12 @@ function bindAdmin(): void {
   document.querySelector<HTMLInputElement>("#source-rights")?.addEventListener("change", (event) => {
     state.sourceDraft.rightsConfirmed = (event.target as HTMLInputElement).checked;
   });
+
+  document.querySelector<HTMLInputElement>("#source-registry-file")?.addEventListener("change", async (event) => {
+    const file = (event.target as HTMLInputElement).files?.[0];
+    if (!file) return;
+    await importSourceRegistry(file);
+  });
 }
 
 function bindSourceTextInput(id: string, key: "title" | "version" | "url"): void {
@@ -832,6 +885,11 @@ function saveSourceFromForm(): void {
     showToast(validation.issues[0]?.message ?? "أكمل بيانات المصدر.");
     return;
   }
+  const duplicate = findDuplicateSource(state.sources, state.sourceDraft);
+  if (duplicate) {
+    showToast(`هذا المصدر مسجل بالفعل برقم ${duplicate.catalogCode}.`);
+    return;
+  }
   const source = createManagedSource(state.sourceDraft);
   state.sources = [source, ...state.sources];
   saveSources(state.sources);
@@ -839,6 +897,33 @@ function saveSourceFromForm(): void {
   state.sourceDraft = createEmptySourceDraft();
   render();
   showToast("تم حفظ المصدر محليًا وأصبح جاهزًا للفهرسة.");
+}
+
+function exportSourceRegistry(): void {
+  const backup = createRegistryBackup(state.sources);
+  const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `wathiq-source-registry-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  showToast("تم تصدير نسخة احتياطية من سجل المصادر.");
+}
+
+async function importSourceRegistry(file: File): Promise<void> {
+  const parsed = parseRegistryBackup(await file.text());
+  if (!parsed.valid) {
+    showToast(parsed.issues[0] ?? "تعذر استيراد سجل المصادر.");
+    return;
+  }
+  const merged = mergeSourceRegistry(state.sources, parsed.sources);
+  state.sources = merged.sources;
+  saveSources(state.sources);
+  render();
+  showToast(`تمت إضافة ${merged.addedCount} وتجاوز ${merged.skippedCount} مصدر مكرر.`);
 }
 
 function updateSourceStatus(sourceId: string, status: SourceStatus, message: string): void {
