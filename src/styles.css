@@ -466,3 +466,76 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
   .registry-buttons > * { flex: 1 1 auto; justify-content: center; }
   .source-details-grid { grid-template-columns: 1fr; }
 }
+
+/* Phase 0-E: التخزين المركزي لسجل المصادر */
+.central-storage-card {
+  margin-top: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 22px;
+  padding: 20px 22px;
+  border-radius: 18px;
+  border: 1px solid var(--border);
+  background: #fff;
+}
+
+.central-storage-card h2 {
+  margin: 5px 0 7px;
+  color: var(--navy-deep);
+}
+
+.central-storage-card p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.central-storage-card.local-mode { background: #fffaf0; border-color: #e7d09b; }
+.central-storage-card.login-mode { background: #f7faff; border-color: #b9cbe0; align-items: end; }
+.central-storage-card.connected-mode { background: #f1fbf6; border-color: #9ed6b4; }
+.central-storage-card.error-mode { background: #fff5f5; border-color: #e4b2b2; }
+
+.storage-state {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(29, 63, 114, .09);
+  color: var(--navy);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.storage-note {
+  max-width: 330px;
+  color: #74591f;
+  line-height: 1.7;
+  font-size: 13px;
+}
+
+.owner-login-grid {
+  flex: 0 1 590px;
+  display: grid;
+  grid-template-columns: minmax(170px, 1fr) minmax(150px, 1fr) auto;
+  align-items: end;
+  gap: 10px;
+}
+
+.owner-login-grid .field { margin: 0; }
+.owner-login-grid .primary-btn { min-height: 46px; white-space: nowrap; }
+.storage-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: end; }
+
+@media (max-width: 900px) {
+  .central-storage-card { flex-direction: column; align-items: stretch; }
+  .owner-login-grid { flex-basis: auto; width: 100%; }
+  .storage-note { max-width: none; }
+}
+
+@media (max-width: 640px) {
+  .owner-login-grid { grid-template-columns: 1fr; }
+  .owner-login-grid .primary-btn,
+  .storage-actions > * { width: 100%; justify-content: center; }
+  .storage-actions { flex-direction: column; }
+}

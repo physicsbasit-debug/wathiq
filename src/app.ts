@@ -12,6 +12,8 @@ import type { ExamDraft, ManagedSource, PlanItem, QuestionCounts, SourceDraft, S
 import { escapeHtml, formatArabicDate, icon } from "./ui.js";
 import { buildSourceDrivePath, changeSourceStatus, createEmptySourceDraft, createManagedSource, findDuplicateSource, SOURCE_KINDS, validateSourceDraft } from "./source-domain.js";
 import { createRegistryBackup, mergeSourceRegistry, parseRegistryBackup } from "./source-registry.js";
+import { CentralSourceStore } from "./central-source-store.js";
+import { getRuntimeConfig, isCentralStorageConfigured } from "./runtime-config.js";
 
 const appRoot = document.querySelector<HTMLDivElement>("#app");
 if (!appRoot) throw new Error("تعذر العثور على جذر التطبيق.");
@@ -28,7 +30,16 @@ interface AppState {
   sourceDraft: SourceDraft;
   sourceFilter: "الكل" | SourceStatus;
   selectedSourceId: string;
+  sourceStorageStatus: "محلي" | "يتطلب تسجيل الدخول" | "متصل" | "خطأ";
+  sourceStorageMessage: string;
+  sourceStorageBusy: boolean;
+  ownerEmail: string;
 }
+
+const runtimeConfig = getRuntimeConfig();
+const centralSourceStore = isCentralStorageConfigured(runtimeConfig)
+  ? new CentralSourceStore(runtimeConfig)
+  : null;
 
 const savedDraft = loadDraft();
 const savedProfile = loadProfile();
@@ -49,6 +60,12 @@ const state: AppState = {
   sourceDraft: createEmptySourceDraft(),
   sourceFilter: "الكل",
   selectedSourceId: "",
+  sourceStorageStatus: centralSourceStore ? "يتطلب تسجيل الدخول" : "محلي",
+  sourceStorageMessage: centralSourceStore
+    ? "سجّل دخول مالك المنصة للوصول إلى سجل المصادر المركزي."
+    : "لم تُضبط بيانات Supabase بعد؛ يعمل السجل محليًا فقط.",
+  sourceStorageBusy: false,
+  ownerEmail: "",
 };
 
 let saveTimer: number | undefined;
@@ -396,6 +413,36 @@ function renderExamCard(exam: (typeof MOCK_LIBRARY)[number]): string {
 }
 
 
+function renderSourceStoragePanel(): string {
+  const busy = state.sourceStorageBusy ? "disabled" : "";
+  if (!centralSourceStore || state.sourceStorageStatus === "محلي") {
+    return `<section class="central-storage-card local-mode" aria-label="حالة تخزين المصادر">
+      <div><span class="storage-state">تخزين محلي</span><h2>سجل المصادر محفوظ في هذا المتصفح</h2><p>${escapeHtml(state.sourceStorageMessage)}</p></div>
+      <span class="storage-note">أكمل إعداد Supabase لتوحيد السجل بين أجهزتك.</span>
+    </section>`;
+  }
+  if (state.sourceStorageStatus === "يتطلب تسجيل الدخول") {
+    return `<section class="central-storage-card login-mode" aria-label="تسجيل دخول مالك المنصة">
+      <div><span class="storage-state">Supabase جاهز</span><h2>تسجيل دخول مالك المنصة</h2><p>${escapeHtml(state.sourceStorageMessage)}</p></div>
+      <div class="owner-login-grid">
+        <label class="field"><span>البريد الإلكتروني</span><input id="owner-email" type="email" autocomplete="username" placeholder="owner@example.com"/></label>
+        <label class="field"><span>كلمة المرور</span><input id="owner-password" type="password" autocomplete="current-password" placeholder="••••••••"/></label>
+        <button class="primary-btn" data-action="owner-login" ${busy}>${state.sourceStorageBusy ? "جارٍ الاتصال…" : "تسجيل الدخول"}</button>
+      </div>
+    </section>`;
+  }
+  if (state.sourceStorageStatus === "خطأ") {
+    return `<section class="central-storage-card error-mode" aria-label="خطأ التخزين المركزي">
+      <div><span class="storage-state">تعذر الاتصال</span><h2>السجل المحلي ما زال محفوظًا</h2><p>${escapeHtml(state.sourceStorageMessage)}</p></div>
+      <div class="storage-actions"><button class="secondary-btn compact" data-action="refresh-central-sources" ${busy}>إعادة المحاولة</button><button class="ghost-btn compact" data-action="owner-logout">تسجيل الخروج</button></div>
+    </section>`;
+  }
+  return `<section class="central-storage-card connected-mode" aria-label="التخزين المركزي متصل">
+    <div><span class="storage-state">متصل مركزيًا</span><h2>سجل المصادر موحّد بين الأجهزة</h2><p>الحساب: <b dir="ltr">${escapeHtml(state.ownerEmail)}</b>. تُحفظ التغييرات في Supabase مع إبقاء نسخة محلية احتياطية.</p></div>
+    <div class="storage-actions"><button class="secondary-btn compact" data-action="refresh-central-sources" ${busy}>${state.sourceStorageBusy ? "جارٍ المزامنة…" : "مزامنة الآن"}</button><button class="ghost-btn compact" data-action="owner-logout">تسجيل الخروج</button></div>
+  </section>`;
+}
+
 function renderAdmin(): string {
   const activeSources = state.sources.filter((source) => source.status !== "مؤرشف").length;
   const indexedSources = state.sources.filter((source) => source.status === "مفهرس").length;
@@ -403,7 +450,9 @@ function renderAdmin(): string {
   const visibleSources = state.sources.filter((source) => state.sourceFilter === "الكل" || source.status === state.sourceFilter);
   const selectedSource = state.sources.find((source) => source.id === state.selectedSourceId);
   return `
-    <section class="page-heading"><div><span class="eyebrow">لوحة مالك المنصة</span><h1>إدارة المصادر</h1><p>سجل منظم للمصادر قبل ربط التخزين السحابي. كل مصدر له رقم فهرسة، ومسار، وحالة واضحة، والنسخة الاحتياطية بيدك بدل أن تكون رهينة لمتصفح قرر النسيان.</p></div><span class="demo-badge">Phase 0-D · سجل محلي منظم</span></section>
+    <section class="page-heading"><div><span class="eyebrow">لوحة مالك المنصة</span><h1>إدارة المصادر</h1><p>سجل مصادر مركزي يعمل عبر Supabase عند تسجيل الدخول، مع نسخة محلية احتياطية تحفظ عملك عند تعذر الاتصال.</p></div><span class="demo-badge">Phase 0-E · تخزين مركزي</span></section>
+
+    ${renderSourceStoragePanel()}
 
     <section class="source-stats" aria-label="ملخص المصادر">
       <article><span>المصادر النشطة</span><strong>${activeSources}</strong></article>
@@ -418,7 +467,7 @@ function renderAdmin(): string {
     </section>
 
     <section class="registry-actions" aria-label="نسخ سجل المصادر">
-      <div><h2>نسخة احتياطية لسجل المصادر</h2><p>التصدير يحفظ بيانات السجل فقط، لا ملفات PDF نفسها. الملفات الفعلية ستدخل Drive في مرحلة التكامل.</p></div>
+      <div><h2>نسخة احتياطية لسجل المصادر</h2><p>التصدير يبقى نسخة احتياطية مستقلة عن التخزين المركزي. ملفات PDF نفسها ستدخل Google Drive في مرحلة تكامل لاحقة.</p></div>
       <div class="registry-buttons">
         <button class="secondary-btn compact" data-action="export-source-registry">تصدير JSON</button>
         <label class="ghost-btn compact file-button">استيراد JSON<input id="source-registry-file" type="file" accept="application/json,.json"/></label>
@@ -457,7 +506,7 @@ function renderSourceForm(): string {
         <label class="field"><span>الصف</span><select id="source-grade"><option value="">اختر الصف</option>${Array.from({ length: 12 }, (_, index) => index + 1).map((grade) => `<option value="${grade}" ${draft.grade === grade ? "selected" : ""}>الصف ${grade}</option>`).join("")}</select>${issueFor("grade") ? `<small class="field-error">${issueFor("grade")}</small>` : ""}</label>
         <label class="field"><span>المادة</span><select id="source-subject" ${draft.grade ? "" : "disabled"}><option value="">اختر المادة</option>${availableSourceSubjects.map((subject) => `<option value="${subject.id}" ${draft.subjectId === subject.id ? "selected" : ""}>${subject.label}</option>`).join("")}</select>${issueFor("subjectId") ? `<small class="field-error">${issueFor("subjectId")}</small>` : ""}</label>
         ${draft.mode === "file" ? `
-          <label class="field full"><span>ملف PDF</span><input id="source-file" type="file" accept="application/pdf,.pdf"/><small>${draft.fileName ? `الملف المختار: ${escapeHtml(draft.fileName)}` : "في هذه المرحلة نحفظ اسم الملف فقط لاختبار الواجهة."}</small>${issueFor("fileName") ? `<small class="field-error">${issueFor("fileName")}</small>` : ""}</label>
+          <label class="field full"><span>ملف PDF</span><input id="source-file" type="file" accept="application/pdf,.pdf"/><small>${draft.fileName ? `الملف المختار: ${escapeHtml(draft.fileName)}` : "في هذه المرحلة يُحفظ سجل الملف وبياناته، أما رفع ملف PDF نفسه فمؤجل لتكامل Google Drive."}</small>${issueFor("fileName") ? `<small class="field-error">${issueFor("fileName")}</small>` : ""}</label>
         ` : `
           <label class="field full"><span>رابط المصدر</span><input id="source-url" type="url" value="${escapeHtml(draft.url)}" placeholder="https://example.org/source"/>${issueFor("url") ? `<small class="field-error">${issueFor("url")}</small>` : ""}</label>
           <label class="rights-check full"><input id="source-rights" type="checkbox" ${draft.rightsConfirmed ? "checked" : ""}/><span>راجعت حقوق الاستخدام وسياسة الموقع، وأسمح بتسجيل الرابط كمصدر مركزي.</span></label>
@@ -465,7 +514,7 @@ function renderSourceForm(): string {
         `}
       </div>
       <div class="drive-path-preview"><span>المسار المقترح في Google Drive</span><code>${escapeHtml(path)}</code><small>معاينة فقط. النقل الحقيقي إلى Drive سيأتي في مرحلة تكامل مستقلة.</small></div>
-      <footer><button class="secondary-btn" data-action="close-source-form">إلغاء</button><button class="primary-btn" data-action="save-source">حفظ المصدر محليًا</button></footer>
+      <footer><button class="secondary-btn" data-action="close-source-form">إلغاء</button><button class="primary-btn" data-action="save-source">${state.sourceStorageStatus === "متصل" ? "حفظ في السجل المركزي" : "حفظ المصدر"}</button></footer>
     </section>
   `;
 }
@@ -572,6 +621,18 @@ function handleAction(action: string, element: HTMLElement): void {
   }
   if (action === "mock-download") {
     showToast("التصدير الحقيقي مؤجل لمرحلة التصدير.");
+    return;
+  }
+  if (action === "owner-login") {
+    void signInOwner();
+    return;
+  }
+  if (action === "owner-logout") {
+    void signOutOwner();
+    return;
+  }
+  if (action === "refresh-central-sources") {
+    void loadAndSyncCentralSources();
     return;
   }
   if (action === "open-source-form") {
@@ -896,7 +957,11 @@ function saveSourceFromForm(): void {
   state.sourceFormOpen = false;
   state.sourceDraft = createEmptySourceDraft();
   render();
-  showToast("تم حفظ المصدر محليًا وأصبح جاهزًا للفهرسة.");
+  if (state.sourceStorageStatus === "متصل") {
+    void persistSourcesCentrally([source], "تم حفظ المصدر في السجل المركزي.");
+  } else {
+    showToast("تم حفظ المصدر محليًا، وسيُنقل إلى السجل المركزي بعد الاتصال.");
+  }
 }
 
 function exportSourceRegistry(): void {
@@ -923,14 +988,126 @@ async function importSourceRegistry(file: File): Promise<void> {
   state.sources = merged.sources;
   saveSources(state.sources);
   render();
-  showToast(`تمت إضافة ${merged.addedCount} وتجاوز ${merged.skippedCount} مصدر مكرر.`);
+  const message = `تمت إضافة ${merged.addedCount} وتجاوز ${merged.skippedCount} مصدر مكرر.`;
+  if (state.sourceStorageStatus === "متصل" && merged.addedCount > 0) {
+    void persistSourcesCentrally(state.sources, message);
+  } else {
+    showToast(message);
+  }
 }
 
 function updateSourceStatus(sourceId: string, status: SourceStatus, message: string): void {
   state.sources = changeSourceStatus(state.sources, sourceId, status);
   saveSources(state.sources);
+  const updated = state.sources.find((source) => source.id === sourceId);
   render();
-  showToast(message);
+  if (state.sourceStorageStatus === "متصل" && centralSourceStore && updated) {
+    void centralSourceStore.updateStatus(sourceId, status, updated.updatedAt)
+      .then(() => showToast(message))
+      .catch((error: unknown) => markCentralStorageError(error));
+  } else {
+    showToast(message);
+  }
+}
+
+async function signInOwner(): Promise<void> {
+  if (!centralSourceStore) return;
+  const email = document.querySelector<HTMLInputElement>("#owner-email")?.value.trim() ?? "";
+  const password = document.querySelector<HTMLInputElement>("#owner-password")?.value ?? "";
+  if (!email || !password) {
+    showToast("أدخل البريد الإلكتروني وكلمة المرور.");
+    return;
+  }
+  state.sourceStorageBusy = true;
+  render();
+  try {
+    const session = await centralSourceStore.signIn(email, password);
+    state.ownerEmail = session.email;
+    await loadAndSyncCentralSources();
+  } catch (error) {
+    state.sourceStorageStatus = "يتطلب تسجيل الدخول";
+    state.sourceStorageMessage = error instanceof Error ? error.message : "تعذر تسجيل الدخول.";
+    state.sourceStorageBusy = false;
+    render();
+    showToast(state.sourceStorageMessage);
+  }
+}
+
+async function signOutOwner(): Promise<void> {
+  if (!centralSourceStore) return;
+  state.sourceStorageBusy = true;
+  render();
+  await centralSourceStore.signOut();
+  state.sourceStorageStatus = "يتطلب تسجيل الدخول";
+  state.sourceStorageMessage = "تم تسجيل الخروج. تبقى النسخة المحلية متاحة على هذا الجهاز.";
+  state.sourceStorageBusy = false;
+  state.ownerEmail = "";
+  render();
+}
+
+async function loadAndSyncCentralSources(): Promise<void> {
+  if (!centralSourceStore?.currentSession) {
+    state.sourceStorageStatus = "يتطلب تسجيل الدخول";
+    state.sourceStorageBusy = false;
+    render();
+    return;
+  }
+  state.sourceStorageBusy = true;
+  state.sourceStorageMessage = "جارٍ مزامنة سجل المصادر…";
+  render();
+  try {
+    const localSources = loadSources() ?? [];
+    if (localSources.length) await centralSourceStore.upsertSources(localSources);
+    const remoteSources = await centralSourceStore.listSources();
+    state.sources = remoteSources;
+    saveSources(remoteSources);
+    state.sourceStorageStatus = "متصل";
+    state.sourceStorageMessage = "تمت مزامنة سجل المصادر المركزي.";
+    state.sourceStorageBusy = false;
+    state.ownerEmail = centralSourceStore.currentSession?.email ?? state.ownerEmail;
+    render();
+    showToast("تمت مزامنة سجل المصادر المركزي.");
+  } catch (error) {
+    markCentralStorageError(error);
+  }
+}
+
+async function persistSourcesCentrally(sources: ManagedSource[], successMessage: string): Promise<void> {
+  if (!centralSourceStore?.currentSession) return;
+  state.sourceStorageBusy = true;
+  render();
+  try {
+    await centralSourceStore.upsertSources(sources);
+    const remoteSources = await centralSourceStore.listSources();
+    state.sources = remoteSources;
+    saveSources(remoteSources);
+    state.sourceStorageStatus = "متصل";
+    state.sourceStorageBusy = false;
+    render();
+    showToast(successMessage);
+  } catch (error) {
+    markCentralStorageError(error);
+  }
+}
+
+function markCentralStorageError(error: unknown): void {
+  state.sourceStorageStatus = "خطأ";
+  state.sourceStorageMessage = error instanceof Error ? error.message : "تعذر الاتصال بالتخزين المركزي.";
+  state.sourceStorageBusy = false;
+  render();
+  showToast("تعذر الحفظ المركزي؛ احتُفظ بالنسخة المحلية.");
+}
+
+async function bootstrapCentralStorage(): Promise<void> {
+  if (!centralSourceStore) return;
+  const session = centralSourceStore.restoreSession();
+  if (!session) {
+    state.sourceStorageStatus = "يتطلب تسجيل الدخول";
+    render();
+    return;
+  }
+  state.ownerEmail = session.email;
+  await loadAndSyncCentralSources();
 }
 
 function renderTopSaveState(): void {
@@ -941,3 +1118,4 @@ function renderTopSaveState(): void {
 }
 
 render();
+void bootstrapCentralStorage();
