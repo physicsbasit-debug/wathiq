@@ -45,6 +45,8 @@ interface SourceRow {
 
 type FetchLike = typeof fetch;
 
+const browserFetch: FetchLike = (input, init) => globalThis.fetch(input, init);
+
 function errorMessage(payload: unknown, fallback: string): string {
   if (typeof payload !== "object" || payload === null) return fallback;
   const record = payload as Record<string, unknown>;
@@ -134,7 +136,7 @@ export function rowToSource(row: unknown): ManagedSource | null {
 export class CentralSourceStore {
   private session: OwnerSession | null = null;
 
-  constructor(private readonly config: WathiqRuntimeConfig, private readonly fetcher: FetchLike = fetch) {}
+  constructor(private readonly config: WathiqRuntimeConfig, private readonly fetcher: FetchLike = browserFetch) {}
 
   get currentSession(): OwnerSession | null {
     return this.session;

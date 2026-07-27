@@ -89,3 +89,32 @@ test("يسجل دخول المالك ويحفظ ويقرأ ويحدّث المص
 test("يرفض صفًا مركزيًا ناقصًا بدل إدخاله إلى سجل واثق", () => {
   assert.equal(rowToSource({ id: "broken" }), null);
 });
+
+
+test("يستدعي fetch الافتراضي بسياق globalThis دون Illegal invocation", async () => {
+  memory.clear();
+  const originalFetch = globalThis.fetch;
+  const ownerId = "11111111-1111-1111-1111-111111111111";
+
+  globalThis.fetch = async function (url) {
+    assert.equal(this, globalThis);
+    assert.match(String(url), /\/auth\/v1\/token\?grant_type=password$/);
+    return Response.json({
+      access_token: "user-jwt",
+      refresh_token: "refresh-jwt",
+      expires_in: 3600,
+      user: { id: ownerId, email: "owner@example.com" },
+    });
+  };
+
+  try {
+    const store = new CentralSourceStore({
+      supabaseUrl: "https://project.supabase.co",
+      supabasePublishableKey: "sb_publishable_test",
+    });
+    const session = await store.signIn("owner@example.com", "secret");
+    assert.equal(session.userId, ownerId);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
