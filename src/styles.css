@@ -611,3 +611,40 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
 @media (max-width: 640px) {
   .drive-connection-card .storage-actions > * { width: 100%; justify-content: center; }
 }
+
+/* Phase 0-F2: رفع ملفات PDF الفعلي واستكماله */
+.pending-upload-card {
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 22px;
+  padding: 20px 22px;
+  border-radius: 18px;
+  border: 1px solid #e1bf74;
+  background: #fffaf0;
+}
+
+.pending-upload-card h2 { margin: 5px 0 7px; color: var(--navy-deep); }
+.pending-upload-card p { margin: 0; color: var(--muted); line-height: 1.7; }
+.upload-progress-track { height: 9px; border-radius: 99px; background: #e5eaf0; overflow: hidden; margin-top: 12px; }
+.upload-progress-track span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--navy), #2b77bd); transition: width .2s ease; }
+.source-upload-progress { margin-top: 14px; padding: 14px 15px; border: 1px solid #b9cbe0; border-radius: 13px; background: #f7faff; }
+.source-upload-progress > div:first-child { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.source-upload-progress strong { color: var(--navy-deep); }
+.source-upload-progress > div:first-child span { direction: ltr; color: var(--navy); font-weight: 900; }
+.source-state-stack { display: grid; justify-items: start; gap: 5px; }
+.upload-state { display: inline-flex; padding: 4px 8px; border-radius: 999px; font-size: 11px; font-weight: 800; }
+.upload-state.upload-done { color: #17673f; background: #e8f5ef; }
+.upload-state.upload-archived { color: #5f6876; background: #eceff3; }
+.upload-state.upload-pending { color: #725713; background: var(--gold-soft); }
+.source-drive-link { margin-top: 12px; width: fit-content; }
+
+@media (max-width: 900px) {
+  .pending-upload-card { flex-direction: column; align-items: stretch; }
+}
+
+@media (max-width: 640px) {
+  .pending-upload-card .storage-actions > * { width: 100%; justify-content: center; }
+  .source-state-stack { justify-items: stretch; }
+}

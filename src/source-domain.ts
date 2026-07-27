@@ -70,8 +70,16 @@ export function findDuplicateSource(sources: ManagedSource[], draft: SourceDraft
   }) === fingerprint);
 }
 
+export function findDuplicateContentSource(
+  sources: ManagedSource[],
+  contentFingerprint: string,
+): ManagedSource | undefined {
+  return sources.find((source) => source.contentFingerprint === contentFingerprint);
+}
+
 function buildCatalogCode(draft: SourceDraft, now: Date): string {
-  const authorityCode = authorityForKind(draft.kind) === "منهج عُماني" ? "OM" : authorityForKind(draft.kind) === "كامبريدج" ? "CA" : "GL";
+  const authority = authorityForKind(draft.kind);
+  const authorityCode = authority === "منهج عُماني" ? "OM" : authority === "كامبريدج" ? "CA" : "GL";
   const subjectCode = SUBJECT_CODES[draft.subjectId] ?? "GEN";
   const kindCode = KIND_CODES[draft.kind];
   const versionCode = draft.version.replace(/[^0-9A-Za-z]+/g, "").slice(0, 8).toUpperCase() || "V1";
@@ -93,7 +101,7 @@ export function createEmptySourceDraft(mode: SourceMode = "file"): SourceDraft {
   };
 }
 
-function folderForKind(kind: SourceKind): string {
+export function folderForKind(kind: SourceKind): string {
   if (kind === "كتاب الطالب") return "كتاب_الطالب";
   if (kind === "دليل المعلم") return "دليل_المعلم";
   if (kind === "نواتج التعلم") return "نواتج_التعلم";
@@ -102,22 +110,25 @@ function folderForKind(kind: SourceKind): string {
   return "مصادر_مساندة";
 }
 
-function safeSegment(value: string): string {
+export function safeDriveSegment(value: string): string {
   return value.trim().replace(/[\/:*?"<>|]+/g, "-").replace(/\s+/g, "_") || "غير_محدد";
 }
 
+export function sourceSubjectLabel(subjectId: string): string {
+  return SUBJECTS.find((item) => item.id === subjectId)?.label ?? "مادة_غير_محددة";
+}
+
 export function buildSourceDrivePath(draft: Pick<SourceDraft, "grade" | "subjectId" | "kind">): string {
-  const subject = SUBJECTS.find((item) => item.id === draft.subjectId)?.label ?? "مادة_غير_محددة";
-  const subjectSegment = safeSegment(subject);
+  const subjectSegment = safeDriveSegment(sourceSubjectLabel(draft.subjectId));
   const gradeSegment = draft.grade ? `الصف_${String(draft.grade).padStart(2, "0")}` : "صف_غير_محدد";
 
   if (draft.kind === "اختبار كامبريدج") {
-    return `واثق/01_مصادر_المنصة/اختبارات_كامبريدج/${subjectSegment}/غير_مصنف/${folderForKind(draft.kind)}/`;
+    return `واثق/01_مصادر_المنصة/02_اختبارات_كامبريدج/${subjectSegment}/${gradeSegment}/${folderForKind(draft.kind)}/`;
   }
   if (draft.kind === "مصدر عالمي") {
-    return `واثق/01_مصادر_المنصة/مصادر_عالمية_إضافية/${subjectSegment}/${gradeSegment}/`;
+    return `واثق/01_مصادر_المنصة/03_مصادر_عالمية/${subjectSegment}/${gradeSegment}/مصادر_مساندة/`;
   }
-  return `واثق/01_مصادر_المنصة/المنهج_العماني/${gradeSegment}/${subjectSegment}/${folderForKind(draft.kind)}/`;
+  return `واثق/01_مصادر_المنصة/01_المنهج_العماني/${gradeSegment}/${subjectSegment}/${folderForKind(draft.kind)}/`;
 }
 
 export function validateSourceDraft(draft: SourceDraft): SourceValidation {
@@ -137,7 +148,7 @@ export function validateSourceDraft(draft: SourceDraft): SourceValidation {
   if (draft.mode === "url") {
     try {
       const parsed = new URL(draft.url);
-      if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('invalid');
+      if (!["http:", "https:"].includes(parsed.protocol)) throw new Error("invalid");
     } catch {
       issues.push({ field: "url", message: "أدخل رابطًا صحيحًا يبدأ بـ http أو https." });
     }
@@ -163,7 +174,7 @@ export function createManagedSource(draft: SourceDraft, now = new Date()): Manag
     grade: draft.grade,
     subjectId: draft.subjectId,
     version: draft.version.trim(),
-    ...(draft.mode === "file" ? { fileName: draft.fileName } : { url: draft.url.trim() }),
+    ...(draft.mode === "file" ? { fileName: draft.fileName, uploadState: "غير مرفوع" as const } : { url: draft.url.trim() }),
     rightsConfirmed: draft.mode === "file" ? true : draft.rightsConfirmed,
     status: "جاهز للفهرسة",
     drivePath: buildSourceDrivePath(draft),

@@ -22,7 +22,7 @@ function validFileDraft() {
 
 test("يبني مسار Drive للمصدر العماني بحسب الصف والمادة والنوع", () => {
   const path = buildSourceDrivePath(validFileDraft());
-  assert.equal(path, "واثق/01_مصادر_المنصة/المنهج_العماني/الصف_10/الفيزياء/كتاب_الطالب/");
+  assert.equal(path, "واثق/01_مصادر_المنصة/01_المنهج_العماني/الصف_10/الفيزياء/كتاب_الطالب/");
 });
 
 test("يضع اختبار كامبريدج في مساره المستقل", () => {
@@ -30,7 +30,7 @@ test("يضع اختبار كامبريدج في مساره المستقل", () =
   draft.kind = "اختبار كامبريدج";
   assert.equal(
     buildSourceDrivePath(draft),
-    "واثق/01_مصادر_المنصة/اختبارات_كامبريدج/الفيزياء/غير_مصنف/أوراق_الأسئلة/",
+    "واثق/01_مصادر_المنصة/02_اختبارات_كامبريدج/الفيزياء/الصف_10/أوراق_الأسئلة/",
   );
 });
 
@@ -81,4 +81,9 @@ test("يكشف المصدر المكرر قبل الحفظ", () => {
   const existing = createManagedSource(validFileDraft(), new Date("2026-07-25T10:00:00Z"));
   const duplicate = findDuplicateSource([existing], validFileDraft());
   assert.equal(duplicate?.id, existing.id);
+});
+
+test("يبدأ المصدر الملفي بحالة غير مرفوع", () => {
+  const source = createManagedSource(validFileDraft(), new Date("2026-07-25T10:00:00Z"));
+  assert.equal(source.uploadState, "غير مرفوع");
 });
