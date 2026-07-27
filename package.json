@@ -1,9 +1,9 @@
 {
   "name": "wathiq",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "private": true,
   "type": "module",
-  "description": "واثق: تجربة المعلم وسجل المصادر المركزي للمرحلة 0-E مع إصلاح استدعاء fetch في المتصفح",
+  "description": "واثق: ربط Google Drive الآمن وإنشاء مجلدات المنصة الأساسية في Phase 0-F1",
   "scripts": {
     "build": "node scripts/build.mjs",
     "dev": "node scripts/serve.mjs",

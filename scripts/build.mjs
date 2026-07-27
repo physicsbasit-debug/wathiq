@@ -18,6 +18,7 @@ await cp("src/styles.css", "dist/assets/styles.css");
 const runtimeConfig = {
   supabaseUrl: process.env.WATHIQ_SUPABASE_URL ?? "",
   supabasePublishableKey: process.env.WATHIQ_SUPABASE_PUBLISHABLE_KEY ?? "",
+  googleOAuthClientId: process.env.WATHIQ_GOOGLE_OAUTH_CLIENT_ID ?? "",
 };
 await (await import("node:fs/promises")).writeFile(
   "dist/runtime-config.js",
