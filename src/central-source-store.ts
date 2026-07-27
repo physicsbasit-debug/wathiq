@@ -142,6 +142,10 @@ export class CentralSourceStore {
     return this.session;
   }
 
+  async getActiveSession(): Promise<OwnerSession> {
+    return this.requireSession();
+  }
+
   restoreSession(): OwnerSession | null {
     const raw = localStorage.getItem(SESSION_KEY);
     if (!raw) return null;

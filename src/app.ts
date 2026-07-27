@@ -13,7 +13,8 @@ import { escapeHtml, formatArabicDate, icon } from "./ui.js";
 import { buildSourceDrivePath, changeSourceStatus, createEmptySourceDraft, createManagedSource, findDuplicateSource, SOURCE_KINDS, validateSourceDraft } from "./source-domain.js";
 import { createRegistryBackup, mergeSourceRegistry, parseRegistryBackup } from "./source-registry.js";
 import { CentralSourceStore } from "./central-source-store.js";
-import { getRuntimeConfig, isCentralStorageConfigured } from "./runtime-config.js";
+import { getRuntimeConfig, isCentralStorageConfigured, isGoogleDriveConfigured } from "./runtime-config.js";
+import { GoogleDriveService, type GoogleDriveStatus } from "./google-drive.js";
 
 const appRoot = document.querySelector<HTMLDivElement>("#app");
 if (!appRoot) throw new Error("تعذر العثور على جذر التطبيق.");
@@ -34,11 +35,20 @@ interface AppState {
   sourceStorageMessage: string;
   sourceStorageBusy: boolean;
   ownerEmail: string;
+  driveStatus: "غير مهيأ" | "يتطلب تسجيل الدخول" | "غير متصل" | "متصل" | "خطأ";
+  driveMessage: string;
+  driveBusy: boolean;
+  driveRootFolderUrl: string;
+  driveFoldersReady: boolean;
+  driveFolders: GoogleDriveStatus["folders"];
 }
 
 const runtimeConfig = getRuntimeConfig();
 const centralSourceStore = isCentralStorageConfigured(runtimeConfig)
   ? new CentralSourceStore(runtimeConfig)
+  : null;
+const googleDriveService = centralSourceStore && isGoogleDriveConfigured(runtimeConfig)
+  ? new GoogleDriveService(runtimeConfig, centralSourceStore)
   : null;
 
 const savedDraft = loadDraft();
@@ -66,6 +76,14 @@ const state: AppState = {
     : "لم تُضبط بيانات Supabase بعد؛ يعمل السجل محليًا فقط.",
   sourceStorageBusy: false,
   ownerEmail: "",
+  driveStatus: googleDriveService ? "يتطلب تسجيل الدخول" : "غير مهيأ",
+  driveMessage: googleDriveService
+    ? "سجّل دخول مالك المنصة أولًا، ثم اربط Google Drive مرة واحدة."
+    : "لم تُضبط بيانات Google OAuth بعد.",
+  driveBusy: false,
+  driveRootFolderUrl: "",
+  driveFoldersReady: false,
+  driveFolders: [],
 };
 
 let saveTimer: number | undefined;
@@ -177,7 +195,7 @@ function renderHome(): string {
   return `
     <section class="hero-panel">
       <div class="hero-copy">
-        <span class="eyebrow">نسخة المرحلة 0-D</span>
+        <span class="eyebrow">نسخة المرحلة 0-F1</span>
         <h1>أنشئ اختبارك القصير بثقة.</h1>
         <p>أربع خطوات واضحة. المصادر والفحوص وجدول المواصفات تعمل في الخلفية، حيث تنتمي التفاصيل المزعجة.</p>
         <div class="hero-actions">
@@ -443,6 +461,46 @@ function renderSourceStoragePanel(): string {
   </section>`;
 }
 
+function renderGoogleDrivePanel(): string {
+  const busy = state.driveBusy ? "disabled" : "";
+  if (!googleDriveService || state.driveStatus === "غير مهيأ") {
+    return `<section class="drive-connection-card setup-mode" aria-label="حالة Google Drive">
+      <div><span class="storage-state">إعداد غير مكتمل</span><h2>Google Drive غير مهيأ بعد</h2><p>${escapeHtml(state.driveMessage)}</p></div>
+      <span class="storage-note">أضف Google OAuth Client ID وانشر Edge Function لإتاحة الربط.</span>
+    </section>`;
+  }
+  if (state.sourceStorageStatus !== "متصل" || state.driveStatus === "يتطلب تسجيل الدخول") {
+    return `<section class="drive-connection-card waiting-mode" aria-label="Google Drive ينتظر تسجيل الدخول">
+      <div><span class="storage-state">Google Drive</span><h2>سجّل دخول مالك المنصة أولًا</h2><p>بعد تسجيل الدخول إلى Supabase سيظهر زر ربط Drive. خطوة واحدة، بلا مهرجان نوافذ.</p></div>
+    </section>`;
+  }
+  if (state.driveStatus === "خطأ") {
+    return `<section class="drive-connection-card error-mode" aria-label="خطأ Google Drive">
+      <div><span class="storage-state">تعذر الاتصال</span><h2>Google Drive يحتاج إعادة تحقق</h2><p>${escapeHtml(state.driveMessage)}</p></div>
+      <div class="storage-actions"><button class="secondary-btn compact" data-action="refresh-drive-status" ${busy}>إعادة المحاولة</button>${state.driveRootFolderUrl ? `<a class="ghost-btn compact" href="${escapeHtml(state.driveRootFolderUrl)}" target="_blank" rel="noreferrer">فتح المجلد</a>` : ""}</div>
+    </section>`;
+  }
+  if (state.driveStatus === "غير متصل") {
+    return `<section class="drive-connection-card disconnected-mode" aria-label="ربط Google Drive">
+      <div><span class="storage-state">Google Drive</span><h2>غير متصل</h2><p>${escapeHtml(state.driveMessage)}</p></div>
+      <button class="primary-btn" data-action="connect-google-drive" ${busy}>${state.driveBusy ? "جارٍ تجهيز الربط…" : "ربط Google Drive"}</button>
+    </section>`;
+  }
+  return `<section class="drive-connection-card connected-mode" aria-label="Google Drive متصل">
+    <div>
+      <span class="storage-state">متصل وجاهز</span>
+      <h2>مجلد واثق مرتبط بـ Google Drive</h2>
+      <p>${state.driveFoldersReady ? "تم التحقق من المجلدات الأساسية، ولن تُنشأ نسخ مكررة عند الفحص." : "الاتصال قائم، لكن يلزم التحقق من المجلدات الأساسية."}</p>
+      <div class="drive-folder-summary">${state.driveFolders.map((folder) => `<span>${icon("check")} ${escapeHtml(folder.name)}</span>`).join("")}</div>
+    </div>
+    <div class="storage-actions">
+      ${state.driveRootFolderUrl ? `<a class="secondary-btn compact" href="${escapeHtml(state.driveRootFolderUrl)}" target="_blank" rel="noreferrer">فتح مجلد واثق</a>` : ""}
+      <button class="ghost-btn compact" data-action="verify-drive-folders" ${busy}>${state.driveBusy ? "جارٍ التحقق…" : "التحقق من المجلدات"}</button>
+      <button class="danger-link compact" data-action="disconnect-google-drive" ${busy}>فصل الاتصال</button>
+    </div>
+  </section>`;
+}
+
 function renderAdmin(): string {
   const activeSources = state.sources.filter((source) => source.status !== "مؤرشف").length;
   const indexedSources = state.sources.filter((source) => source.status === "مفهرس").length;
@@ -450,9 +508,10 @@ function renderAdmin(): string {
   const visibleSources = state.sources.filter((source) => state.sourceFilter === "الكل" || source.status === state.sourceFilter);
   const selectedSource = state.sources.find((source) => source.id === state.selectedSourceId);
   return `
-    <section class="page-heading"><div><span class="eyebrow">لوحة مالك المنصة</span><h1>إدارة المصادر</h1><p>سجل مصادر مركزي يعمل عبر Supabase عند تسجيل الدخول، مع نسخة محلية احتياطية تحفظ عملك عند تعذر الاتصال.</p></div><span class="demo-badge">Phase 0-E · تخزين مركزي</span></section>
+    <section class="page-heading"><div><span class="eyebrow">لوحة مالك المنصة</span><h1>إدارة المصادر</h1><p>سجل مركزي عبر Supabase، وربط آمن مع Google Drive لإنشاء مجلدات واثق الأساسية دون تكرار.</p></div><span class="demo-badge">Phase 0-F1 · ربط Drive</span></section>
 
     ${renderSourceStoragePanel()}
+    ${renderGoogleDrivePanel()}
 
     <section class="source-stats" aria-label="ملخص المصادر">
       <article><span>المصادر النشطة</span><strong>${activeSources}</strong></article>
@@ -633,6 +692,22 @@ function handleAction(action: string, element: HTMLElement): void {
   }
   if (action === "refresh-central-sources") {
     void loadAndSyncCentralSources();
+    return;
+  }
+  if (action === "connect-google-drive") {
+    void connectGoogleDrive();
+    return;
+  }
+  if (action === "refresh-drive-status") {
+    void loadGoogleDriveStatus();
+    return;
+  }
+  if (action === "verify-drive-folders") {
+    void verifyGoogleDriveFolders();
+    return;
+  }
+  if (action === "disconnect-google-drive") {
+    void disconnectGoogleDrive();
     return;
   }
   if (action === "open-source-form") {
@@ -1042,6 +1117,7 @@ async function signOutOwner(): Promise<void> {
   state.sourceStorageMessage = "تم تسجيل الخروج. تبقى النسخة المحلية متاحة على هذا الجهاز.";
   state.sourceStorageBusy = false;
   state.ownerEmail = "";
+  resetGoogleDriveState("يتطلب تسجيل الدخول", "سجّل دخول مالك المنصة أولًا، ثم اربط Google Drive مرة واحدة.");
   render();
 }
 
@@ -1067,6 +1143,7 @@ async function loadAndSyncCentralSources(): Promise<void> {
     state.ownerEmail = centralSourceStore.currentSession?.email ?? state.ownerEmail;
     render();
     showToast("تمت مزامنة سجل المصادر المركزي.");
+    void loadGoogleDriveStatus();
   } catch (error) {
     markCentralStorageError(error);
   }
@@ -1090,6 +1167,115 @@ async function persistSourcesCentrally(sources: ManagedSource[], successMessage:
   }
 }
 
+function resetGoogleDriveState(
+  status: AppState["driveStatus"],
+  message: string,
+): void {
+  state.driveStatus = status;
+  state.driveMessage = message;
+  state.driveBusy = false;
+  state.driveRootFolderUrl = "";
+  state.driveFoldersReady = false;
+  state.driveFolders = [];
+}
+
+function applyGoogleDriveStatus(status: GoogleDriveStatus): void {
+  if (!status.connected) {
+    resetGoogleDriveState("غير متصل", "اربط حساب Google Drive الخاص بمالك المنصة لإنشاء مجلدات واثق الأساسية.");
+    return;
+  }
+  state.driveStatus = "متصل";
+  state.driveMessage = status.foldersReady ? "الاتصال والمجلدات الأساسية جاهزة." : "الاتصال قائم، ويلزم التحقق من المجلدات.";
+  state.driveBusy = false;
+  state.driveRootFolderUrl = status.rootFolderUrl;
+  state.driveFoldersReady = status.foldersReady;
+  state.driveFolders = status.folders;
+}
+
+async function connectGoogleDrive(): Promise<void> {
+  if (!googleDriveService || state.sourceStorageStatus !== "متصل") return;
+  state.driveBusy = true;
+  state.driveMessage = "جارٍ تجهيز صفحة موافقة Google…";
+  render();
+  try {
+    const authUrl = await googleDriveService.beginConnection();
+    window.location.assign(authUrl);
+  } catch (error) {
+    state.driveStatus = "خطأ";
+    state.driveMessage = error instanceof Error ? error.message : "تعذر بدء ربط Google Drive.";
+    state.driveBusy = false;
+    render();
+    showToast(state.driveMessage);
+  }
+}
+
+async function loadGoogleDriveStatus(): Promise<void> {
+  if (!googleDriveService) return;
+  if (!centralSourceStore?.currentSession || state.sourceStorageStatus !== "متصل") {
+    resetGoogleDriveState("يتطلب تسجيل الدخول", "سجّل دخول مالك المنصة أولًا، ثم اربط Google Drive مرة واحدة.");
+    render();
+    return;
+  }
+  state.driveBusy = true;
+  render();
+  try {
+    applyGoogleDriveStatus(await googleDriveService.getStatus());
+    render();
+  } catch (error) {
+    state.driveStatus = "خطأ";
+    state.driveMessage = error instanceof Error ? error.message : "تعذر قراءة حالة Google Drive.";
+    state.driveBusy = false;
+    render();
+  }
+}
+
+async function verifyGoogleDriveFolders(): Promise<void> {
+  if (!googleDriveService || state.driveStatus !== "متصل") return;
+  state.driveBusy = true;
+  render();
+  try {
+    applyGoogleDriveStatus(await googleDriveService.verifyFolders());
+    render();
+    showToast("تم التحقق من مجلدات واثق دون إنشاء نسخ مكررة.");
+  } catch (error) {
+    state.driveStatus = "خطأ";
+    state.driveMessage = error instanceof Error ? error.message : "تعذر التحقق من مجلدات Google Drive.";
+    state.driveBusy = false;
+    render();
+    showToast(state.driveMessage);
+  }
+}
+
+async function disconnectGoogleDrive(): Promise<void> {
+  if (!googleDriveService) return;
+  if (!window.confirm("سيُفصل اتصال Google Drive فقط، ولن تُحذف المجلدات أو الملفات. هل تريد المتابعة؟")) return;
+  state.driveBusy = true;
+  render();
+  try {
+    await googleDriveService.disconnect();
+    resetGoogleDriveState("غير متصل", "تم فصل الاتصال. بقيت مجلدات واثق وملفاتها في Google Drive دون حذف.");
+    render();
+    showToast("تم فصل Google Drive دون حذف أي ملف.");
+  } catch (error) {
+    state.driveStatus = "خطأ";
+    state.driveMessage = error instanceof Error ? error.message : "تعذر فصل Google Drive.";
+    state.driveBusy = false;
+    render();
+    showToast(state.driveMessage);
+  }
+}
+
+function consumeGoogleDriveCallback(): { state: "connected" | "error"; message: string } | null {
+  const url = new URL(window.location.href);
+  const result = url.searchParams.get("drive");
+  if (result !== "connected" && result !== "error") return null;
+  const message = url.searchParams.get("message") ?? "";
+  url.searchParams.delete("drive");
+  url.searchParams.delete("message");
+  window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+  return { state: result, message };
+}
+
 function markCentralStorageError(error: unknown): void {
   state.sourceStorageStatus = "خطأ";
   state.sourceStorageMessage = error instanceof Error ? error.message : "تعذر الاتصال بالتخزين المركزي.";
@@ -1099,7 +1285,12 @@ function markCentralStorageError(error: unknown): void {
 }
 
 async function bootstrapCentralStorage(): Promise<void> {
-  if (!centralSourceStore) return;
+  const driveCallback = consumeGoogleDriveCallback();
+  if (driveCallback) state.view = "admin";
+  if (!centralSourceStore) {
+    render();
+    return;
+  }
   const session = centralSourceStore.restoreSession();
   if (!session) {
     state.sourceStorageStatus = "يتطلب تسجيل الدخول";
@@ -1108,6 +1299,18 @@ async function bootstrapCentralStorage(): Promise<void> {
   }
   state.ownerEmail = session.email;
   await loadAndSyncCentralSources();
+  if (driveCallback?.state === "error") {
+    state.driveStatus = "خطأ";
+    state.driveMessage = driveCallback.message || "لم يكتمل ربط Google Drive.";
+    state.driveBusy = false;
+    render();
+    showToast(state.driveMessage);
+    return;
+  }
+  if (driveCallback?.state === "connected") {
+    await loadGoogleDriveStatus();
+    showToast("تم ربط Google Drive وإنشاء مجلدات واثق الأساسية.");
+  }
 }
 
 function renderTopSaveState(): void {

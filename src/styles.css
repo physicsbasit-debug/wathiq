@@ -539,3 +539,75 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
   .storage-actions > * { width: 100%; justify-content: center; }
   .storage-actions { flex-direction: column; }
 }
+
+/* Phase 0-F1: ربط Google Drive وإنشاء المجلدات الأساسية */
+.drive-connection-card {
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 22px;
+  padding: 20px 22px;
+  border-radius: 18px;
+  border: 1px solid var(--border);
+  background: #fff;
+}
+
+.drive-connection-card h2 {
+  margin: 5px 0 7px;
+  color: var(--navy-deep);
+}
+
+.drive-connection-card p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.drive-connection-card.setup-mode { background: #fffaf0; border-color: #e7d09b; }
+.drive-connection-card.waiting-mode { background: #f7faff; border-color: #b9cbe0; }
+.drive-connection-card.disconnected-mode { background: #f8f9fc; border-color: #c9d3e0; }
+.drive-connection-card.connected-mode { background: #f1fbf6; border-color: #9ed6b4; }
+.drive-connection-card.error-mode { background: #fff5f5; border-color: #e4b2b2; }
+
+.drive-folder-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.drive-folder-summary span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 9px;
+  border-radius: 999px;
+  background: rgba(20, 120, 73, .08);
+  color: #17673f;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.danger-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  color: #a83232;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.danger-link:hover { text-decoration: underline; }
+.danger-link:disabled { opacity: .55; cursor: not-allowed; }
+
+@media (max-width: 900px) {
+  .drive-connection-card { flex-direction: column; align-items: stretch; }
+}
+
+@media (max-width: 640px) {
+  .drive-connection-card .storage-actions > * { width: 100%; justify-content: center; }
+}
