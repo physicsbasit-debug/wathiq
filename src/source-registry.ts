@@ -34,8 +34,28 @@ export function normalizeManagedSource(value: unknown): ManagedSource | null {
     ? value.catalogCode
     : `WTH-LEGACY-${partial.id.slice(-8).toUpperCase()}`;
 
+  const optionalStrings = [
+    "contentFingerprint",
+    "mimeType",
+    "driveFileId",
+    "driveParentFolderId",
+    "driveOriginalParentFolderId",
+    "driveWebViewLink",
+    "driveMd5Checksum",
+    "uploadState",
+    "uploadedAt",
+  ] as const;
+  const optionalValues: Record<string, string | number> = {};
+  optionalStrings.forEach((key) => {
+    if (typeof value[key] === "string" && value[key]) optionalValues[key] = value[key] as string;
+  });
+  if (typeof value.fileSizeBytes === "number" && Number.isFinite(value.fileSizeBytes) && value.fileSizeBytes >= 0) {
+    optionalValues.fileSizeBytes = value.fileSizeBytes;
+  }
+
   return {
     ...partial,
+    ...optionalValues,
     catalogCode,
     fingerprint,
     authority: authorityForKind(partial.kind),

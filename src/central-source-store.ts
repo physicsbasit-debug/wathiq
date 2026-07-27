@@ -41,6 +41,16 @@ interface SourceRow {
   drive_path: string;
   created_at: string;
   updated_at: string;
+  content_fingerprint: string | null;
+  file_size_bytes: number | null;
+  mime_type: string | null;
+  drive_file_id: string | null;
+  drive_parent_folder_id: string | null;
+  drive_original_parent_folder_id: string | null;
+  drive_web_view_link: string | null;
+  drive_md5_checksum: string | null;
+  upload_state: string | null;
+  uploaded_at: string | null;
 }
 
 type FetchLike = typeof fetch;
@@ -105,6 +115,16 @@ export function sourceToRow(source: ManagedSource, ownerId: string): SourceRow {
     drive_path: source.drivePath,
     created_at: source.createdAt,
     updated_at: source.updatedAt,
+    content_fingerprint: source.contentFingerprint ?? null,
+    file_size_bytes: source.fileSizeBytes ?? null,
+    mime_type: source.mimeType ?? null,
+    drive_file_id: source.driveFileId ?? null,
+    drive_parent_folder_id: source.driveParentFolderId ?? null,
+    drive_original_parent_folder_id: source.driveOriginalParentFolderId ?? null,
+    drive_web_view_link: source.driveWebViewLink ?? null,
+    drive_md5_checksum: source.driveMd5Checksum ?? null,
+    upload_state: source.uploadState ?? null,
+    uploaded_at: source.uploadedAt ?? null,
   };
 }
 
@@ -130,6 +150,21 @@ export function rowToSource(row: unknown): ManagedSource | null {
   };
   if (typeof value.file_name === "string") candidate.fileName = value.file_name;
   if (typeof value.url === "string") candidate.url = value.url;
+  const optionalStringFields: Array<[string, string]> = [
+    ["content_fingerprint", "contentFingerprint"],
+    ["mime_type", "mimeType"],
+    ["drive_file_id", "driveFileId"],
+    ["drive_parent_folder_id", "driveParentFolderId"],
+    ["drive_original_parent_folder_id", "driveOriginalParentFolderId"],
+    ["drive_web_view_link", "driveWebViewLink"],
+    ["drive_md5_checksum", "driveMd5Checksum"],
+    ["upload_state", "uploadState"],
+    ["uploaded_at", "uploadedAt"],
+  ];
+  optionalStringFields.forEach(([rowKey, sourceKey]) => {
+    if (typeof value[rowKey] === "string" && value[rowKey]) candidate[sourceKey] = value[rowKey];
+  });
+  if (typeof value.file_size_bytes === "number") candidate.fileSizeBytes = value.file_size_bytes;
   return normalizeManagedSource(candidate);
 }
 

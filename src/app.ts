@@ -10,11 +10,11 @@ import {
 import { clearDraft, loadDraft, loadProfile, loadSources, saveDraft, saveProfile, saveSources } from "./storage.js";
 import type { ExamDraft, ManagedSource, PlanItem, QuestionCounts, SourceDraft, SourceStatus, ViewName, WizardStep } from "./types.js";
 import { escapeHtml, formatArabicDate, icon } from "./ui.js";
-import { buildSourceDrivePath, changeSourceStatus, createEmptySourceDraft, createManagedSource, findDuplicateSource, SOURCE_KINDS, validateSourceDraft } from "./source-domain.js";
+import { buildSourceDrivePath, changeSourceStatus, createEmptySourceDraft, createManagedSource, findDuplicateContentSource, findDuplicateSource, sourceSubjectLabel, SOURCE_KINDS, validateSourceDraft } from "./source-domain.js";
 import { createRegistryBackup, mergeSourceRegistry, parseRegistryBackup } from "./source-registry.js";
 import { CentralSourceStore } from "./central-source-store.js";
 import { getRuntimeConfig, isCentralStorageConfigured, isGoogleDriveConfigured } from "./runtime-config.js";
-import { GoogleDriveService, type GoogleDriveStatus } from "./google-drive.js";
+import { GoogleDriveService, type GoogleDriveStatus, type PendingSourceUpload, type SourceUploadProgress } from "./google-drive.js";
 
 const appRoot = document.querySelector<HTMLDivElement>("#app");
 if (!appRoot) throw new Error("تعذر العثور على جذر التطبيق.");
@@ -41,6 +41,11 @@ interface AppState {
   driveRootFolderUrl: string;
   driveFoldersReady: boolean;
   driveFolders: GoogleDriveStatus["folders"];
+  sourceFile: File | null;
+  sourceUploadBusy: boolean;
+  sourceUploadProgress: number;
+  sourceUploadMessage: string;
+  pendingSourceUpload: PendingSourceUpload | null;
 }
 
 const runtimeConfig = getRuntimeConfig();
@@ -84,6 +89,11 @@ const state: AppState = {
   driveRootFolderUrl: "",
   driveFoldersReady: false,
   driveFolders: [],
+  sourceFile: null,
+  sourceUploadBusy: false,
+  sourceUploadProgress: 0,
+  sourceUploadMessage: "",
+  pendingSourceUpload: googleDriveService?.getPendingUpload() ?? null,
 };
 
 let saveTimer: number | undefined;
@@ -501,6 +511,32 @@ function renderGoogleDrivePanel(): string {
   </section>`;
 }
 
+function formatFileSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 بايت";
+  const units = ["بايت", "ك.ب", "م.ب", "ج.ب"];
+  const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const value = bytes / 1024 ** index;
+  return `${value >= 10 || index === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[index]}`;
+}
+
+function renderPendingSourceUpload(): string {
+  const pending = state.pendingSourceUpload;
+  if (!pending) return "";
+  const percent = pending.fileSizeBytes > 0 ? Math.round((pending.bytesUploaded / pending.fileSizeBytes) * 100) : 0;
+  return `<section class="pending-upload-card" aria-label="رفع غير مكتمل">
+    <div>
+      <span class="storage-state">رفع غير مكتمل</span>
+      <h2>${escapeHtml(pending.source.title)}</h2>
+      <p>توقف رفع <b>${escapeHtml(pending.fileName)}</b> عند ${percent}%. افتح النموذج واختر الملف نفسه لاستكماله من آخر جزء محفوظ.</p>
+      <div class="upload-progress-track"><span style="width:${percent}%"></span></div>
+    </div>
+    <div class="storage-actions">
+      <button class="secondary-btn compact" data-action="resume-pending-upload">استكمال الرفع</button>
+      <button class="danger-link compact" data-action="cancel-pending-upload">إلغاء الجلسة</button>
+    </div>
+  </section>`;
+}
+
 function renderAdmin(): string {
   const activeSources = state.sources.filter((source) => source.status !== "مؤرشف").length;
   const indexedSources = state.sources.filter((source) => source.status === "مفهرس").length;
@@ -508,10 +544,11 @@ function renderAdmin(): string {
   const visibleSources = state.sources.filter((source) => state.sourceFilter === "الكل" || source.status === state.sourceFilter);
   const selectedSource = state.sources.find((source) => source.id === state.selectedSourceId);
   return `
-    <section class="page-heading"><div><span class="eyebrow">لوحة مالك المنصة</span><h1>إدارة المصادر</h1><p>سجل مركزي عبر Supabase، وربط آمن مع Google Drive لإنشاء مجلدات واثق الأساسية دون تكرار.</p></div><span class="demo-badge">Phase 0-F1 · ربط Drive</span></section>
+    <section class="page-heading"><div><span class="eyebrow">لوحة مالك المنصة</span><h1>إدارة المصادر</h1><p>رفع ملفات PDF فعليًا إلى Google Drive، وتسجيل بياناتها في Supabase، مع استكمال الرفع ومنع التكرار.</p></div><span class="demo-badge">Phase 0-F2 · رفع PDF</span></section>
 
     ${renderSourceStoragePanel()}
     ${renderGoogleDrivePanel()}
+    ${renderPendingSourceUpload()}
 
     <section class="source-stats" aria-label="ملخص المصادر">
       <article><span>المصادر النشطة</span><strong>${activeSources}</strong></article>
@@ -526,7 +563,7 @@ function renderAdmin(): string {
     </section>
 
     <section class="registry-actions" aria-label="نسخ سجل المصادر">
-      <div><h2>نسخة احتياطية لسجل المصادر</h2><p>التصدير يبقى نسخة احتياطية مستقلة عن التخزين المركزي. ملفات PDF نفسها ستدخل Google Drive في مرحلة تكامل لاحقة.</p></div>
+      <div><h2>نسخة احتياطية لسجل المصادر</h2><p>التصدير يحفظ بيانات السجل فقط. ملفات PDF المرفوعة تبقى داخل Google Drive ولا تُضمَّن في ملف JSON.</p></div>
       <div class="registry-buttons">
         <button class="secondary-btn compact" data-action="export-source-registry">تصدير JSON</button>
         <label class="ghost-btn compact file-button">استيراد JSON<input id="source-registry-file" type="file" accept="application/json,.json"/></label>
@@ -565,15 +602,16 @@ function renderSourceForm(): string {
         <label class="field"><span>الصف</span><select id="source-grade"><option value="">اختر الصف</option>${Array.from({ length: 12 }, (_, index) => index + 1).map((grade) => `<option value="${grade}" ${draft.grade === grade ? "selected" : ""}>الصف ${grade}</option>`).join("")}</select>${issueFor("grade") ? `<small class="field-error">${issueFor("grade")}</small>` : ""}</label>
         <label class="field"><span>المادة</span><select id="source-subject" ${draft.grade ? "" : "disabled"}><option value="">اختر المادة</option>${availableSourceSubjects.map((subject) => `<option value="${subject.id}" ${draft.subjectId === subject.id ? "selected" : ""}>${subject.label}</option>`).join("")}</select>${issueFor("subjectId") ? `<small class="field-error">${issueFor("subjectId")}</small>` : ""}</label>
         ${draft.mode === "file" ? `
-          <label class="field full"><span>ملف PDF</span><input id="source-file" type="file" accept="application/pdf,.pdf"/><small>${draft.fileName ? `الملف المختار: ${escapeHtml(draft.fileName)}` : "في هذه المرحلة يُحفظ سجل الملف وبياناته، أما رفع ملف PDF نفسه فمؤجل لتكامل Google Drive."}</small>${issueFor("fileName") ? `<small class="field-error">${issueFor("fileName")}</small>` : ""}</label>
+          <label class="field full"><span>ملف PDF</span><input id="source-file" type="file" accept="application/pdf,.pdf" ${state.sourceUploadBusy ? "disabled" : ""}/><small>${state.sourceFile ? `الملف المختار: ${escapeHtml(state.sourceFile.name)} · ${formatFileSize(state.sourceFile.size)}` : draft.fileName ? `اختر الملف نفسه لاستكمال رفع: ${escapeHtml(draft.fileName)}` : "اختر ملف PDF؛ سيُرفع فعليًا إلى المجلد الصحيح في Google Drive."}</small>${issueFor("fileName") ? `<small class="field-error">${issueFor("fileName")}</small>` : ""}</label>
         ` : `
           <label class="field full"><span>رابط المصدر</span><input id="source-url" type="url" value="${escapeHtml(draft.url)}" placeholder="https://example.org/source"/>${issueFor("url") ? `<small class="field-error">${issueFor("url")}</small>` : ""}</label>
           <label class="rights-check full"><input id="source-rights" type="checkbox" ${draft.rightsConfirmed ? "checked" : ""}/><span>راجعت حقوق الاستخدام وسياسة الموقع، وأسمح بتسجيل الرابط كمصدر مركزي.</span></label>
           ${issueFor("rightsConfirmed") ? `<p class="field-error full">${issueFor("rightsConfirmed")}</p>` : ""}
         `}
       </div>
-      <div class="drive-path-preview"><span>المسار المقترح في Google Drive</span><code>${escapeHtml(path)}</code><small>معاينة فقط. النقل الحقيقي إلى Drive سيأتي في مرحلة تكامل مستقلة.</small></div>
-      <footer><button class="secondary-btn" data-action="close-source-form">إلغاء</button><button class="primary-btn" data-action="save-source">${state.sourceStorageStatus === "متصل" ? "حفظ في السجل المركزي" : "حفظ المصدر"}</button></footer>
+      <div class="drive-path-preview"><span>مسار الحفظ في Google Drive</span><code>${escapeHtml(path)}</code><small>${draft.mode === "file" ? "سيُنشئ واثق المجلدات الناقصة تلقائيًا ثم يرفع الملف دون تكرار." : "الرابط يُحفظ في سجل المصادر ولا يُرفع كملف."}</small></div>
+      ${state.sourceUploadBusy || state.sourceUploadMessage ? `<div class="source-upload-progress" aria-live="polite"><div><strong>${escapeHtml(state.sourceUploadMessage || "جارٍ تجهيز الرفع…")}</strong><span>${state.sourceUploadProgress}%</span></div><div class="upload-progress-track"><span style="width:${state.sourceUploadProgress}%"></span></div></div>` : ""}
+      <footer><button class="secondary-btn" data-action="close-source-form" ${state.sourceUploadBusy ? "disabled" : ""}>إلغاء</button><button class="primary-btn" data-action="save-source" ${state.sourceUploadBusy ? "disabled" : ""}>${state.sourceUploadBusy ? "جارٍ الرفع…" : draft.mode === "file" ? (state.pendingSourceUpload ? "استكمال الرفع والحفظ" : "رفع وحفظ المصدر") : (state.sourceStorageStatus === "متصل" ? "حفظ في السجل المركزي" : "حفظ المصدر")}</button></footer>
     </section>
   `;
 }
@@ -591,11 +629,14 @@ function renderSourceDetails(source: ManagedSource): string {
         <div><span>المادة والصف</span><strong>${escapeHtml(subject)} · الصف ${source.grade}</strong></div>
         <div><span>الإصدار</span><strong>${escapeHtml(source.version)}</strong></div>
         <div><span>الحالة</span><strong>${escapeHtml(source.status)}</strong></div>
+        <div><span>حالة الملف</span><strong>${escapeHtml(source.uploadState ?? (source.mode === "url" ? "رابط" : "غير مرفوع"))}</strong></div>
+        <div><span>حجم الملف</span><strong>${source.fileSizeBytes ? formatFileSize(source.fileSizeBytes) : "—"}</strong></div>
         <div><span>أضيف في</span><strong>${formatArabicDate(source.createdAt.slice(0, 10))}</strong></div>
         <div><span>آخر تحديث</span><strong>${formatArabicDate(source.updatedAt.slice(0, 10))}</strong></div>
       </div>
       <div class="source-reference"><span>${source.mode === "file" ? "اسم الملف" : "الرابط"}</span><code>${escapeHtml(reference)}</code></div>
-      <div class="source-reference"><span>مسار Google Drive المقترح</span><code>${escapeHtml(source.drivePath)}</code></div>
+      <div class="source-reference"><span>مسار Google Drive</span><code>${escapeHtml(source.drivePath)}</code></div>
+      ${source.driveWebViewLink ? `<a class="secondary-btn compact source-drive-link" href="${escapeHtml(source.driveWebViewLink)}" target="_blank" rel="noreferrer">فتح الملف في Google Drive</a>` : ""}
     </section>
   `;
 }
@@ -608,8 +649,8 @@ function renderSourceRow(source: ManagedSource): string {
     : `<button class="text-btn" data-action="view-source" data-source-id="${source.id}">تفاصيل</button>${source.status !== "مفهرس" ? `<button class="text-btn" data-action="index-source" data-source-id="${source.id}">محاكاة الفهرسة</button>` : ""}<button class="text-btn danger-text" data-action="archive-source" data-source-id="${source.id}">أرشفة</button>`;
   return `<article class="source-row-card" data-source-search="${escapeHtml(`${source.title} ${source.catalogCode} ${source.authority} ${source.kind} ${subject} ${source.grade} ${source.version} ${sourceRef}`)}">
     <div class="source-main"><span class="source-mode-icon">${source.mode === "file" ? icon("files") : icon("spark")}</span><div><strong>${escapeHtml(source.title)}</strong><small>${escapeHtml(source.catalogCode)}</small></div></div>
-    <div class="source-meta"><span>${escapeHtml(subject)} · الصف ${source.grade}</span><small>${escapeHtml(source.authority)} · ${escapeHtml(source.version)}</small></div>
-    <span class="source-status status-${sourceStatusSlug(source.status)}">${source.status}</span>
+    <div class="source-meta"><span>${escapeHtml(subject)} · الصف ${source.grade}</span><small>${escapeHtml(source.authority)} · ${escapeHtml(source.version)}${source.fileSizeBytes ? ` · ${formatFileSize(source.fileSizeBytes)}` : ""}</small></div>
+    <div class="source-state-stack"><span class="source-status status-${sourceStatusSlug(source.status)}">${source.status}</span>${source.mode === "file" ? `<small class="upload-state upload-${source.uploadState === "مرفوع" ? "done" : source.uploadState === "مؤرشف" ? "archived" : "pending"}">${escapeHtml(source.uploadState ?? "غير مرفوع")}</small>` : ""}</div>
     <div class="source-actions">${actions}</div>
     <code class="source-path">${escapeHtml(source.drivePath)}</code>
   </article>`;
@@ -710,9 +751,38 @@ function handleAction(action: string, element: HTMLElement): void {
     void disconnectGoogleDrive();
     return;
   }
+  if (action === "resume-pending-upload") {
+    const pending = state.pendingSourceUpload;
+    if (!pending) return;
+    state.sourceDraft = {
+      mode: "file",
+      title: pending.source.title,
+      kind: pending.source.kind,
+      grade: pending.source.grade,
+      subjectId: pending.source.subjectId,
+      version: pending.source.version,
+      fileName: pending.fileName,
+      url: "",
+      rightsConfirmed: true,
+    };
+    state.sourceFile = null;
+    state.sourceFormOpen = true;
+    state.sourceUploadMessage = "اختر الملف نفسه ثم اضغط استكمال الرفع والحفظ.";
+    state.sourceUploadProgress = pending.fileSizeBytes > 0 ? Math.round((pending.bytesUploaded / pending.fileSizeBytes) * 100) : 0;
+    render();
+    window.setTimeout(() => document.querySelector(".source-form-card")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+    return;
+  }
+  if (action === "cancel-pending-upload") {
+    void cancelPendingSourceUpload();
+    return;
+  }
   if (action === "open-source-form") {
     const mode = element.dataset.sourceKind === "url" ? "url" : "file";
     state.sourceDraft = createEmptySourceDraft(mode);
+    state.sourceFile = null;
+    state.sourceUploadProgress = 0;
+    state.sourceUploadMessage = "";
     state.sourceFormOpen = true;
     render();
     window.setTimeout(() => document.querySelector(".source-form-card")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
@@ -720,10 +790,16 @@ function handleAction(action: string, element: HTMLElement): void {
   }
   if (action === "close-source-form") {
     state.sourceFormOpen = false;
+    state.sourceFile = null;
+    state.sourceUploadMessage = "";
+    state.sourceUploadProgress = 0;
     render();
     return;
   }
-  if (action === "save-source") return saveSourceFromForm();
+  if (action === "save-source") {
+    void saveSourceFromForm();
+    return;
+  }
   if (action === "export-source-registry") return exportSourceRegistry();
   if (action === "close-source-details") {
     state.selectedSourceId = "";
@@ -737,8 +813,8 @@ function handleAction(action: string, element: HTMLElement): void {
     window.setTimeout(() => document.querySelector(".source-details-card")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
     return;
   }
-  if (action === "archive-source" && sourceId) return updateSourceStatus(sourceId, "مؤرشف", "تمت أرشفة المصدر دون حذفه.");
-  if (action === "restore-source" && sourceId) return updateSourceStatus(sourceId, "جاهز للفهرسة", "تمت استعادة المصدر إلى المكتبة.");
+  if (action === "archive-source" && sourceId) { void archiveSource(sourceId); return; }
+  if (action === "restore-source" && sourceId) { void restoreSource(sourceId); return; }
   if (action === "index-source" && sourceId) return updateSourceStatus(sourceId, "مفهرس", "تمت محاكاة فهرسة المصدر بنجاح.");
 }
 
@@ -993,8 +1069,10 @@ function bindAdmin(): void {
     render();
   });
   document.querySelector<HTMLInputElement>("#source-file")?.addEventListener("change", (event) => {
-    const file = (event.target as HTMLInputElement).files?.[0];
-    state.sourceDraft.fileName = file?.name ?? "";
+    const file = (event.target as HTMLInputElement).files?.[0] ?? null;
+    state.sourceFile = file;
+    state.sourceDraft.fileName = file?.name ?? state.sourceDraft.fileName;
+    state.sourceUploadMessage = file ? `جاهز للرفع: ${file.name}` : "";
     render();
   });
   document.querySelector<HTMLInputElement>("#source-rights")?.addEventListener("change", (event) => {
@@ -1014,28 +1092,109 @@ function bindSourceTextInput(id: string, key: "title" | "version" | "url"): void
   });
 }
 
-function saveSourceFromForm(): void {
+async function saveSourceFromForm(): Promise<void> {
   const validation = validateSourceDraft(state.sourceDraft);
   if (!validation.valid) {
     render();
     showToast(validation.issues[0]?.message ?? "أكمل بيانات المصدر.");
     return;
   }
-  const duplicate = findDuplicateSource(state.sources, state.sourceDraft);
-  if (duplicate) {
-    showToast(`هذا المصدر مسجل بالفعل برقم ${duplicate.catalogCode}.`);
+
+  if (state.sourceDraft.mode === "url") {
+    const duplicate = findDuplicateSource(state.sources, state.sourceDraft);
+    if (duplicate) {
+      showToast(`هذا المصدر مسجل بالفعل برقم ${duplicate.catalogCode}.`);
+      return;
+    }
+    const source = createManagedSource(state.sourceDraft);
+    state.sources = [source, ...state.sources];
+    saveSources(state.sources);
+    state.sourceFormOpen = false;
+    state.sourceDraft = createEmptySourceDraft();
+    render();
+    if (state.sourceStorageStatus === "متصل") await persistSourcesCentrally([source], "تم حفظ الرابط في السجل المركزي.");
+    else showToast("تم حفظ الرابط محليًا، وسيُنقل إلى السجل المركزي بعد الاتصال.");
     return;
   }
-  const source = createManagedSource(state.sourceDraft);
-  state.sources = [source, ...state.sources];
-  saveSources(state.sources);
-  state.sourceFormOpen = false;
-  state.sourceDraft = createEmptySourceDraft();
+
+  if (!googleDriveService || state.driveStatus !== "متصل" || state.sourceStorageStatus !== "متصل") {
+    showToast("سجّل الدخول واربط Google Drive قبل رفع ملف PDF.");
+    return;
+  }
+  if (!state.sourceFile) {
+    showToast(state.pendingSourceUpload ? "اختر ملف PDF نفسه لاستكمال الرفع." : "اختر ملف PDF قبل الرفع.");
+    return;
+  }
+
+  const pending = state.pendingSourceUpload;
+  const source = pending && pending.fileName === state.sourceFile.name
+    ? pending.source
+    : createManagedSource(state.sourceDraft);
+  const metadataDuplicate = findDuplicateSource(state.sources, state.sourceDraft);
+  if (!pending && metadataDuplicate) {
+    showToast(`هذا المصدر مسجل بالفعل برقم ${metadataDuplicate.catalogCode}.`);
+    return;
+  }
+
+  state.sourceUploadBusy = true;
+  state.sourceUploadProgress = pending?.fileSizeBytes ? Math.round((pending.bytesUploaded / pending.fileSizeBytes) * 100) : 0;
+  state.sourceUploadMessage = pending ? "جارٍ التحقق من آخر جزء مرفوع…" : "جارٍ حساب بصمة الملف وتجهيز المجلد…";
   render();
-  if (state.sourceStorageStatus === "متصل") {
-    void persistSourcesCentrally([source], "تم حفظ المصدر في السجل المركزي.");
-  } else {
-    showToast("تم حفظ المصدر محليًا، وسيُنقل إلى السجل المركزي بعد الاتصال.");
+  try {
+    const uploaded = await googleDriveService.uploadPdfSource(
+      { ...source, subjectLabel: sourceSubjectLabel(source.subjectId) } as ManagedSource & { subjectLabel: string },
+      state.sourceFile,
+      updateSourceUploadProgress,
+    );
+    const contentDuplicate = uploaded.contentFingerprint ? findDuplicateContentSource(state.sources, uploaded.contentFingerprint) : undefined;
+    state.sources = [uploaded, ...state.sources.filter((item) => item.id !== uploaded.id && item.id !== contentDuplicate?.id)];
+    saveSources(state.sources);
+    state.pendingSourceUpload = null;
+    state.sourceUploadBusy = false;
+    state.sourceUploadProgress = 100;
+    state.sourceUploadMessage = "اكتمل الرفع والحفظ في Google Drive.";
+    state.sourceFormOpen = false;
+    state.sourceFile = null;
+    state.sourceDraft = createEmptySourceDraft();
+    const remoteSources = await centralSourceStore?.listSources();
+    if (remoteSources) { state.sources = remoteSources; saveSources(remoteSources); }
+    render();
+    showToast("تم رفع ملف PDF وحفظ سجله المركزي بنجاح.");
+  } catch (error) {
+    state.pendingSourceUpload = googleDriveService.getPendingUpload();
+    state.sourceUploadBusy = false;
+    state.sourceUploadMessage = error instanceof Error ? error.message : "تعذر رفع ملف PDF.";
+    render();
+    showToast(state.sourceUploadMessage);
+  }
+}
+
+function updateSourceUploadProgress(progress: SourceUploadProgress): void {
+  state.sourceUploadProgress = progress.percent;
+  state.sourceUploadMessage = progress.message;
+  state.pendingSourceUpload = googleDriveService?.getPendingUpload() ?? null;
+  const label = document.querySelector<HTMLElement>(".source-upload-progress strong");
+  const percent = document.querySelector<HTMLElement>(".source-upload-progress > div > span");
+  const bar = document.querySelector<HTMLElement>(".source-upload-progress .upload-progress-track span");
+  if (label) label.textContent = progress.message;
+  if (percent) percent.textContent = `${progress.percent}%`;
+  if (bar) bar.style.width = `${progress.percent}%`;
+}
+
+async function cancelPendingSourceUpload(): Promise<void> {
+  if (!googleDriveService) return;
+  if (!window.confirm("سيُلغى الرفع غير المكتمل فقط، ولن يُحذف أي مصدر مكتمل. هل تريد المتابعة؟")) return;
+  try {
+    await googleDriveService.cancelPendingUpload();
+    state.pendingSourceUpload = null;
+    state.sourceUploadMessage = "";
+    state.sourceUploadProgress = 0;
+    state.sourceFile = null;
+    state.sourceFormOpen = false;
+    render();
+    showToast("تم إلغاء جلسة الرفع غير المكتملة.");
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "تعذر إلغاء جلسة الرفع. أعد المحاولة.");
   }
 }
 
@@ -1069,6 +1228,44 @@ async function importSourceRegistry(file: File): Promise<void> {
   } else {
     showToast(message);
   }
+}
+
+async function archiveSource(sourceId: string): Promise<void> {
+  const source = state.sources.find((item) => item.id === sourceId);
+  if (!source) return;
+  if (source.mode === "file" && source.driveFileId && googleDriveService && state.driveStatus === "متصل") {
+    try {
+      const updated = await googleDriveService.archiveSourceFile(sourceId);
+      state.sources = state.sources.map((item) => item.id === sourceId ? updated : item);
+      saveSources(state.sources);
+      render();
+      showToast("تم نقل الملف إلى أرشيف واثق دون حذفه.");
+      return;
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "تعذر أرشفة ملف Drive.");
+      return;
+    }
+  }
+  updateSourceStatus(sourceId, "مؤرشف", "تمت أرشفة المصدر دون حذفه.");
+}
+
+async function restoreSource(sourceId: string): Promise<void> {
+  const source = state.sources.find((item) => item.id === sourceId);
+  if (!source) return;
+  if (source.mode === "file" && source.driveFileId && googleDriveService && state.driveStatus === "متصل") {
+    try {
+      const updated = await googleDriveService.restoreSourceFile(sourceId);
+      state.sources = state.sources.map((item) => item.id === sourceId ? updated : item);
+      saveSources(state.sources);
+      render();
+      showToast("تمت استعادة الملف إلى مجلده الأصلي.");
+      return;
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "تعذر استعادة ملف Drive.");
+      return;
+    }
+  }
+  updateSourceStatus(sourceId, "جاهز للفهرسة", "تمت استعادة المصدر إلى المكتبة.");
 }
 
 function updateSourceStatus(sourceId: string, status: SourceStatus, message: string): void {

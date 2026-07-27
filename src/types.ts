@@ -101,7 +101,6 @@ export interface LibraryExam {
   hasModelB?: boolean;
 }
 
-
 export type SourceMode = "file" | "url";
 export type SourceKind =
   | "كتاب الطالب"
@@ -112,6 +111,7 @@ export type SourceKind =
   | "مصدر عالمي";
 export type SourceStatus = "جاهز للفهرسة" | "مفهرس" | "يحتاج مراجعة" | "مؤرشف";
 export type SourceAuthority = "منهج عُماني" | "كامبريدج" | "مصدر عالمي";
+export type SourceUploadState = "غير مرفوع" | "قيد الرفع" | "مرفوع" | "فشل الرفع" | "مؤرشف";
 
 export interface SourceDraft {
   mode: SourceMode;
@@ -143,6 +143,16 @@ export interface ManagedSource {
   drivePath: string;
   createdAt: string;
   updatedAt: string;
+  contentFingerprint?: string;
+  fileSizeBytes?: number;
+  mimeType?: string;
+  driveFileId?: string;
+  driveParentFolderId?: string;
+  driveOriginalParentFolderId?: string;
+  driveWebViewLink?: string;
+  driveMd5Checksum?: string;
+  uploadState?: SourceUploadState;
+  uploadedAt?: string;
 }
 
 export interface SourceValidationIssue {
