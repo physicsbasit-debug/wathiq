@@ -16,7 +16,7 @@ export const SOURCE_STRUCTURE_NODE_TYPES: SourceStructureNodeType[] = [
   "أسئلة",
 ];
 
-const STRUCTURE_VERSION = "toc-heuristic-2";
+const STRUCTURE_VERSION = "toc-heuristic-3";
 const ARABIC_DIGITS = "٠١٢٣٤٥٦٧٨٩";
 const EXCLUDED_TITLE_PATTERN = /(?:حقوق\s+(?:الطبع|الطباعة|النشر)|الطبعة\s+(?:التجريبية|الأولى|الثانية|الثالثة)|الرقم\s+الدولي|ISBN|الفهرس|المحتويات|مقدمة\s+الكتاب|شكر\s+وتقدير|المؤلف(?:ون|ين)?|وزارة\s+(?:التربية|التعليم)|مطبعة\s+جامعة|بيانات\s+النشر)/i;
 const TOC_HEADER_PATTERN = /^(?:ال?فهرس|ال?محتويات|محتويات\s+الكتاب|قائمة\s+المحتويات|contents?)\s*[:：-]?\s*$/i;
@@ -26,7 +26,15 @@ const TOPIC_PATTERN = /^(?:الفصل|الموضوع|موضوع)(?:\s|:|：|-|$)
 const ACTIVITY_PATTERN = /^(?:نشاط(?:\s+عملي)?|تجربة|استقصاء|مختبر|عمل\s+مخبري)(?:\s|:|：|-|$)/i;
 const REVIEW_PATTERN = /^(?:مراجعة|ملخص|خلاصة)(?:\s|:|：|-|$)/i;
 const QUESTIONS_PATTERN = /^(?:أسئلة|تقويم|تمارين|اختبر\s+نفسك|أسئلة\s+الوحدة)(?:\s|:|：|-|$)/i;
-const NUMBERED_SUBSECTION_PATTERN = /^([0-9٠-٩]+(?:[.٫][0-9٠-٩]+)+)\s*[-–—:]?\s*(.+)$/;
+const NUMBERED_SUBSECTION_PATTERN = /^([0-9٠-٩]+(?:[.٫\-–—][0-9٠-٩]+)+)\s*[-–—:]?\s*(.+)$/;
+const NUMBERED_TOC_LESSON_PATTERN = /^([0-9٠-٩]{1,2})\s*[-–—‑]\s*([0-9٠-٩]{1,2})\s+(.+?)\s+([0-9٠-٩]{1,4})\s*$/;
+const NUMBERED_TOC_LESSON_LEADING_PAGE_PATTERN = /^([0-9٠-٩]{1,4})\s+([0-9٠-٩]{1,2})\s*[-–—‑]\s*([0-9٠-٩]{1,2})\s+(.+?)\s*$/;
+const NUMBERED_TOC_LESSON_WITHOUT_PAGE_PATTERN = /^([0-9٠-٩]{1,2})\s*[-–—‑]\s*([0-9٠-٩]{1,2})\s+(.+?)\s*$/;
+const UNIT_ORDINAL_WORDS = new Map<string, number>([
+  ["الأولى", 1], ["الاولى", 1], ["الثانية", 2], ["الثالثة", 3], ["الرابعة", 4],
+  ["الخامسة", 5], ["السادسة", 6], ["السابعة", 7], ["الثامنة", 8], ["التاسعة", 9],
+  ["العاشرة", 10], ["الحادية عشرة", 11], ["الحاديه عشره", 11], ["الثانية عشرة", 12], ["الثانيه عشره", 12],
+]);
 
 interface SourcePageText {
   pageNumber: number;
@@ -41,13 +49,139 @@ interface ParsedCandidate {
   confidence: number;
   fromToc: boolean;
   explicit: boolean;
+  unitOrdinal?: number;
+  lessonOrdinal?: number;
 }
 
 interface PageTocAnalysis {
   page: SourcePageText;
   entries: ParsedCandidate[];
   hasHeader: boolean;
+  numberedToc: boolean;
   qualityScore: number;
+}
+
+
+function parseUnitOrdinal(value: string): number | null {
+  const title = normalizeArabicDigits(cleanStructureTitle(value))
+    .replace(/[أإآ]/g, "ا")
+    .replace(/ة/g, "ه")
+    .replace(/ى/g, "ي");
+  const match = title.match(/^(?:الوحده|وحده)\s+(.+?)(?:\s*[:：-]|$)/i);
+  if (!match?.[1]) return null;
+  const raw = match[1].trim();
+  const numeric = raw.match(/^\d{1,2}$/);
+  if (numeric) {
+    const valueNumber = Number(numeric[0]);
+    return valueNumber >= 1 && valueNumber <= 30 ? valueNumber : null;
+  }
+  for (const [word, ordinal] of UNIT_ORDINAL_WORDS.entries()) {
+    const normalizedWord = word.replace(/[أإآ]/g, "ا").replace(/ة/g, "ه").replace(/ى/g, "ي");
+    if (raw === normalizedWord || raw.startsWith(`${normalizedWord} `)) return ordinal;
+  }
+  return null;
+}
+
+function stripTrailingPageNumber(value: string): string {
+  return cleanStructureTitle(value).replace(/\s+[0-9٠-٩]{1,4}\s*$/, "").trim();
+}
+
+function parseNumberedTocLesson(line: string, sourcePage: number): ParsedCandidate | null {
+  const cleaned = cleanStructureTitle(line);
+  const normalized = normalizeArabicDigits(cleaned);
+  const trailing = normalized.match(NUMBERED_TOC_LESSON_PATTERN);
+  const leading = trailing ? null : normalized.match(NUMBERED_TOC_LESSON_LEADING_PAGE_PATTERN);
+  const unitRaw = trailing?.[1] ?? leading?.[2];
+  const lessonRaw = trailing?.[2] ?? leading?.[3];
+  const titleRaw = trailing?.[3] ?? leading?.[4];
+  const pageRaw = trailing?.[4] ?? leading?.[1];
+  if (!unitRaw || !lessonRaw || !titleRaw || !pageRaw) return null;
+  const unitOrdinal = Number(unitRaw);
+  const lessonOrdinal = Number(lessonRaw);
+  const pageStart = Number(pageRaw);
+  const lessonTitle = cleanStructureTitle(titleRaw);
+  if (!Number.isSafeInteger(unitOrdinal) || unitOrdinal < 1 || unitOrdinal > 30) return null;
+  if (!Number.isSafeInteger(lessonOrdinal) || lessonOrdinal < 1 || lessonOrdinal > 99) return null;
+  if (!Number.isSafeInteger(pageStart) || pageStart < 1 || pageStart > 5000) return null;
+  if (!titleHasEnoughMeaning(lessonTitle) || looksLikeFormulaOrNoise(lessonTitle) || EXCLUDED_TITLE_PATTERN.test(lessonTitle)) return null;
+  return {
+    nodeType: "درس",
+    title: `${unitOrdinal}-${lessonOrdinal} ${lessonTitle}`,
+    pageStart,
+    sourcePage,
+    confidence: 0.97,
+    fromToc: true,
+    explicit: true,
+    unitOrdinal,
+    lessonOrdinal,
+  };
+}
+
+function parseNumberedMultiColumnTocPage(page: SourcePageText): ParsedCandidate[] {
+  const lines = page.content.split(/\n+/).map(cleanStructureTitle).filter(Boolean);
+  const units = new Map<number, ParsedCandidate>();
+  const lessons = new Map<string, ParsedCandidate>();
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    const nextLine = lines[index + 1] ?? "";
+    const normalized = normalizeArabicDigits(line);
+    let lesson = parseNumberedTocLesson(line, page.pageNumber);
+    if (!lesson) {
+      const withoutPage = normalized.match(NUMBERED_TOC_LESSON_WITHOUT_PAGE_PATTERN);
+      const nextPage = parsePageNumber(nextLine);
+      if (withoutPage && nextPage) {
+        lesson = parseNumberedTocLesson(`${line} ${nextPage}`, page.pageNumber);
+        index += 1;
+      } else {
+        const currentPage = parsePageNumber(line);
+        const nextWithoutPage = normalizeArabicDigits(nextLine).match(NUMBERED_TOC_LESSON_WITHOUT_PAGE_PATTERN);
+        if (currentPage && nextWithoutPage) {
+          lesson = parseNumberedTocLesson(`${currentPage} ${nextLine}`, page.pageNumber);
+          index += 1;
+        }
+      }
+    }
+    if (lesson?.unitOrdinal && lesson.lessonOrdinal) {
+      lessons.set(`${lesson.unitOrdinal}-${lesson.lessonOrdinal}`, lesson);
+      continue;
+    }
+    if (!UNIT_PATTERN.test(line)) continue;
+    const ordinal = parseUnitOrdinal(line);
+    if (!ordinal) continue;
+    const title = stripTrailingPageNumber(line);
+    if (titleIsExcluded(title) || looksLikeFormulaOrNoise(title)) continue;
+    const current = units.get(ordinal);
+    if (!current || title.length > current.title.length) {
+      units.set(ordinal, {
+        nodeType: "وحدة",
+        title,
+        pageStart: 0,
+        sourcePage: page.pageNumber,
+        confidence: 0.99,
+        fromToc: true,
+        explicit: true,
+        unitOrdinal: ordinal,
+      });
+    }
+  }
+
+  const distinctLessonUnits = new Set([...lessons.values()].map((lesson) => lesson.unitOrdinal));
+  if (units.size < 4 || lessons.size < 6 || distinctLessonUnits.size < 3) return [];
+
+  const entries: ParsedCandidate[] = [];
+  [...units.keys()].sort((left, right) => left - right).forEach((ordinal) => {
+    const unit = units.get(ordinal);
+    if (!unit) return;
+    const unitLessons = [...lessons.values()]
+      .filter((lesson) => lesson.unitOrdinal === ordinal)
+      .sort((left, right) => (left.lessonOrdinal ?? 0) - (right.lessonOrdinal ?? 0) || left.pageStart - right.pageStart);
+    if (!unitLessons.length) return;
+    entries.push({ ...unit, pageStart: unitLessons[0]?.pageStart ?? page.pageNumber });
+    entries.push(...unitLessons);
+  });
+
+  return entries.length >= 10 ? entries : [];
 }
 
 function normalizeArabicDigits(value: string): string {
@@ -192,6 +326,8 @@ function parseInlineTocLine(line: string, sourcePage: number): ParsedCandidate |
 }
 
 function parseTocPage(page: SourcePageText): ParsedCandidate[] {
+  const numbered = parseNumberedMultiColumnTocPage(page);
+  if (numbered.length) return numbered;
   const lines = page.content.split(/\n+/).map(cleanStructureTitle).filter(Boolean);
   const entries: ParsedCandidate[] = [];
   for (let index = 0; index < lines.length; index += 1) {
@@ -247,11 +383,13 @@ function tocEntriesAreReliable(entries: ParsedCandidate[], totalPages: number, m
 
 function analyzeTocPages(pages: SourcePageText[], totalPages: number): PageTocAnalysis[] {
   return pages.map((page) => {
-    const entries = parseTocPage(page);
+    const numberedEntries = parseNumberedMultiColumnTocPage(page);
+    const numberedToc = numberedEntries.length > 0;
+    const entries = numberedToc ? numberedEntries : parseTocPage(page);
     const hasHeader = pageHasTocHeader(page);
     const explicitCount = entries.filter((entry) => entry.explicit).length;
-    const qualityScore = entries.length * 2 + explicitCount * 2 + (hasHeader ? 12 : 0) + Math.round(coherentPageRatio(entries) * 5);
-    return { page, entries, hasHeader, qualityScore };
+    const qualityScore = entries.length * 2 + explicitCount * 2 + (hasHeader ? 12 : 0) + (numberedToc ? 20 : 0) + Math.round(coherentPageRatio(entries) * 5);
+    return { page, entries, hasHeader, numberedToc, qualityScore };
   });
 }
 
@@ -259,7 +397,7 @@ function selectReliableTocGroup(analyses: PageTocAnalysis[], totalPages: number)
   let best: PageTocAnalysis[] = [];
   let bestScore = -1;
   analyses.forEach((analysis, index) => {
-    if (!analysis.hasHeader) return;
+    if (!analysis.hasHeader && !analysis.numberedToc) return;
     const group: PageTocAnalysis[] = [analysis];
     let previousMax = Math.max(...analysis.entries.map((entry) => entry.pageStart), 0);
     for (let offset = 1; offset <= 3; offset += 1) {
@@ -282,26 +420,38 @@ function selectReliableTocGroup(analyses: PageTocAnalysis[], totalPages: number)
 }
 
 function parseExplicitUnitHeadings(pages: SourcePageText[]): ParsedCandidate[] {
-  const candidates: ParsedCandidate[] = [];
+  const byOrdinal = new Map<number, ParsedCandidate>();
+  const fallback: ParsedCandidate[] = [];
   for (const page of pages) {
     const lines = page.content.split(/\n+/).map(cleanStructureTitle).filter(Boolean).slice(0, 24);
     for (const line of lines) {
       if (!UNIT_PATTERN.test(line) || titleIsExcluded(line) || looksLikeFormulaOrNoise(line)) continue;
-      candidates.push({
+      const title = stripTrailingPageNumber(line);
+      const ordinal = parseUnitOrdinal(title);
+      const candidate: ParsedCandidate = {
         nodeType: "وحدة",
-        title: line,
+        title,
         pageStart: page.pageNumber,
         sourcePage: page.pageNumber,
         confidence: 0.83,
         fromToc: false,
         explicit: true,
-      });
+        ...(ordinal ? { unitOrdinal: ordinal } : {}),
+      };
+      if (candidate.unitOrdinal) {
+        const current = byOrdinal.get(candidate.unitOrdinal);
+        if (!current || candidate.pageStart < current.pageStart) byOrdinal.set(candidate.unitOrdinal, candidate);
+      } else {
+        fallback.push(candidate);
+      }
     }
   }
-  const deduplicated = deduplicateCandidates(candidates);
+  const deduplicated = [
+    ...[...byOrdinal.values()].sort((left, right) => (left.unitOrdinal ?? 0) - (right.unitOrdinal ?? 0)),
+    ...deduplicateCandidates(fallback),
+  ];
   if (deduplicated.length < 2) return [];
-  const ordered = deduplicated.filter((candidate, index) => index === 0 || candidate.pageStart > (deduplicated[index - 1]?.pageStart ?? 0));
-  return ordered.length >= 2 ? ordered : [];
+  return deduplicated;
 }
 
 function longestOverlap(left: string, right: string, maxLength = 500): number {
@@ -414,7 +564,7 @@ function buildNodes(sourceId: string, candidates: ParsedCandidate[], totalPages:
 
 function candidateTocPageNumbers(analyses: PageTocAnalysis[]): number[] {
   return analyses
-    .filter((analysis) => analysis.entries.length >= 2)
+    .filter((analysis) => analysis.numberedToc || analysis.entries.length >= 2)
     .sort((left, right) => right.qualityScore - left.qualityScore)
     .slice(0, 6)
     .map((analysis) => analysis.page.pageNumber)
