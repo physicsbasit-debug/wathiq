@@ -18,7 +18,7 @@ import { GoogleDriveService, type GoogleDriveStatus, type PendingSourceUpload, t
 import { extractPdfText, shouldInvalidateLegacyExtraction, type PdfExtractionProgress } from "./pdf-indexer.js";
 import { extractPdfWithArabicOcr } from "./ocr-indexer.js";
 import { resolveInitialView, viewFromHash, viewHash } from "./navigation.js";
-import { createManualStructureNode, extractSourceStructure, parsePageSelection, resequenceStructureNodes, SOURCE_STRUCTURE_NODE_TYPES, validateSourceStructure } from "./source-structure.js";
+import { createManualStructureNode, extractSourceStructure, parsePageSelection, resequenceStructureNodes, shouldQuarantineLegacyStructureDraft, SOURCE_STRUCTURE_NODE_TYPES, validateSourceStructure } from "./source-structure.js";
 
 const appRoot = document.querySelector<HTMLDivElement>("#app");
 if (!appRoot) throw new Error("تعذر العثور على جذر التطبيق.");
@@ -1538,7 +1538,20 @@ async function loadSourceStructure(sourceId: string): Promise<void> {
   try {
     const nodes = await centralSourceStore.listSourceStructure(sourceId);
     if (state.structureSourceId !== sourceId) return;
-    state.structureNodes = resequenceStructureNodes(nodes);
+    const sequencedNodes = resequenceStructureNodes(nodes);
+    if (shouldQuarantineLegacyStructureDraft(sequencedNodes)) {
+      await centralSourceStore.replaceSourceStructure(sourceId, []);
+      if (state.structureSourceId !== sourceId) return;
+      state.structureNodes = [];
+      state.structureLoaded = true;
+      state.structureBusy = false;
+      state.structureDirty = false;
+      state.structureMessage = "حذف واثق مسودة قديمة مشوهة تلقائيًا. أعد الاستخراج الموثوق أو حدّد صفحات الفهرس يدويًا.";
+      render();
+      showToast("تم تنظيف مسودة الهيكل القديمة المشوهة.");
+      return;
+    }
+    state.structureNodes = sequencedNodes;
     state.structureLoaded = true;
     state.structureBusy = false;
     state.structureDirty = false;

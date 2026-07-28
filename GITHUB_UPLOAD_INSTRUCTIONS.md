@@ -1,9 +1,6 @@
-# رفع Phase 0-H1 Fix 1
+# رفع Phase 0-H1 Fix 2 عبر GitHub
 
-1. أنشئ فرعًا باسم `fix/phase-0-h1-reliable-structure` من `main`.
-2. ارفع محتويات حزمة الملفات المعدلة فقط.
-3. استخدم رسالة الالتزام: `fix: منع المعادلات من التحول إلى وحدات ودروس`.
-4. افتح Pull Request إلى `main` وانتظر نجاح الفحوص.
-5. ادمج الطلب ثم اختبر «إعادة الاستخراج التلقائي» و«استخراج من الصفحات المحددة».
-
-لا يوجد SQL أو Edge Function أو pages.yml جديد.
+- الفرع: `fix/phase-0-h1-legacy-draft-cleanup`
+- رسالة الالتزام: `fix: تنظيف مسودة الهيكل القديمة المشوهة`
+- لا يوجد SQL أو Edge Function أو تعديل على `.github/workflows/pages.yml`.
+- بعد نجاح Actions يمكن الدمج مباشرة.

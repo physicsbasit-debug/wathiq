@@ -6,6 +6,7 @@ import {
   createManualStructureNode,
   extractSourceStructure,
   parsePageSelection,
+  shouldQuarantineLegacyStructureDraft,
   validateSourceStructure,
 } from "../dist/assets/source-structure.js";
 
@@ -120,4 +121,17 @@ test("يرفض اعتماد هيكل بلا وحدة أو بنطاق صفحات 
   const invalid = validateSourceStructure([{ ...node, title: "", pageEnd: 2 }]);
   assert.equal(invalid.valid, false);
   assert.ok(invalid.issues.length >= 2);
+});
+
+
+test("يعزل مسودة الهيكل القديمة المشوهة دون حذف الهيكل اليدوي أو المعتمد", () => {
+  const base = createManualStructureNode("source-legacy", "وحدة", null, 2, 0);
+  const legacyNoise = [
+    { ...base, id: "legacy-1", title: "H 1 0 1 1", extractionMethod: "toc-heuristic-1", reviewStatus: "مرشح" },
+    { ...base, id: "legacy-2", title: "A 25 1.7 A 1.7 Ω", extractionMethod: "toc-heuristic-1", reviewStatus: "مرشح" },
+    { ...base, id: "legacy-3", title: "R 1 R 2 R 3 5 V", extractionMethod: "toc-heuristic-1", reviewStatus: "مرشح" },
+  ];
+  assert.equal(shouldQuarantineLegacyStructureDraft(legacyNoise), true);
+  assert.equal(shouldQuarantineLegacyStructureDraft([{ ...base, title: "الوحدة الأولى: الشحنة الكهربائية", extractionMethod: "manual" }]), false);
+  assert.equal(shouldQuarantineLegacyStructureDraft([{ ...base, title: "الوحدة الأولى: الشحنة الكهربائية", extractionMethod: "toc-heuristic-2", reviewStatus: "معتمد" }]), false);
 });
