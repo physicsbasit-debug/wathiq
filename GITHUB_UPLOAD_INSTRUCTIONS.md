@@ -1,17 +1,10 @@
-# رفع واثق Phase 0-F2 عبر GitHub
+# رفع Phase 0-F2 Fix 1 عبر واجهة GitHub
 
-1. أنشئ فرعًا من `main` باسم:
-   `feat/phase-0-f2-pdf-upload`
-2. فك ضغط حزمة `Changed Files Only`.
-3. افتح الفرع ثم اختر `Add file → Upload files`.
-4. ارفع جميع محتويات الحزمة مع الحفاظ على المجلدات.
-5. استخدم رسالة الالتزام:
-   `feat: رفع مصادر PDF فعليًا إلى Google Drive في Phase 0-F2`
-6. افتح Pull Request إلى `main`.
-7. انتظر نجاح `فحص واثق`.
-8. نفّذ SQL وانشر Edge Function قبل الدمج النهائي.
-9. بعد الاختبار ادمج Pull Request وانتظر نجاح GitHub Pages.
+1. أنشئ فرعًا من `main` باسم `fix/phase-0-f2-refresh-view`.
+2. ارفع محتويات حزمة الملفات المعدلة فقط.
+3. استخدم رسالة الالتزام: `fix: إبقاء صفحة إدارة المحتوى بعد تحديث المتصفح`.
+4. افتح Pull Request إلى `main`.
+5. بعد نجاح الفحص، ادمج الطلب وانتظر نشر GitHub Pages.
+6. افتح إدارة المحتوى واضغط `Ctrl + F5` وتأكد من بقاء الصفحة نفسها.
 
-## ملاحظة
-
-ملف `.github/workflows/pages.yml` لم يتغير في هذه المرحلة، لذلك لا يحتاج رفعًا منفصلًا.
+لا يوجد تغيير في `.github/workflows/pages.yml` أو SQL أو Edge Function.
