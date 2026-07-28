@@ -18,7 +18,7 @@ import { GoogleDriveService, type GoogleDriveStatus, type PendingSourceUpload, t
 import { extractPdfText, shouldInvalidateLegacyExtraction, type PdfExtractionProgress } from "./pdf-indexer.js";
 import { extractPdfWithArabicOcr } from "./ocr-indexer.js";
 import { resolveInitialView, viewFromHash, viewHash } from "./navigation.js";
-import { createManualStructureNode, extractSourceStructure, resequenceStructureNodes, SOURCE_STRUCTURE_NODE_TYPES, validateSourceStructure } from "./source-structure.js";
+import { createManualStructureNode, extractSourceStructure, parsePageSelection, resequenceStructureNodes, SOURCE_STRUCTURE_NODE_TYPES, validateSourceStructure } from "./source-structure.js";
 
 const appRoot = document.querySelector<HTMLDivElement>("#app");
 if (!appRoot) throw new Error("تعذر العثور على جذر التطبيق.");
@@ -61,6 +61,7 @@ interface AppState {
   structureBusy: boolean;
   structureMessage: string;
   structureDirty: boolean;
+  structureManualTocPages: string;
 }
 
 
@@ -121,6 +122,7 @@ const state: AppState = {
   structureBusy: false,
   structureMessage: "",
   structureDirty: false,
+  structureManualTocPages: "",
 };
 
 let saveTimer: number | undefined;
@@ -719,6 +721,13 @@ function renderSourceDetails(source: ManagedSource): string {
   `;
 }
 
+function renderManualTocControls(source: ManagedSource): string {
+  return `<div class="manual-toc-controls">
+    <label><span>صفحات الفهرس يدويًا</span><input inputmode="numeric" data-structure-toc-pages value="${escapeHtml(state.structureManualTocPages)}" placeholder="مثال: 4-5 أو 4، 5" /></label>
+    <button class="secondary-btn compact" data-action="extract-source-structure-manual" data-source-id="${source.id}" ${state.structureBusy ? "disabled" : ""}>استخراج من الصفحات المحددة</button>
+  </div>`;
+}
+
 function renderSourceStructurePanel(source: ManagedSource): string {
   const eligible = source.mode === "file" && source.extractionStatus === "مكتمل" && source.status === "مفهرس";
   if (!eligible) {
@@ -728,7 +737,7 @@ function renderSourceStructurePanel(source: ManagedSource): string {
     return `<section class="source-structure-card loading"><div><span class="eyebrow">هيكل الكتاب</span><h3>${state.structureBusy ? "جارٍ تحميل الهيكل…" : "جارٍ التحقق من الهيكل المحفوظ…"}</h3><p>${escapeHtml(state.structureMessage || "انتظر لحظة؛ لا توجد طقوس إضافية مطلوبة.")}</p></div></section>`;
   }
   if (!state.structureNodes.length) {
-    return `<section class="source-structure-card empty"><div><span class="eyebrow">Phase 0-H1</span><h3>الوحدات والدروس لم تُستخرج بعد</h3><p>${escapeHtml(state.structureMessage || "سيبحث واثق عن صفحة المحتويات وينظف التكرارات وأرقام الصفحات قبل عرض الهيكل للمراجعة.")}</p></div><button class="primary-btn compact" data-action="extract-source-structure" data-source-id="${source.id}" ${state.structureBusy ? "disabled" : ""}>${state.structureBusy ? "جارٍ الاستخراج…" : "استخراج هيكل الكتاب"}</button></section>`;
+    return `<section class="source-structure-card empty"><div><span class="eyebrow">Phase 0-H1 Fix 1</span><h3>لم يُعثر على هيكل موثوق بعد</h3><p>${escapeHtml(state.structureMessage || "سيبحث واثق عن صفحة محتويات واضحة، ولن يحوّل المعادلات والرموز إلى وحدات مرة أخرى.")}</p></div><div class="structure-empty-actions"><button class="primary-btn compact" data-action="extract-source-structure" data-source-id="${source.id}" ${state.structureBusy ? "disabled" : ""}>${state.structureBusy ? "جارٍ الاستخراج…" : "استخراج تلقائي موثوق"}</button>${renderManualTocControls(source)}<button class="ghost-btn compact" data-action="add-structure-unit" data-source-id="${source.id}" ${state.structureBusy ? "disabled" : ""}>إضافة وحدة يدويًا</button></div></section>`;
   }
   const validation = validateSourceStructure(state.structureNodes);
   const approved = state.structureNodes.every((node) => node.reviewStatus === "معتمد");
@@ -740,7 +749,8 @@ function renderSourceStructurePanel(source: ManagedSource): string {
     <div class="structure-toolbar">
       <button class="ghost-btn compact" data-action="add-structure-unit" data-source-id="${source.id}" ${state.structureBusy ? "disabled" : ""}>إضافة وحدة</button>
       <button class="ghost-btn compact" data-action="add-structure-child" data-source-id="${source.id}" ${state.structureBusy || !units.length ? "disabled" : ""}>إضافة عنصر تابع</button>
-      <button class="ghost-btn compact" data-action="reextract-source-structure" data-source-id="${source.id}" ${state.structureBusy ? "disabled" : ""}>إعادة الاستخراج</button>
+      <button class="ghost-btn compact" data-action="reextract-source-structure" data-source-id="${source.id}" ${state.structureBusy ? "disabled" : ""}>إعادة الاستخراج التلقائي</button>
+      ${renderManualTocControls(source)}
       <span class="structure-spacer"></span>
       <button class="secondary-btn compact" data-action="save-source-structure" data-source-id="${source.id}" ${state.structureBusy || !validation.valid ? "disabled" : ""}>حفظ التعديلات</button>
       <button class="primary-btn compact" data-action="approve-source-structure" data-source-id="${source.id}" ${state.structureBusy || !validation.valid ? "disabled" : ""}>اعتماد الهيكل</button>
@@ -960,6 +970,7 @@ function handleAction(action: string, element: HTMLElement): void {
     return;
   }
   if (action === "extract-source-structure" && sourceId) { void extractAndSaveSourceStructure(sourceId); return; }
+  if (action === "extract-source-structure-manual" && sourceId) { void extractAndSaveSourceStructure(sourceId, true, true); return; }
   if (action === "reextract-source-structure" && sourceId) { void extractAndSaveSourceStructure(sourceId, true); return; }
   if (action === "save-source-structure" && sourceId) { void saveCurrentSourceStructure(sourceId, false); return; }
   if (action === "approve-source-structure" && sourceId) { void saveCurrentSourceStructure(sourceId, true); return; }
@@ -1239,6 +1250,9 @@ function bindAdmin(): void {
     state.sourceDraft.rightsConfirmed = (event.target as HTMLInputElement).checked;
   });
 
+  document.querySelectorAll<HTMLInputElement>("[data-structure-toc-pages]").forEach((input) => {
+    input.addEventListener("input", () => { state.structureManualTocPages = input.value; });
+  });
   document.querySelectorAll<HTMLInputElement>("[data-structure-title]").forEach((input) => {
     input.addEventListener("input", () => updateStructureNode(input.dataset.structureTitle ?? "", { title: input.value }, false));
   });
@@ -1506,6 +1520,7 @@ function resetSourceStructureState(sourceId = ""): void {
   state.structureBusy = false;
   state.structureMessage = "";
   state.structureDirty = false;
+  state.structureManualTocPages = "";
 }
 
 async function loadSourceStructure(sourceId: string): Promise<void> {
@@ -1540,7 +1555,7 @@ async function loadSourceStructure(sourceId: string): Promise<void> {
   }
 }
 
-async function extractAndSaveSourceStructure(sourceId: string, replaceExisting = false): Promise<void> {
+async function extractAndSaveSourceStructure(sourceId: string, replaceExisting = false, useManualTocPages = false): Promise<void> {
   if (!centralSourceStore || state.sourceStorageStatus !== "متصل") {
     showToast("سجّل دخول مالك المنصة أولًا.");
     return;
@@ -1557,16 +1572,28 @@ async function extractAndSaveSourceStructure(sourceId: string, replaceExisting =
   state.structureSourceId = sourceId;
   state.structureLoaded = true;
   state.structureBusy = true;
-  state.structureMessage = "جارٍ قراءة صفحات الفهرسة واكتشاف الفهرس…";
+  state.structureMessage = useManualTocPages ? "جارٍ تحليل صفحات الفهرس المحددة…" : "جارٍ البحث عن فهرس موثوق وعناوين وحدات صريحة…";
   render();
   try {
     const chunks = await centralSourceStore.listSourceChunks(sourceId);
     if (!chunks.length) throw new Error("لا توجد مقاطع نصية مفهرسة لهذا المصدر.");
-    const result = extractSourceStructure(sourceId, chunks, source.extractedPageCount ?? 1);
+    const totalPages = source.extractedPageCount ?? 1;
+    const manualPages = useManualTocPages ? parsePageSelection(state.structureManualTocPages, totalPages) : [];
+    if (useManualTocPages && !manualPages.length) {
+      throw new Error("اكتب صفحات الفهرس مثل: 4-5 أو 4، 5.");
+    }
+    const result = extractSourceStructure(
+      sourceId,
+      chunks,
+      totalPages,
+      useManualTocPages ? { tocPages: manualPages, allowUnitHeadingFallback: false } : {},
+    );
     if (!result.nodes.length) {
+      if (replaceExisting || state.structureNodes.length) await centralSourceStore.replaceSourceStructure(sourceId, []);
       state.structureNodes = [];
       state.structureMessage = result.message;
       state.structureBusy = false;
+      state.structureDirty = false;
       render();
       showToast(result.message);
       return;

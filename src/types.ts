@@ -240,7 +240,15 @@ export interface SourceStructureExtractionResult {
   nodes: SourceStructureNode[];
   tocPages: number[];
   usedFallback: boolean;
+  reliableTocFound: boolean;
+  manualTocRequired: boolean;
+  candidateTocPages: number[];
   message: string;
+}
+
+export interface SourceStructureExtractionOptions {
+  tocPages?: number[];
+  allowUnitHeadingFallback?: boolean;
 }
 
 export interface SourceStructureValidation {

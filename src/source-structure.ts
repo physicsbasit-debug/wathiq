@@ -1,4 +1,5 @@
 import type {
+  SourceStructureExtractionOptions,
   SourceStructureExtractionResult,
   SourceStructureNode,
   SourceStructureNodeType,
@@ -15,18 +16,17 @@ export const SOURCE_STRUCTURE_NODE_TYPES: SourceStructureNodeType[] = [
   "أسئلة",
 ];
 
-const STRUCTURE_VERSION = "toc-heuristic-1";
+const STRUCTURE_VERSION = "toc-heuristic-2";
 const ARABIC_DIGITS = "٠١٢٣٤٥٦٧٨٩";
 const EXCLUDED_TITLE_PATTERN = /(?:حقوق\s+(?:الطبع|الطباعة|النشر)|الطبعة\s+(?:التجريبية|الأولى|الثانية|الثالثة)|الرقم\s+الدولي|ISBN|الفهرس|المحتويات|مقدمة\s+الكتاب|شكر\s+وتقدير|المؤلف(?:ون|ين)?|وزارة\s+(?:التربية|التعليم)|مطبعة\s+جامعة|بيانات\s+النشر)/i;
-const TOC_HEADER_PATTERN = /^(?:الفهرس|المحتويات|محتويات\s+الكتاب|قائمة\s+المحتويات|contents?)\s*$/i;
-const UNIT_PATTERN = /^(?:الوحدة|وحدة)\s+(?:الأولى|الثانية|الثالثة|الرابعة|الخامسة|السادسة|السابعة|الثامنة|التاسعة|العاشرة|\d+|[٠-٩]+)/i;
-const LESSON_PATTERN = /^(?:الدرس|درس)\s+(?:الأول|الثاني|الثالث|الرابع|الخامس|السادس|السابع|الثامن|التاسع|العاشر|\d+|[٠-٩]+)/i;
-const TOPIC_PATTERN = /^(?:الفصل|الموضوع|موضوع)\b/i;
-const ACTIVITY_PATTERN = /^(?:نشاط|نشاط\s+عملي|تجربة|استقصاء|مختبر|عمل\s+مخبري)\b/i;
-const REVIEW_PATTERN = /^(?:مراجعة|ملخص|خلاصة)\b/i;
-const QUESTIONS_PATTERN = /^(?:أسئلة|تقويم|تمارين|اختبر\s+نفسك|أسئلة\s+الوحدة)\b/i;
+const TOC_HEADER_PATTERN = /^(?:ال?فهرس|ال?محتويات|محتويات\s+الكتاب|قائمة\s+المحتويات|contents?)\s*[:：-]?\s*$/i;
+const UNIT_PATTERN = /^(?:الوحدة|وحدة)\s+(?:الأولى|الثانية|الثالثة|الرابعة|الخامسة|السادسة|السابعة|الثامنة|التاسعة|العاشرة|الحادية\s+عشرة|الثانية\s+عشرة|\d+|[٠-٩]+)(?:\s|:|：|-|$)/i;
+const LESSON_PATTERN = /^(?:الدرس|درس)\s+(?:الأول|الثاني|الثالث|الرابع|الخامس|السادس|السابع|الثامن|التاسع|العاشر|\d+|[٠-٩]+)(?:\s|:|：|-|$)/i;
+const TOPIC_PATTERN = /^(?:الفصل|الموضوع|موضوع)(?:\s|:|：|-|$)/i;
+const ACTIVITY_PATTERN = /^(?:نشاط(?:\s+عملي)?|تجربة|استقصاء|مختبر|عمل\s+مخبري)(?:\s|:|：|-|$)/i;
+const REVIEW_PATTERN = /^(?:مراجعة|ملخص|خلاصة)(?:\s|:|：|-|$)/i;
+const QUESTIONS_PATTERN = /^(?:أسئلة|تقويم|تمارين|اختبر\s+نفسك|أسئلة\s+الوحدة)(?:\s|:|：|-|$)/i;
 const NUMBERED_SUBSECTION_PATTERN = /^([0-9٠-٩]+(?:[.٫][0-9٠-٩]+)+)\s*[-–—:]?\s*(.+)$/;
-const NUMBERED_UNIT_PATTERN = /^([0-9٠-٩]+)(?:\s*[-–—:]\s*|\s+)(.+)$/;
 
 interface SourcePageText {
   pageNumber: number;
@@ -40,6 +40,14 @@ interface ParsedCandidate {
   sourcePage: number;
   confidence: number;
   fromToc: boolean;
+  explicit: boolean;
+}
+
+interface PageTocAnalysis {
+  page: SourcePageText;
+  entries: ParsedCandidate[];
+  hasHeader: boolean;
+  qualityScore: number;
 }
 
 function normalizeArabicDigits(value: string): string {
@@ -51,6 +59,32 @@ function parsePageNumber(value: string): number | null {
   if (!normalized) return null;
   const page = Number(normalized);
   return Number.isSafeInteger(page) && page > 0 && page <= 5000 ? page : null;
+}
+
+export function parsePageSelection(value: string, totalPages: number): number[] {
+  const selected = new Set<number>();
+  const normalized = normalizeArabicDigits(value)
+    .replace(/[،؛;]/g, ",")
+    .replace(/[–—]/g, "-")
+    .trim();
+  if (!normalized) return [];
+  normalized.split(/[\s,]+/).filter(Boolean).forEach((token) => {
+    const range = token.match(/^(\d{1,4})-(\d{1,4})$/);
+    if (range) {
+      const start = Number(range[1]);
+      const end = Number(range[2]);
+      const lower = Math.min(start, end);
+      const upper = Math.max(start, end);
+      if (upper - lower > 20) return;
+      for (let page = lower; page <= upper; page += 1) {
+        if (page >= 1 && page <= totalPages) selected.add(page);
+      }
+      return;
+    }
+    const page = Number(token.replace(/\D/g, ""));
+    if (Number.isSafeInteger(page) && page >= 1 && page <= totalPages) selected.add(page);
+  });
+  return [...selected].sort((left, right) => left - right);
 }
 
 export function cleanStructureTitle(value: string): string {
@@ -71,45 +105,89 @@ function normalizedTitleKey(value: string): string {
     .trim();
 }
 
-function nodeTypeForTitle(title: string): { nodeType: SourceStructureNodeType; confidence: number } | null {
-  if (UNIT_PATTERN.test(title)) return { nodeType: "وحدة", confidence: 0.97 };
-  if (LESSON_PATTERN.test(title)) return { nodeType: "درس", confidence: 0.94 };
-  if (ACTIVITY_PATTERN.test(title)) return { nodeType: "نشاط", confidence: 0.91 };
-  if (REVIEW_PATTERN.test(title)) return { nodeType: "مراجعة", confidence: 0.91 };
-  if (QUESTIONS_PATTERN.test(title)) return { nodeType: "أسئلة", confidence: 0.91 };
-  if (TOPIC_PATTERN.test(title)) return { nodeType: "موضوع", confidence: 0.88 };
-  const subsection = title.match(NUMBERED_SUBSECTION_PATTERN);
-  if (subsection?.[2]) return { nodeType: "درس", confidence: 0.86 };
-  const numberedUnit = title.match(NUMBERED_UNIT_PATTERN);
-  if (numberedUnit?.[2]) return { nodeType: "وحدة", confidence: 0.78 };
+function countArabicLetters(value: string): number {
+  return (value.match(/[\u0600-\u06FF]/g) ?? []).length;
+}
+
+function countLatinLetters(value: string): number {
+  return (value.match(/[A-Za-z]/g) ?? []).length;
+}
+
+function countDigits(value: string): number {
+  return (normalizeArabicDigits(value).match(/[0-9]/g) ?? []).length;
+}
+
+function looksLikeFormulaOrNoise(value: string): boolean {
+  const title = cleanStructureTitle(value);
+  const arabic = countArabicLetters(title);
+  const latin = countLatinLetters(title);
+  const digits = countDigits(title);
+  const symbols = (title.match(/[=+×÷ΩµλγΔΣπ^<>()[\]{}]/g) ?? []).length;
+  const compactLength = title.replace(/\s/g, "").length || 1;
+  const scientificNoise = latin + digits + symbols;
+  if (arabic < 4 && scientificNoise >= 3) return true;
+  if (scientificNoise / compactLength > 0.42 && arabic < 12) return true;
+  if (/^(?:[A-Za-z]\s*){2,}|^(?:\d+\s*){2,}$/.test(title)) return true;
+  if (/^[A-Za-z0-9ΩµλγΔΣπ\s=+×÷^().-]+$/.test(title)) return true;
+  return false;
+}
+
+function titleHasEnoughMeaning(value: string): boolean {
+  const title = cleanStructureTitle(value);
+  if (title.length < 5 || title.length > 160) return false;
+  if (looksLikeFormulaOrNoise(title)) return false;
+  const words = title.split(/\s+/).filter(Boolean);
+  const arabic = countArabicLetters(title);
+  return words.length >= 2 && arabic >= 4;
+}
+
+function nodeTypeForTitle(title: string, allowNumberedSubsection = true): { nodeType: SourceStructureNodeType; confidence: number; explicit: boolean } | null {
+  if (UNIT_PATTERN.test(title)) return { nodeType: "وحدة", confidence: 0.98, explicit: true };
+  if (LESSON_PATTERN.test(title)) return { nodeType: "درس", confidence: 0.96, explicit: true };
+  if (ACTIVITY_PATTERN.test(title)) return { nodeType: "نشاط", confidence: 0.93, explicit: true };
+  if (REVIEW_PATTERN.test(title)) return { nodeType: "مراجعة", confidence: 0.93, explicit: true };
+  if (QUESTIONS_PATTERN.test(title)) return { nodeType: "أسئلة", confidence: 0.93, explicit: true };
+  if (TOPIC_PATTERN.test(title)) return { nodeType: "موضوع", confidence: 0.9, explicit: true };
+  const subsection = allowNumberedSubsection ? title.match(NUMBERED_SUBSECTION_PATTERN) : null;
+  if (subsection?.[2] && titleHasEnoughMeaning(subsection[2])) {
+    return { nodeType: "درس", confidence: 0.84, explicit: false };
+  }
   return null;
 }
 
 function titleIsExcluded(title: string): boolean {
   const normalized = cleanStructureTitle(title);
-  return normalized.length < 3 || normalized.length > 180 || EXCLUDED_TITLE_PATTERN.test(normalized);
+  return !titleHasEnoughMeaning(normalized) || EXCLUDED_TITLE_PATTERN.test(normalized);
+}
+
+function pageHasTocHeader(page: SourcePageText): boolean {
+  return page.content
+    .split(/\n+/)
+    .slice(0, 30)
+    .some((line) => TOC_HEADER_PATTERN.test(cleanStructureTitle(line)));
 }
 
 function parseInlineTocLine(line: string, sourcePage: number): ParsedCandidate | null {
   const raw = line.replace(/\s+/g, " ").trim();
   if (!raw || TOC_HEADER_PATTERN.test(cleanStructureTitle(raw))) return null;
-  const leading = raw.match(/^([0-9٠-٩]{1,4})\s+((?:الوحدة|وحدة|الدرس|درس|الفصل|الموضوع|موضوع|نشاط|تجربة|استقصاء|مختبر|مراجعة|ملخص|أسئلة|تقويم|تمارين|اختبر\s+نفسك).{2,165})$/i);
+  const leading = raw.match(/^([0-9٠-٩]{1,4})\s+((?:الوحدة|وحدة|الدرس|درس|الفصل|الموضوع|موضوع|نشاط|تجربة|استقصاء|مختبر|مراجعة|ملخص|خلاصة|أسئلة|تقويم|تمارين|اختبر\s+نفسك).{3,150})$/i);
   const dotted = raw.match(/^(.*?)(?:\s*[.…·•_]{2,}\s*)([0-9٠-٩]{1,4})\s*$/);
-  const spaced = dotted ?? raw.match(/^((?:الوحدة|وحدة|الدرس|درس|الفصل|الموضوع|موضوع|نشاط|تجربة|استقصاء|مختبر|مراجعة|ملخص|أسئلة|تقويم|تمارين|اختبر\s+نفسك|[0-9٠-٩]+(?:[.٫][0-9٠-٩]+)+).{2,155}?)\s+([0-9٠-٩]{1,4})\s*$/i);
+  const spaced = dotted ?? raw.match(/^((?:الوحدة|وحدة|الدرس|درس|الفصل|الموضوع|موضوع|نشاط|تجربة|استقصاء|مختبر|مراجعة|ملخص|خلاصة|أسئلة|تقويم|تمارين|اختبر\s+نفسك|[0-9٠-٩]+(?:[.٫][0-9٠-٩]+)+).{3,145}?)\s+([0-9٠-٩]{1,4})\s*$/i);
   const rawTitle = leading?.[2] ?? spaced?.[1];
   const rawPage = leading?.[1] ?? spaced?.[2];
   if (!rawTitle || !rawPage) return null;
   const title = cleanStructureTitle(rawTitle);
   const pageStart = parsePageNumber(rawPage);
-  const typed = nodeTypeForTitle(title);
+  const typed = nodeTypeForTitle(title, true);
   if (!pageStart || !typed || titleIsExcluded(title)) return null;
   return {
     nodeType: typed.nodeType,
     title,
     pageStart,
     sourcePage,
-    confidence: Math.min(0.99, typed.confidence + 0.01),
+    confidence: Math.min(0.99, typed.confidence + (typed.explicit ? 0.01 : 0)),
     fromToc: true,
+    explicit: typed.explicit,
   };
 }
 
@@ -125,7 +203,7 @@ function parseTocPage(page: SourcePageText): ParsedCandidate[] {
       continue;
     }
     const nextLine = lines[index + 1];
-    const typed = nodeTypeForTitle(line);
+    const typed = nodeTypeForTitle(line, true);
     const nextPage = nextLine ? parsePageNumber(nextLine) : null;
     if (typed && nextPage && !titleIsExcluded(line)) {
       entries.push({
@@ -135,6 +213,7 @@ function parseTocPage(page: SourcePageText): ParsedCandidate[] {
         sourcePage: page.pageNumber,
         confidence: typed.confidence,
         fromToc: true,
+        explicit: typed.explicit,
       });
       index += 1;
     }
@@ -142,30 +221,87 @@ function parseTocPage(page: SourcePageText): ParsedCandidate[] {
   return entries;
 }
 
-function tocPageScore(page: SourcePageText, entries: ParsedCandidate[]): number {
-  const hasHeader = page.content.split(/\n+/).some((line) => TOC_HEADER_PATTERN.test(cleanStructureTitle(line)));
-  const uniqueTypes = new Set(entries.map((entry) => entry.nodeType)).size;
-  return entries.length * 3 + uniqueTypes * 2 + (hasHeader ? 8 : 0);
+function coherentPageRatio(entries: ParsedCandidate[]): number {
+  if (entries.length < 2) return 0;
+  let coherent = 0;
+  for (let index = 1; index < entries.length; index += 1) {
+    const previous = entries[index - 1];
+    const current = entries[index];
+    if (previous && current && current.pageStart >= previous.pageStart) coherent += 1;
+  }
+  return coherent / (entries.length - 1);
 }
 
-function parseFallbackHeadings(pages: SourcePageText[]): ParsedCandidate[] {
+function tocEntriesAreReliable(entries: ParsedCandidate[], totalPages: number, manual = false): boolean {
+  if (entries.length < (manual ? 2 : 3)) return false;
+  const explicitCount = entries.filter((entry) => entry.explicit).length;
+  const unitCount = entries.filter((entry) => entry.nodeType === "وحدة").length;
+  const meaningfulPages = new Set(entries.map((entry) => entry.pageStart)).size;
+  const inRangeCount = entries.filter((entry) => entry.pageStart <= Math.max(totalPages + 20, 50)).length;
+  return explicitCount >= (manual ? 1 : 2)
+    && unitCount >= 1
+    && meaningfulPages >= 2
+    && inRangeCount / entries.length >= 0.9
+    && coherentPageRatio(entries) >= 0.75;
+}
+
+function analyzeTocPages(pages: SourcePageText[], totalPages: number): PageTocAnalysis[] {
+  return pages.map((page) => {
+    const entries = parseTocPage(page);
+    const hasHeader = pageHasTocHeader(page);
+    const explicitCount = entries.filter((entry) => entry.explicit).length;
+    const qualityScore = entries.length * 2 + explicitCount * 2 + (hasHeader ? 12 : 0) + Math.round(coherentPageRatio(entries) * 5);
+    return { page, entries, hasHeader, qualityScore };
+  });
+}
+
+function selectReliableTocGroup(analyses: PageTocAnalysis[], totalPages: number): PageTocAnalysis[] {
+  let best: PageTocAnalysis[] = [];
+  let bestScore = -1;
+  analyses.forEach((analysis, index) => {
+    if (!analysis.hasHeader) return;
+    const group: PageTocAnalysis[] = [analysis];
+    let previousMax = Math.max(...analysis.entries.map((entry) => entry.pageStart), 0);
+    for (let offset = 1; offset <= 3; offset += 1) {
+      const next = analyses[index + offset];
+      if (!next || next.page.pageNumber !== analysis.page.pageNumber + offset || next.entries.length < 2) break;
+      const nextMin = Math.min(...next.entries.map((entry) => entry.pageStart));
+      if (previousMax && nextMin + 3 < previousMax) break;
+      group.push(next);
+      previousMax = Math.max(previousMax, ...next.entries.map((entry) => entry.pageStart));
+    }
+    const entries = group.flatMap((item) => item.entries);
+    if (!tocEntriesAreReliable(entries, totalPages, false)) return;
+    const score = group.reduce((sum, item) => sum + item.qualityScore, 0) + entries.length;
+    if (score > bestScore) {
+      best = group;
+      bestScore = score;
+    }
+  });
+  return best;
+}
+
+function parseExplicitUnitHeadings(pages: SourcePageText[]): ParsedCandidate[] {
   const candidates: ParsedCandidate[] = [];
   for (const page of pages) {
-    const lines = page.content.split(/\n+/).map(cleanStructureTitle).filter(Boolean).slice(0, 35);
+    const lines = page.content.split(/\n+/).map(cleanStructureTitle).filter(Boolean).slice(0, 24);
     for (const line of lines) {
-      const typed = nodeTypeForTitle(line);
-      if (!typed || titleIsExcluded(line)) continue;
+      if (!UNIT_PATTERN.test(line) || titleIsExcluded(line) || looksLikeFormulaOrNoise(line)) continue;
       candidates.push({
-        nodeType: typed.nodeType,
+        nodeType: "وحدة",
         title: line,
         pageStart: page.pageNumber,
         sourcePage: page.pageNumber,
-        confidence: Math.max(0.58, typed.confidence - 0.22),
+        confidence: 0.83,
         fromToc: false,
+        explicit: true,
       });
     }
   }
-  return candidates;
+  const deduplicated = deduplicateCandidates(candidates);
+  if (deduplicated.length < 2) return [];
+  const ordered = deduplicated.filter((candidate, index) => index === 0 || candidate.pageStart > (deduplicated[index - 1]?.pageStart ?? 0));
+  return ordered.length >= 2 ? ordered : [];
 }
 
 function longestOverlap(left: string, right: string, maxLength = 500): number {
@@ -225,13 +361,20 @@ function deduplicateCandidates(candidates: ParsedCandidate[]): ParsedCandidate[]
   return [...best.values()].sort((left, right) => left.pageStart - right.pageStart || right.confidence - left.confidence || left.title.localeCompare(right.title, "ar"));
 }
 
+function candidatesAfterFirstUnit(candidates: ParsedCandidate[]): ParsedCandidate[] {
+  const firstUnitIndex = candidates.findIndex((candidate) => candidate.nodeType === "وحدة");
+  if (firstUnitIndex < 0) return [];
+  return candidates.slice(firstUnitIndex).filter((candidate) => candidate.confidence >= 0.82 && !looksLikeFormulaOrNoise(candidate.title));
+}
+
 function buildNodes(sourceId: string, candidates: ParsedCandidate[], totalPages: number): SourceStructureNode[] {
   const nodes: SourceStructureNode[] = [];
   let currentUnitId: string | null = null;
   const now = new Date().toISOString();
-  candidates.forEach((candidate, index) => {
+  candidatesAfterFirstUnit(candidates).forEach((candidate, index) => {
     const id = `structure-${stableHash(`${sourceId}|${candidate.nodeType}|${normalizedTitleKey(candidate.title)}|${candidate.pageStart}`)}`;
     const parentId = candidate.nodeType === "وحدة" ? null : currentUnitId;
+    if (candidate.nodeType !== "وحدة" && !parentId) return;
     const node: SourceStructureNode = {
       id,
       sourceId,
@@ -243,7 +386,7 @@ function buildNodes(sourceId: string, candidates: ParsedCandidate[], totalPages:
       orderIndex: index,
       confidence: candidate.confidence,
       reviewStatus: "مرشح",
-      extractionMethod: candidate.fromToc ? STRUCTURE_VERSION : `${STRUCTURE_VERSION}-fallback`,
+      extractionMethod: candidate.fromToc ? STRUCTURE_VERSION : `${STRUCTURE_VERSION}-unit-scan`,
       createdAt: now,
       updatedAt: now,
     };
@@ -269,29 +412,100 @@ function buildNodes(sourceId: string, candidates: ParsedCandidate[], totalPages:
   return resequenceStructureNodes(nodes);
 }
 
+function candidateTocPageNumbers(analyses: PageTocAnalysis[]): number[] {
+  return analyses
+    .filter((analysis) => analysis.entries.length >= 2)
+    .sort((left, right) => right.qualityScore - left.qualityScore)
+    .slice(0, 6)
+    .map((analysis) => analysis.page.pageNumber)
+    .sort((left, right) => left - right);
+}
+
 export function extractSourceStructure(
   sourceId: string,
   chunks: SourceTextChunk[],
   totalPages: number,
+  options: SourceStructureExtractionOptions = {},
 ): SourceStructureExtractionResult {
   const pages = chunksToPageTexts(chunks);
-  const pageAnalyses = pages.map((page) => ({ page, entries: parseTocPage(page) }));
-  const strongTocPages = pageAnalyses.filter(({ page, entries }) => tocPageScore(page, entries) >= 13 && entries.length >= 2);
-  const tocPageNumbers = strongTocPages.map(({ page }) => page.pageNumber);
-  const tocCandidates = strongTocPages.flatMap(({ entries }) => entries);
-  const fallbackCandidates = tocCandidates.length >= 2 ? [] : parseFallbackHeadings(pages);
-  const candidates = deduplicateCandidates(tocCandidates.length >= 2 ? tocCandidates : fallbackCandidates);
-  const nodes = buildNodes(sourceId, candidates, totalPages || pages.at(-1)?.pageNumber || 1);
-  const unitCount = nodes.filter((node) => node.nodeType === "وحدة").length;
-  const childCount = nodes.length - unitCount;
+  const resolvedTotalPages = totalPages || pages.at(-1)?.pageNumber || 1;
+  const analyses = analyzeTocPages(pages, resolvedTotalPages);
+  const manualPages = [...new Set(options.tocPages ?? [])].filter((page) => page >= 1 && page <= resolvedTotalPages).sort((left, right) => left - right);
+  const candidatePages = candidateTocPageNumbers(analyses);
+
+  if (manualPages.length) {
+    const selected = analyses.filter((analysis) => manualPages.includes(analysis.page.pageNumber));
+    const entries = deduplicateCandidates(selected.flatMap((analysis) => analysis.entries));
+    if (!tocEntriesAreReliable(entries, resolvedTotalPages, true)) {
+      return {
+        sourceId,
+        nodes: [],
+        tocPages: manualPages,
+        usedFallback: false,
+        reliableTocFound: false,
+        manualTocRequired: true,
+        candidateTocPages: candidatePages,
+        message: "الصفحات المحددة لا تحتوي فهرسًا منظمًا بدرجة كافية. راجع أرقام الصفحات أو أضف الهيكل يدويًا.",
+      };
+    }
+    const candidates = candidatesAfterFirstUnit(entries);
+    const nodes = buildNodes(sourceId, candidates, resolvedTotalPages);
+    return {
+      sourceId,
+      nodes,
+      tocPages: manualPages,
+      usedFallback: false,
+      reliableTocFound: true,
+      manualTocRequired: false,
+      candidateTocPages: candidatePages,
+      message: `استخرج واثق ${nodes.filter((node) => node.nodeType === "وحدة").length} وحدة و${nodes.filter((node) => node.nodeType !== "وحدة").length} عنصرًا تابعًا من الصفحات المحددة ${manualPages.join("، ")}.`,
+    };
+  }
+
+  const reliableGroup = selectReliableTocGroup(analyses, resolvedTotalPages);
+  if (reliableGroup.length) {
+    const entries = deduplicateCandidates(reliableGroup.flatMap((analysis) => analysis.entries));
+    const nodes = buildNodes(sourceId, entries, resolvedTotalPages);
+    const tocPages = reliableGroup.map((analysis) => analysis.page.pageNumber);
+    return {
+      sourceId,
+      nodes,
+      tocPages,
+      usedFallback: false,
+      reliableTocFound: true,
+      manualTocRequired: false,
+      candidateTocPages: candidatePages,
+      message: `استخرج واثق ${nodes.filter((node) => node.nodeType === "وحدة").length} وحدة و${nodes.filter((node) => node.nodeType !== "وحدة").length} عنصرًا تابعًا من صفحات الفهرس ${tocPages.join("، ")}.`,
+    };
+  }
+
+  const allowFallback = options.allowUnitHeadingFallback !== false;
+  const fallbackUnits = allowFallback ? parseExplicitUnitHeadings(pages) : [];
+  if (fallbackUnits.length) {
+    const nodes = buildNodes(sourceId, fallbackUnits, resolvedTotalPages);
+    return {
+      sourceId,
+      nodes,
+      tocPages: [],
+      usedFallback: true,
+      reliableTocFound: false,
+      manualTocRequired: true,
+      candidateTocPages: candidatePages,
+      message: `لم يُعثر على فهرس موثوق. استخرج واثق ${nodes.length} وحدة من عناوين صريحة فقط؛ حدّد صفحات الفهرس يدويًا لاستخراج الدروس والأنشطة.`,
+    };
+  }
+
   return {
     sourceId,
-    nodes,
-    tocPages: tocPageNumbers,
-    usedFallback: tocCandidates.length < 2,
-    message: nodes.length
-      ? `استخرج واثق ${unitCount} وحدة و${childCount} عنصرًا تابعًا${tocPageNumbers.length ? ` من صفحات الفهرس ${tocPageNumbers.join("، ")}` : " من عناوين الصفحات"}.`
-      : "لم يعثر واثق على فهرس أو عناوين تعليمية واضحة؛ أضف الهيكل يدويًا أو راجع جودة النص.",
+    nodes: [],
+    tocPages: [],
+    usedFallback: false,
+    reliableTocFound: false,
+    manualTocRequired: true,
+    candidateTocPages: candidatePages,
+    message: candidatePages.length
+      ? `لم يُعثر على فهرس موثوق. جرّب تحديد صفحات الفهرس يدويًا؛ الصفحات المرشحة: ${candidatePages.join("، ")}.`
+      : "لم يُعثر على فهرس موثوق. حدّد صفحات الفهرس يدويًا أو أضف الهيكل يدويًا.",
   };
 }
 
@@ -319,6 +533,7 @@ export function validateSourceStructure(nodes: SourceStructureNode[]): SourceStr
   const ids = new Set(nodes.map((node) => node.id));
   nodes.forEach((node) => {
     if (!node.title.trim()) issues.push("يوجد عنصر بلا عنوان.");
+    if (looksLikeFormulaOrNoise(node.title)) issues.push(`العنوان يبدو معادلة أو نصًا مشوهًا: ${node.title}.`);
     if (!Number.isSafeInteger(node.pageStart) || node.pageStart < 1) issues.push(`صفحة البداية غير صالحة للعنصر: ${node.title || "بلا عنوان"}.`);
     if (!Number.isSafeInteger(node.pageEnd) || node.pageEnd < node.pageStart) issues.push(`نطاق الصفحات غير صالح للعنصر: ${node.title || "بلا عنوان"}.`);
     if (node.nodeType === "وحدة" && node.parentId !== null) issues.push(`الوحدة «${node.title}» لا يمكن أن تكون تابعة لوحدة أخرى.`);
