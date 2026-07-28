@@ -143,7 +143,7 @@ export function sourceToRow(source: ManagedSource, ownerId: string): SourceRow {
     drive_md5_checksum: source.driveMd5Checksum ?? null,
     upload_state: source.uploadState ?? null,
     uploaded_at: source.uploadedAt ?? null,
-    extraction_status: source.extractionStatus ?? null,
+    extraction_status: source.extractionStatus ?? "لم يبدأ",
     extraction_message: source.extractionMessage ?? null,
     extracted_page_count: source.extractedPageCount ?? null,
     extracted_character_count: source.extractedCharacterCount ?? null,
