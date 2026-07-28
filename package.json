@@ -1,9 +1,9 @@
 {
   "name": "wathiq",
-  "version": "0.0.14",
+  "version": "0.0.15",
   "private": true,
   "type": "module",
-  "description": "واثق: استخراج هيكل الوحدات والدروس من فهرس الكتب ومراجعته واعتماده مركزيًا",
+  "description": "واثق: استخراج موثوق لهيكل الكتب مع رفض المعادلات وتحديد صفحات الفهرس يدويًا",
   "scripts": {
     "build": "node scripts/build.mjs",
     "dev": "node scripts/serve.mjs",

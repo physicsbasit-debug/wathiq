@@ -5,6 +5,7 @@ import {
   cleanStructureTitle,
   createManualStructureNode,
   extractSourceStructure,
+  parsePageSelection,
   validateSourceStructure,
 } from "../dist/assets/source-structure.js";
 
@@ -70,6 +71,48 @@ test("يستخدم مسح العناوين كخطة احتياطية عند غي
   ], 35);
   assert.equal(result.usedFallback, true);
   assert.equal(result.nodes.filter((node) => node.nodeType === "وحدة").length, 2);
+  assert.equal(result.nodes.some((node) => node.nodeType === "درس"), false);
+  assert.equal(result.manualTocRequired, true);
+});
+
+test("يرفض صفحات المعادلات والرموز ولا يحولها إلى وحدات", () => {
+  const result = extractSourceStructure("source-noise", [
+    chunk(0, 34, "H 1 0 1 1\nH 1 1 2 1\nHe 2 شيئًا 9\nHe 2 يبين الشكل 3-8 ذرات نظيري الهيليوم"),
+    chunk(1, 35, "A 25 1.7 A 1.7 Ω\nΩ 5\nR 1 R 2 R 3 5 V\n40 + 1"),
+    chunk(2, 88, "Po 206 84\nGamma decay 103\nR = 10 Ω\nHe 4 2"),
+  ], 124);
+  assert.equal(result.nodes.length, 0);
+  assert.equal(result.manualTocRequired, true);
+  assert.equal(result.reliableTocFound, false);
+});
+
+test("يستخرج من صفحات فهرس محددة يدويًا حتى لو غاب عنوان المحتويات", () => {
+  const text = `
+الوحدة الأولى: الشحنة الكهربائية .... 17
+الدرس الأول: الشحنات والقوى .... 19
+الوحدة الثانية: مخططات الدوائر الكهربائية .... 25
+2.1 مكونات الدائرة الكهربائية .... 27
+`;
+  const result = extractSourceStructure("source-manual", [chunk(0, 4, text)], 124, { tocPages: [4], allowUnitHeadingFallback: false });
+  assert.equal(result.reliableTocFound, true);
+  assert.deepEqual(result.tocPages, [4]);
+  assert.equal(result.nodes.filter((node) => node.nodeType === "وحدة").length, 2);
+  assert.ok(result.nodes.some((node) => node.nodeType === "درس"));
+});
+
+test("يفهم إدخال صفحات الفهرس العربية والنطاقات", () => {
+  assert.deepEqual(parsePageSelection("٤-٦، ٩", 10), [4, 5, 6, 9]);
+  assert.deepEqual(parsePageSelection("20-50", 60), []);
+});
+
+test("يدعم فهرسًا موثوقًا ممتدًا على صفحتين متتاليتين", () => {
+  const result = extractSourceStructure("source-multipage", [
+    chunk(0, 3, "المحتويات\nالوحدة الأولى: المادة .... 8\nالدرس الأول: حالات المادة .... 10\nالوحدة الثانية: الطاقة .... 20"),
+    chunk(1, 4, "الدرس الأول: انتقال الطاقة .... 22\nنشاط عملي: قياس الطاقة .... 24\nالوحدة الثالثة: القوى .... 30"),
+  ], 50);
+  assert.deepEqual(result.tocPages, [3, 4]);
+  assert.equal(result.nodes.filter((node) => node.nodeType === "وحدة").length, 3);
+  assert.equal(result.reliableTocFound, true);
 });
 
 test("يرفض اعتماد هيكل بلا وحدة أو بنطاق صفحات معطوب", () => {

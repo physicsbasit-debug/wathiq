@@ -703,6 +703,11 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
 .source-structure-card h3 { margin: 4px 0 6px; color: var(--navy); font-size: 20px; }
 .source-structure-card p { margin: 0; color: var(--muted); line-height: 1.7; }
 .source-structure-card.empty, .source-structure-card.loading, .source-structure-card.unavailable { grid-template-columns: 1fr auto; align-items: center; }
+.structure-empty-actions { display: grid; gap: 10px; justify-items: start; min-width: min(100%, 420px); }
+.manual-toc-controls { display: flex; gap: 8px; align-items: end; flex-wrap: wrap; padding: 10px; border: 1px dashed #cbd7e8; border-radius: 12px; background: #f7faff; }
+.manual-toc-controls label { display: grid; gap: 5px; min-width: 220px; }
+.manual-toc-controls label > span { color: var(--muted); font-size: 11px; font-weight: 800; }
+.manual-toc-controls input { width: 100%; padding: 9px 10px; border: 1px solid var(--border); border-radius: 9px; background: #fff; color: var(--text); font: inherit; }
 .structure-review-badge { border-radius: 999px; padding: 7px 11px; font-size: 12px; font-weight: 800; white-space: nowrap; }
 .structure-review-badge.approved { background: #e6f6ec; color: #17643a; }
 .structure-review-badge.draft { background: #fff4dc; color: #8a5a00; }
@@ -734,4 +739,6 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
   .structure-move, .structure-title-field, .structure-node-row > .danger-link { grid-column: 1 / -1; }
   .structure-spacer { display: none; }
   .structure-toolbar > button { flex: 1 1 160px; }
+  .manual-toc-controls, .manual-toc-controls label { width: 100%; }
+  .manual-toc-controls > button { width: 100%; justify-content: center; }
 }
