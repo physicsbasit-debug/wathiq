@@ -76,7 +76,7 @@ interface EdgePayload {
 type FetchLike = typeof fetch;
 const browserFetch: FetchLike = (input, init) => globalThis.fetch(input, init);
 const PENDING_UPLOAD_KEY = "wathiq.phase0f2.pendingSourceUpload";
-export const SOURCE_UPLOAD_CHUNK_BYTES = 5 * 1024 * 1024;
+export const SOURCE_UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024;
 export const MAX_SOURCE_PDF_BYTES = 500 * 1024 * 1024;
 
 function payloadMessage(payload: unknown, fallback: string): string {
@@ -226,8 +226,12 @@ export class GoogleDriveService {
       pending.fileName === file.name &&
       pending.fileSizeBytes === file.size;
 
-    if (!matchingPending) {
-      if (pending) await this.cancelPendingUpload().catch(() => undefined);
+    if (!matchingPending && pending) {
+      await this.cancelPendingUpload().catch(() => undefined);
+      pending = null;
+    }
+
+    {
       const prepared = await this.requestJson("/prepare-upload", {
         method: "POST",
         body: JSON.stringify({
@@ -248,10 +252,10 @@ export class GoogleDriveService {
         fileSizeBytes: file.size,
         fileLastModified: file.lastModified,
         mimeType: file.type || "application/pdf",
-        bytesUploaded: typeof prepared.bytesUploaded === "number" ? prepared.bytesUploaded : 0,
-        chunkSizeBytes: this.chunkSizeBytes,
+        bytesUploaded: typeof prepared.bytesUploaded === "number" ? prepared.bytesUploaded : pending?.bytesUploaded ?? 0,
+        chunkSizeBytes: pending?.chunkSizeBytes ?? this.chunkSizeBytes,
         drivePath: typeof prepared.drivePath === "string" ? prepared.drivePath : source.drivePath,
-        createdAt: new Date().toISOString(),
+        createdAt: pending?.createdAt ?? new Date().toISOString(),
       };
       persistPendingUpload(pending);
     }

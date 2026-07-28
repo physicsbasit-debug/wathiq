@@ -15,6 +15,7 @@ function sourceAt(title, fileName, time) {
   draft.grade = 10;
   draft.subjectId = "physics";
   draft.version = "2026";
+  draft.semester = "الفصل الأول";
   draft.fileName = fileName;
   return createManagedSource(draft, new Date(time));
 }
