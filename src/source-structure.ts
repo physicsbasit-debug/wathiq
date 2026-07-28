@@ -16,7 +16,7 @@ export const SOURCE_STRUCTURE_NODE_TYPES: SourceStructureNodeType[] = [
   "أسئلة",
 ];
 
-const STRUCTURE_VERSION = "toc-heuristic-3";
+const STRUCTURE_VERSION = "toc-golden-4";
 const ARABIC_DIGITS = "٠١٢٣٤٥٦٧٨٩";
 const EXCLUDED_TITLE_PATTERN = /(?:حقوق\s+(?:الطبع|الطباعة|النشر)|الطبعة\s+(?:التجريبية|الأولى|الثانية|الثالثة)|الرقم\s+الدولي|ISBN|الفهرس|المحتويات|مقدمة\s+الكتاب|شكر\s+وتقدير|المؤلف(?:ون|ين)?|وزارة\s+(?:التربية|التعليم)|مطبعة\s+جامعة|بيانات\s+النشر)/i;
 const TOC_HEADER_PATTERN = /^(?:ال?فهرس|ال?محتويات|محتويات\s+الكتاب|قائمة\s+المحتويات|contents?)\s*[:：-]?\s*$/i;
@@ -86,30 +86,47 @@ function stripTrailingPageNumber(value: string): string {
   return cleanStructureTitle(value).replace(/\s+[0-9٠-٩]{1,4}\s*$/, "").trim();
 }
 
-function parseNumberedTocLesson(line: string, sourcePage: number): ParsedCandidate | null {
-  const cleaned = cleanStructureTitle(line);
+function parseNumberedTocLesson(value: string, sourcePage: number): ParsedCandidate | null {
+  const cleaned = cleanStructureTitle(value);
   const normalized = normalizeArabicDigits(cleaned);
-  const trailing = normalized.match(NUMBERED_TOC_LESSON_PATTERN);
-  const leading = trailing ? null : normalized.match(NUMBERED_TOC_LESSON_LEADING_PAGE_PATTERN);
-  const unitRaw = trailing?.[1] ?? leading?.[2];
-  const lessonRaw = trailing?.[2] ?? leading?.[3];
-  const titleRaw = trailing?.[3] ?? leading?.[4];
-  const pageRaw = trailing?.[4] ?? leading?.[1];
-  if (!unitRaw || !lessonRaw || !titleRaw || !pageRaw) return null;
-  const unitOrdinal = Number(unitRaw);
-  const lessonOrdinal = Number(lessonRaw);
-  const pageStart = Number(pageRaw);
-  const lessonTitle = cleanStructureTitle(titleRaw);
+  const codeMatches = [...normalized.matchAll(/([0-9]{1,2})\s*[-–—‑]\s*([0-9]{1,2})/g)];
+  if (codeMatches.length !== 1) return null;
+  const code = codeMatches[0];
+  const unitOrdinal = Number(code?.[1]);
+  const lessonOrdinal = Number(code?.[2]);
   if (!Number.isSafeInteger(unitOrdinal) || unitOrdinal < 1 || unitOrdinal > 30) return null;
   if (!Number.isSafeInteger(lessonOrdinal) || lessonOrdinal < 1 || lessonOrdinal > 99) return null;
+
+  const codeText = code?.[0] ?? "";
+  const codeIndex = code?.index ?? -1;
+  if (!codeText || codeIndex < 0) return null;
+  let remainder = `${normalized.slice(0, codeIndex)} ${normalized.slice(codeIndex + codeText.length)}`.replace(/\s+/g, " ").trim();
+
+  const leadingPage = remainder.match(/^([0-9]{1,4})\s+(.+)$/);
+  const trailingPage = remainder.match(/^(.+?)\s+([0-9]{1,4})$/);
+  let pageRaw: string | undefined;
+  let titleRaw: string | undefined;
+  if (leadingPage?.[1] && leadingPage[2]) {
+    pageRaw = leadingPage[1];
+    titleRaw = leadingPage[2];
+  } else if (trailingPage?.[1] && trailingPage[2]) {
+    titleRaw = trailingPage[1];
+    pageRaw = trailingPage[2];
+  }
+  if (!pageRaw || !titleRaw) return null;
+
+  const pageStart = Number(pageRaw);
+  const lessonTitle = cleanStructureTitle(titleRaw);
   if (!Number.isSafeInteger(pageStart) || pageStart < 1 || pageStart > 5000) return null;
-  if (!titleHasEnoughMeaning(lessonTitle) || looksLikeFormulaOrNoise(lessonTitle) || EXCLUDED_TITLE_PATTERN.test(lessonTitle)) return null;
+  const meaningfulNumberedLesson = titleHasEnoughMeaning(lessonTitle)
+    || (lessonTitle.length >= 4 && countArabicLetters(lessonTitle) >= 4 && !looksLikeFormulaOrNoise(lessonTitle));
+  if (!meaningfulNumberedLesson || EXCLUDED_TITLE_PATTERN.test(lessonTitle)) return null;
   return {
     nodeType: "درس",
     title: `${unitOrdinal}-${lessonOrdinal} ${lessonTitle}`,
     pageStart,
     sourcePage,
-    confidence: 0.97,
+    confidence: 0.99,
     fromToc: true,
     explicit: true,
     unitOrdinal,
@@ -124,59 +141,68 @@ function parseNumberedMultiColumnTocPage(page: SourcePageText): ParsedCandidate[
 
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index] ?? "";
-    const nextLine = lines[index + 1] ?? "";
-    const normalized = normalizeArabicDigits(line);
-    let lesson = parseNumberedTocLesson(line, page.pageNumber);
-    if (!lesson) {
-      const withoutPage = normalized.match(NUMBERED_TOC_LESSON_WITHOUT_PAGE_PATTERN);
-      const nextPage = parsePageNumber(nextLine);
-      if (withoutPage && nextPage) {
-        lesson = parseNumberedTocLesson(`${line} ${nextPage}`, page.pageNumber);
-        index += 1;
-      } else {
-        const currentPage = parsePageNumber(line);
-        const nextWithoutPage = normalizeArabicDigits(nextLine).match(NUMBERED_TOC_LESSON_WITHOUT_PAGE_PATTERN);
-        if (currentPage && nextWithoutPage) {
-          lesson = parseNumberedTocLesson(`${currentPage} ${nextLine}`, page.pageNumber);
-          index += 1;
+    if (UNIT_PATTERN.test(line)) {
+      const ordinal = parseUnitOrdinal(line);
+      if (ordinal) {
+        const title = stripTrailingPageNumber(line);
+        if (!titleIsExcluded(title) && !looksLikeFormulaOrNoise(title)) {
+          const current = units.get(ordinal);
+          if (!current || title.length > current.title.length) {
+            units.set(ordinal, {
+              nodeType: "وحدة",
+              title,
+              pageStart: 0,
+              sourcePage: page.pageNumber,
+              confidence: 0.995,
+              fromToc: true,
+              explicit: true,
+              unitOrdinal: ordinal,
+            });
+          }
         }
+      }
+      continue;
+    }
+
+    let lesson: ParsedCandidate | null = null;
+    let consumed = 1;
+    for (let width = 1; width <= 3 && index + width <= lines.length; width += 1) {
+      const window = lines.slice(index, index + width);
+      if (width > 1 && window.slice(1).some((part) => UNIT_PATTERN.test(part))) break;
+      const candidateText = window.join(" ");
+      lesson = parseNumberedTocLesson(candidateText, page.pageNumber);
+      if (lesson) {
+        consumed = width;
+        break;
       }
     }
     if (lesson?.unitOrdinal && lesson.lessonOrdinal) {
       lessons.set(`${lesson.unitOrdinal}-${lesson.lessonOrdinal}`, lesson);
-      continue;
-    }
-    if (!UNIT_PATTERN.test(line)) continue;
-    const ordinal = parseUnitOrdinal(line);
-    if (!ordinal) continue;
-    const title = stripTrailingPageNumber(line);
-    if (titleIsExcluded(title) || looksLikeFormulaOrNoise(title)) continue;
-    const current = units.get(ordinal);
-    if (!current || title.length > current.title.length) {
-      units.set(ordinal, {
-        nodeType: "وحدة",
-        title,
-        pageStart: 0,
-        sourcePage: page.pageNumber,
-        confidence: 0.99,
-        fromToc: true,
-        explicit: true,
-        unitOrdinal: ordinal,
-      });
+      index += consumed - 1;
     }
   }
 
-  const distinctLessonUnits = new Set([...lessons.values()].map((lesson) => lesson.unitOrdinal));
-  if (units.size < 4 || lessons.size < 6 || distinctLessonUnits.size < 3) return [];
+  const unitOrdinals = [...units.keys()].sort((left, right) => left - right);
+  if (unitOrdinals.length < 4 || lessons.size < 6) return [];
+  for (let index = 1; index < unitOrdinals.length; index += 1) {
+    if ((unitOrdinals[index] ?? 0) !== (unitOrdinals[index - 1] ?? 0) + 1) return [];
+  }
+  const lessonsByUnit = new Map<number, ParsedCandidate[]>();
+  lessons.forEach((lesson) => {
+    if (!lesson.unitOrdinal) return;
+    const list = lessonsByUnit.get(lesson.unitOrdinal) ?? [];
+    list.push(lesson);
+    lessonsByUnit.set(lesson.unitOrdinal, list);
+  });
+  if (unitOrdinals.some((ordinal) => !(lessonsByUnit.get(ordinal)?.length))) return [];
+  if ([...lessonsByUnit.keys()].some((ordinal) => !units.has(ordinal))) return [];
 
   const entries: ParsedCandidate[] = [];
-  [...units.keys()].sort((left, right) => left - right).forEach((ordinal) => {
+  unitOrdinals.forEach((ordinal) => {
     const unit = units.get(ordinal);
     if (!unit) return;
-    const unitLessons = [...lessons.values()]
-      .filter((lesson) => lesson.unitOrdinal === ordinal)
+    const unitLessons = (lessonsByUnit.get(ordinal) ?? [])
       .sort((left, right) => (left.lessonOrdinal ?? 0) - (right.lessonOrdinal ?? 0) || left.pageStart - right.pageStart);
-    if (!unitLessons.length) return;
     entries.push({ ...unit, pageStart: unitLessons[0]?.pageStart ?? page.pageNumber });
     entries.push(...unitLessons);
   });
@@ -629,7 +655,7 @@ export function extractSourceStructure(
     };
   }
 
-  const allowFallback = options.allowUnitHeadingFallback !== false;
+  const allowFallback = options.allowUnitHeadingFallback === true;
   const fallbackUnits = allowFallback ? parseExplicitUnitHeadings(pages) : [];
   if (fallbackUnits.length) {
     const nodes = buildNodes(sourceId, fallbackUnits, resolvedTotalPages);
@@ -687,8 +713,11 @@ export function shouldQuarantineLegacyStructureDraft(nodes: SourceStructureNode[
   const noiseRatio = noisyCount / nodes.length;
   const unitRatio = unitCount / nodes.length;
 
+  const childCount = nodes.filter((node) => node.parentId !== null).length;
+  const legacyUnitOnlyDraft = nodes.length >= 4 && unitRatio >= 0.8 && childCount === 0;
   return noisyCount >= 3
     || noiseRatio >= 0.2
+    || legacyUnitOnlyDraft
     || (nodes.length >= 15 && unitRatio >= 0.7);
 }
 
@@ -711,6 +740,20 @@ export function validateSourceStructure(nodes: SourceStructureNode[]): SourceStr
     if (duplicateKeys.has(key)) issues.push(`العنوان مكرر داخل المستوى نفسه: ${node.title}.`);
     duplicateKeys.add(key);
   });
+  const automaticUnits = nodes
+    .filter((node) => node.nodeType === "وحدة" && node.extractionMethod.startsWith("toc-"))
+    .map((node) => ({ node, ordinal: parseUnitOrdinal(node.title) }))
+    .filter((item): item is { node: SourceStructureNode; ordinal: number } => item.ordinal !== null)
+    .sort((left, right) => left.ordinal - right.ordinal);
+  if (automaticUnits.length >= 4) {
+    for (let index = 1; index < automaticUnits.length; index += 1) {
+      const previous = automaticUnits[index - 1];
+      const current = automaticUnits[index];
+      if (previous && current && current.ordinal !== previous.ordinal + 1) {
+        issues.push(`تسلسل الوحدات غير مكتمل بين الوحدة ${previous.ordinal} والوحدة ${current.ordinal}.`);
+      }
+    }
+  }
   return { valid: issues.length === 0, issues: [...new Set(issues)] };
 }
 

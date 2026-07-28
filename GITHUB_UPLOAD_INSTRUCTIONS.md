@@ -1,6 +1,8 @@
-# رفع Phase 0-H1 Fix 3 عبر GitHub
+# رفع Phase 0-H1 Rebuild 1 عبر GitHub
 
-- الفرع: `fix/phase-0-h1-multicolumn-toc`
-- رسالة الالتزام: `fix: استخراج فهرس الكتب العربية متعدد الأعمدة`
-- لا يوجد SQL أو Edge Function أو تعديل على `.github/workflows/pages.yml`.
-- بعد نجاح Actions يمكن الدمج مباشرة.
+1. أنشئ فرعًا من `main` باسم `fix/phase-0-h1-golden-toc-rebuild`.
+2. ارفع محتويات حزمة الملفات المعدلة فقط.
+3. استخدم رسالة الالتزام: `fix: إعادة بناء استخراج الفهرس على مرجع ذهبي`.
+4. افتح Pull Request وانتظر نجاح GitHub Actions.
+5. يمكن الدمج بعد الأخضر مباشرة؛ لا يوجد SQL أو Edge Function أو pages.yml.
+6. بعد النشر اضغط «إعادة استخراج الهيكل» ولا تعتمد الناتج قبل التأكد من 11 وحدة و29 درسًا.
