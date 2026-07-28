@@ -1,4 +1,4 @@
-import type { SourceExtractionResult, SourceTextChunk } from "./types.js";
+import type { SourceExtractionQuality, SourceExtractionResult, SourceTextChunk } from "./types.js";
 
 const PDFJS_VERSION = "4.10.38";
 const PDFJS_BASE_URL = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_VERSION}/build`;
@@ -7,6 +7,12 @@ const PDFJS_WORKER_URL = `${PDFJS_BASE_URL}/pdf.worker.mjs`;
 const DEFAULT_CHUNK_SIZE = 3600;
 const DEFAULT_CHUNK_OVERLAP = 220;
 const OCR_MIN_CHARACTERS_PER_PAGE = 18;
+const MIN_TEXT_CHARACTERS = 120;
+const QUALITY_GATE_VERSION = "arabic-quality-gate-1";
+
+const COMMON_ARABIC_WORDS = new Set([
+  "في", "من", "على", "الى", "عن", "مع", "بين", "عند", "بعد", "قبل", "خلال", "حتى", "ثم", "او", "ام", "بل", "لا", "لم", "لن", "ما", "هو", "هي", "هم", "هن", "هذا", "هذه", "ذلك", "تلك", "هنا", "هناك", "الذي", "التي", "الذين", "اللاتي", "كل", "بعض", "اي", "اكثر", "اقل", "يمكن", "يكون", "تكون", "يتم", "تتم", "يجب", "قد", "كما", "حيث", "لذلك", "لان", "اذا", "ان", "انه", "انها", "كان", "كانت", "يؤدي", "تؤدي", "يساعد", "تساعد", "يعتمد", "تعتمد", "يستخدم", "تستخدم", "يوضح", "توضح", "يمثل", "تمثل", "يتكون", "تتكون", "تحتوي", "يحتوي", "يحدث", "تحدث", "ينتج", "تنتج", "تسمى", "يسمى", "مثل", "مثال", "التالي", "التالية", "الاول", "الاولى", "الثاني", "الثانية", "الصف", "الطالب", "الطلاب", "المعلم", "المعلمين", "المادة", "العلوم", "الدرس", "الوحدة", "الفصل", "النشاط", "التجربة", "السؤال", "الاجابة", "الشكل", "الجدول", "الرسم", "البيانات", "المعلومات", "النتائج", "الهدف", "الاهداف", "نواتج", "التعلم", "شرح", "اشرح", "فسر", "تفسير", "حدد", "اذكر", "قارن", "اختر", "صحيح", "خطا", "درجة", "درجات", "قيمة", "قيم", "عدد", "كتلة", "حجم", "زمن", "سرعة", "قوة", "طاقة", "حرارة", "مادة", "مواد", "جسم", "اجسام", "ماء", "هواء", "ضوء", "صوت", "حركة", "تغير", "تغيرات", "خاصية", "خصائص", "عملية", "عمليات", "نظام", "انظمة", "نوع", "انواع", "جزء", "اجزاء", "سبب", "اسباب", "نتيجة", "درجة", "صورة", "صور", "صفحة", "صفحات",
+].map(normalizeArabicToken));
 
 interface PdfTextItemLike {
   str?: unknown;
@@ -71,6 +77,133 @@ export function normalizeExtractedText(value: string): string {
     .replace(/ {2,}/g, " ")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+function normalizeArabicToken(value: string): string {
+  return value
+    .replace(/[\u064B-\u065F\u0670\u06D6-\u06ED]/g, "")
+    .replace(/ـ/g, "")
+    .replace(/[أإآٱ]/g, "ا")
+    .replace(/ى/g, "ي")
+    .replace(/ؤ/g, "و")
+    .replace(/ئ/g, "ي")
+    .toLocaleLowerCase("ar");
+}
+
+function arabicWords(text: string): string[] {
+  return (text.match(/[\u0621-\u063A\u0641-\u064A]{1,}/g) ?? [])
+    .map(normalizeArabicToken)
+    .filter(Boolean);
+}
+
+function arabicLetterShares(text: string): { maxShare: number; topFiveShare: number } {
+  const letters = (text.match(/[\u0621-\u063A\u0641-\u064A]/g) ?? []).map(normalizeArabicToken);
+  if (!letters.length) return { maxShare: 0, topFiveShare: 0 };
+  const counts = new Map<string, number>();
+  for (const letter of letters) counts.set(letter, (counts.get(letter) ?? 0) + 1);
+  const shares = [...counts.values()].sort((a, b) => b - a).map((count) => count / letters.length);
+  return {
+    maxShare: shares[0] ?? 0,
+    topFiveShare: shares.slice(0, 5).reduce((sum, share) => sum + share, 0),
+  };
+}
+
+export function assessExtractedTextQuality(text: string): SourceExtractionQuality {
+  const normalized = normalizeExtractedText(text);
+  const arabicLetterCount = (normalized.match(/[\u0621-\u063A\u0641-\u064A]/g) ?? []).length;
+  const latinLetterCount = (normalized.match(/[A-Za-z]/g) ?? []).length;
+  const letterCount = arabicLetterCount + latinLetterCount;
+  const words = arabicWords(normalized);
+  const analyzableWords = words.filter((word) => word.length >= 2);
+  const commonWordCount = analyzableWords.filter((word) => COMMON_ARABIC_WORDS.has(word)).length;
+  const commonWordRatio = analyzableWords.length ? commonWordCount / analyzableWords.length : 0;
+  const averageWordLength = words.length ? words.reduce((sum, word) => sum + word.length, 0) / words.length : 0;
+  const longWordRatio = words.length ? words.filter((word) => word.length >= 12).length / words.length : 0;
+  const veryLongWordRatio = words.length ? words.filter((word) => word.length >= 18).length / words.length : 0;
+  const singleLetterWordRatio = words.length ? words.filter((word) => word.length === 1).length / words.length : 0;
+  const { maxShare, topFiveShare } = arabicLetterShares(normalized);
+  const arabicDominant = arabicLetterCount >= 100 && arabicLetterCount >= latinLetterCount * 1.2;
+
+  if (letterCount < MIN_TEXT_CHARACTERS) {
+    return {
+      accepted: false,
+      score: 0,
+      reason: "insufficient_text",
+      message: "لم يعثر واثق على نص كافٍ داخل الملف؛ يبدو أن الصفحات مصورة وتحتاج OCR.",
+      arabicLetterCount,
+      wordCount: words.length,
+      commonWordRatio,
+      averageWordLength,
+      longWordRatio,
+      singleLetterWordRatio,
+      topFiveLetterShare: topFiveShare,
+      qualityGateVersion: QUALITY_GATE_VERSION,
+    };
+  }
+
+  if (!arabicDominant || analyzableWords.length < 30) {
+    return {
+      accepted: true,
+      score: 82,
+      reason: "accepted",
+      message: "اجتاز النص فحص الجودة الأولي.",
+      arabicLetterCount,
+      wordCount: words.length,
+      commonWordRatio,
+      averageWordLength,
+      longWordRatio,
+      singleLetterWordRatio,
+      topFiveLetterShare: topFiveShare,
+      qualityGateVersion: QUALITY_GATE_VERSION,
+    };
+  }
+
+  let penalty = 0;
+  if (commonWordRatio < 0.03) penalty += 44;
+  else if (commonWordRatio < 0.055) penalty += 30;
+  else if (commonWordRatio < 0.085) penalty += 16;
+
+  if (topFiveShare > 0.64) penalty += 24;
+  else if (topFiveShare > 0.58) penalty += 13;
+  else if (topFiveShare > 0.54) penalty += 6;
+
+  if (maxShare > 0.2) penalty += 15;
+  else if (maxShare > 0.17) penalty += 8;
+
+  if (averageWordLength > 8) penalty += 20;
+  else if (averageWordLength > 7.2) penalty += 12;
+  else if (averageWordLength > 6.6) penalty += 6;
+
+  if (longWordRatio > 0.13) penalty += 22;
+  else if (longWordRatio > 0.08) penalty += 12;
+  else if (longWordRatio > 0.05) penalty += 6;
+
+  if (veryLongWordRatio > 0.035) penalty += 12;
+  if (singleLetterWordRatio > 0.22) penalty += 10;
+
+  const score = Math.max(0, 100 - penalty);
+  const accepted = penalty < 40;
+  return {
+    accepted,
+    score,
+    reason: accepted ? "accepted" : "garbled_arabic",
+    message: accepted
+      ? "اجتاز النص العربي فحص الجودة الأولي."
+      : "اكتشف واثق طبقة نص عربية مشوهة أو غير مقروءة داخل PDF؛ أوقف الفهرسة وحوّل الملف إلى مسار OCR.",
+    arabicLetterCount,
+    wordCount: words.length,
+    commonWordRatio,
+    averageWordLength,
+    longWordRatio,
+    singleLetterWordRatio,
+    topFiveLetterShare: topFiveShare,
+    qualityGateVersion: QUALITY_GATE_VERSION,
+  };
+}
+
+export function shouldInvalidateLegacyExtraction(preview: string): boolean {
+  const quality = assessExtractedTextQuality(preview);
+  return quality.reason === "garbled_arabic" && quality.score <= 60;
 }
 
 export function textItemsToPageText(items: unknown[]): string {
@@ -166,15 +299,37 @@ export function buildExtractionResult(pageTexts: string[]): SourceExtractionResu
   const characterCount = normalizedPages.reduce((sum, text) => sum + text.length, 0);
   const combined = normalizedPages.filter(Boolean).join("\n\n");
   const pageCount = normalizedPages.length;
-  const requiresOcr = characterCount < Math.max(120, pageCount * OCR_MIN_CHARACTERS_PER_PAGE);
+  const insufficientText = characterCount < Math.max(MIN_TEXT_CHARACTERS, pageCount * OCR_MIN_CHARACTERS_PER_PAGE);
+  const overallQuality = assessExtractedTextQuality(combined);
+  const analyzablePageQualities = normalizedPages
+    .filter((page) => (page.match(/[\u0621-\u063A\u0641-\u064A]/g) ?? []).length >= 140)
+    .map(assessExtractedTextQuality);
+  const rejectedPageCount = analyzablePageQualities.filter((quality) => !quality.accepted && quality.reason === "garbled_arabic").length;
+  const rejectedPageRatio = analyzablePageQualities.length ? rejectedPageCount / analyzablePageQualities.length : 0;
+  const garbledArabic = overallQuality.reason === "garbled_arabic" || (
+    analyzablePageQualities.length >= 2 && rejectedPageCount >= 2 && rejectedPageRatio > 0.34
+  );
+  const requiresOcr = insufficientText || garbledArabic;
+  const quality: SourceExtractionQuality = insufficientText
+    ? { ...overallQuality, accepted: false, score: 0, reason: "insufficient_text", message: "لم يعثر واثق على نص كافٍ داخل الملف؛ يبدو أن الصفحات مصورة وتحتاج OCR." }
+    : garbledArabic
+      ? {
+          ...overallQuality,
+          accepted: false,
+          score: Math.min(overallQuality.score, Math.max(0, Math.round(100 - rejectedPageRatio * 100))),
+          reason: "garbled_arabic",
+          message: "اكتشف واثق طبقة نص عربية مشوهة أو غير مقروءة داخل PDF؛ أوقف الفهرسة وحوّل الملف إلى مسار OCR.",
+        }
+      : overallQuality;
   return {
     pageCount,
     characterCount,
     nonEmptyPageCount,
     language: detectDocumentLanguage(combined),
-    preview: combined.slice(0, 1200),
-    detectedHeadings: detectHeadingCandidates(normalizedPages),
+    preview: requiresOcr ? "" : combined.slice(0, 1200),
+    detectedHeadings: requiresOcr ? [] : detectHeadingCandidates(normalizedPages),
     requiresOcr,
+    quality,
     chunks: requiresOcr ? [] : splitTextIntoChunks(normalizedPages),
   };
 }
@@ -217,7 +372,7 @@ export async function extractPdfText(
       pageNumber: document.numPages,
       totalPages: document.numPages,
       percent: 94,
-      message: "جارٍ تجهيز النص للفهرسة…",
+      message: "جارٍ فحص جودة النص وتجهيزه للفهرسة…",
     });
     return buildExtractionResult(pages);
   } finally {

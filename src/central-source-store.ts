@@ -349,8 +349,8 @@ export class CentralSourceStore {
 
     const extractionStatus: SourceExtractionStatus = result.requiresOcr ? "يحتاج OCR" : "مكتمل";
     const message = result.requiresOcr
-      ? "لم يعثر واثق على نص كافٍ داخل الملف؛ يبدو أن الصفحات مصورة وتحتاج OCR."
-      : `تم استخراج ${result.characterCount.toLocaleString("en-US")} حرف من ${result.pageCount} صفحة.`;
+      ? result.quality.message
+      : `تم استخراج ${result.characterCount.toLocaleString("en-US")} حرف من ${result.pageCount} صفحة، واجتاز النص بوابة الجودة بدرجة ${result.quality.score} من 100.`;
     await this.dataRequest(
       `/rest/v1/source_registry?owner_id=eq.${encodedOwner}&id=eq.${encodedSource}`,
       {
@@ -361,12 +361,12 @@ export class CentralSourceStore {
           extraction_status: extractionStatus,
           extraction_message: message,
           extracted_page_count: result.pageCount,
-          extracted_character_count: result.characterCount,
-          extracted_language: result.language,
-          extraction_preview: result.preview,
-          detected_headings: result.detectedHeadings,
+          extracted_character_count: result.requiresOcr ? null : result.characterCount,
+          extracted_language: result.requiresOcr ? null : result.language,
+          extraction_preview: result.requiresOcr ? null : result.preview,
+          detected_headings: result.requiresOcr ? [] : result.detectedHeadings,
           extracted_at: now,
-          extraction_version: "pdfjs-4.10.38-wathiq-1",
+          extraction_version: `pdfjs-4.10.38-wathiq-2-${result.quality.qualityGateVersion}`,
           updated_at: now,
         }),
       },
@@ -379,6 +379,36 @@ export class CentralSourceStore {
       chunkCount: result.chunks.length,
       requiresOcr: result.requiresOcr,
     };
+  }
+
+  async invalidateLegacyExtraction(sourceId: string, message: string): Promise<void> {
+    const session = await this.requireSession();
+    const encodedOwner = encodeURIComponent(session.userId);
+    const encodedSource = encodeURIComponent(sourceId);
+    const now = new Date().toISOString();
+
+    await this.dataRequest(
+      `/rest/v1/source_chunks?owner_id=eq.${encodedOwner}&source_id=eq.${encodedSource}`,
+      { method: "DELETE", headers: { Prefer: "return=minimal" } },
+    );
+    await this.dataRequest(
+      `/rest/v1/source_registry?owner_id=eq.${encodedOwner}&id=eq.${encodedSource}`,
+      {
+        method: "PATCH",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({
+          status: "يحتاج مراجعة",
+          extraction_status: "يحتاج OCR",
+          extraction_message: message,
+          extracted_character_count: null,
+          extracted_language: null,
+          extraction_preview: null,
+          detected_headings: [],
+          extraction_version: "pdfjs-4.10.38-wathiq-2-arabic-quality-gate-1",
+          updated_at: now,
+        }),
+      },
+    );
   }
 
   private chunkToRow(ownerId: string, sourceId: string, chunk: SourceTextChunk): Record<string, unknown> {
