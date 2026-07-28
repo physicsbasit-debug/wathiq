@@ -128,3 +128,48 @@ test("يستدعي fetch الافتراضي بسياق globalThis دون Illegal
     globalThis.fetch = originalFetch;
   }
 });
+
+test("يحفظ مقاطع الاستخراج ثم يحدّث ملخص المصدر", async () => {
+  memory.clear();
+  const ownerId = "11111111-1111-1111-1111-111111111111";
+  const calls = [];
+  const fetcher = async (url, init = {}) => {
+    calls.push({ url: String(url), init });
+    if (String(url).includes("/auth/v1/token?grant_type=password")) {
+      return Response.json({
+        access_token: "user-jwt",
+        refresh_token: "refresh-jwt",
+        expires_in: 3600,
+        user: { id: ownerId, email: "owner@example.com" },
+      });
+    }
+    return new Response(null, { status: 204 });
+  };
+  const store = new CentralSourceStore({
+    supabaseUrl: "https://project.supabase.co",
+    supabasePublishableKey: "sb_publishable_test",
+  }, fetcher);
+  await store.signIn("owner@example.com", "secret");
+  const saved = await store.saveSourceExtraction("source-1", {
+    pageCount: 2,
+    characterCount: 500,
+    nonEmptyPageCount: 2,
+    language: "العربية",
+    preview: "معاينة",
+    detectedHeadings: ["الوحدة الأولى"],
+    requiresOcr: false,
+    chunks: [
+      { chunkIndex: 0, pageFrom: 1, pageTo: 1, content: "نص الصفحة الأولى", characterCount: 16 },
+      { chunkIndex: 1, pageFrom: 2, pageTo: 2, content: "نص الصفحة الثانية", characterCount: 17 },
+    ],
+  });
+  assert.equal(saved.chunkCount, 2);
+  const dataCalls = calls.filter((call) => call.url.includes("/rest/v1/"));
+  assert.equal(dataCalls.length, 3);
+  assert.equal(dataCalls[0].init.method, "DELETE");
+  assert.equal(dataCalls[1].init.method, "POST");
+  assert.equal(dataCalls[2].init.method, "PATCH");
+  const summary = JSON.parse(dataCalls[2].init.body);
+  assert.equal(summary.extraction_status, "مكتمل");
+  assert.equal(summary.status, "مفهرس");
+});

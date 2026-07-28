@@ -44,6 +44,12 @@ export function normalizeManagedSource(value: unknown): ManagedSource | null {
     "driveMd5Checksum",
     "uploadState",
     "uploadedAt",
+    "extractionStatus",
+    "extractionMessage",
+    "extractedLanguage",
+    "extractionPreview",
+    "extractedAt",
+    "extractionVersion",
   ] as const;
   const optionalValues: Record<string, string | number> = {};
   optionalStrings.forEach((key) => {
@@ -51,6 +57,12 @@ export function normalizeManagedSource(value: unknown): ManagedSource | null {
   });
   if (typeof value.fileSizeBytes === "number" && Number.isFinite(value.fileSizeBytes) && value.fileSizeBytes >= 0) {
     optionalValues.fileSizeBytes = value.fileSizeBytes;
+  }
+  if (typeof value.extractedPageCount === "number" && Number.isFinite(value.extractedPageCount) && value.extractedPageCount >= 0) {
+    optionalValues.extractedPageCount = value.extractedPageCount;
+  }
+  if (typeof value.extractedCharacterCount === "number" && Number.isFinite(value.extractedCharacterCount) && value.extractedCharacterCount >= 0) {
+    optionalValues.extractedCharacterCount = value.extractedCharacterCount;
   }
 
   return {
@@ -60,6 +72,9 @@ export function normalizeManagedSource(value: unknown): ManagedSource | null {
     fingerprint,
     authority: authorityForKind(partial.kind),
     rightsConfirmed: Boolean(value.rightsConfirmed),
+    ...(Array.isArray(value.detectedHeadings) && value.detectedHeadings.some((item) => typeof item === "string")
+      ? { detectedHeadings: value.detectedHeadings.filter((item): item is string => typeof item === "string") }
+      : {}),
   };
 }
 

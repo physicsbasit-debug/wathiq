@@ -15,6 +15,7 @@ import { createRegistryBackup, mergeSourceRegistry, parseRegistryBackup } from "
 import { CentralSourceStore } from "./central-source-store.js";
 import { getRuntimeConfig, isCentralStorageConfigured, isGoogleDriveConfigured } from "./runtime-config.js";
 import { GoogleDriveService, type GoogleDriveStatus, type PendingSourceUpload, type SourceUploadProgress } from "./google-drive.js";
+import { extractPdfText, type PdfExtractionProgress } from "./pdf-indexer.js";
 import { resolveInitialView, viewFromHash, viewHash } from "./navigation.js";
 
 const appRoot = document.querySelector<HTMLDivElement>("#app");
@@ -49,7 +50,11 @@ interface AppState {
   sourceUploadProgress: number;
   sourceUploadMessage: string;
   pendingSourceUpload: PendingSourceUpload | null;
+  sourceIndexingId: string;
+  sourceIndexingProgress: number;
+  sourceIndexingMessage: string;
 }
+
 
 const runtimeConfig = getRuntimeConfig();
 const centralSourceStore = isCentralStorageConfigured(runtimeConfig)
@@ -99,6 +104,9 @@ const state: AppState = {
   sourceUploadProgress: 0,
   sourceUploadMessage: "",
   pendingSourceUpload: googleDriveService?.getPendingUpload() ?? null,
+  sourceIndexingId: "",
+  sourceIndexingProgress: 0,
+  sourceIndexingMessage: "",
 };
 
 let saveTimer: number | undefined;
@@ -231,7 +239,7 @@ function renderHome(): string {
   return `
     <section class="hero-panel">
       <div class="hero-copy">
-        <span class="eyebrow">نسخة المرحلة 0-F1</span>
+        <span class="eyebrow">نسخة المرحلة 0-G</span>
         <h1>أنشئ اختبارك القصير بثقة.</h1>
         <p>أربع خطوات واضحة. المصادر والفحوص وجدول المواصفات تعمل في الخلفية، حيث تنتمي التفاصيل المزعجة.</p>
         <div class="hero-actions">
@@ -563,6 +571,20 @@ function renderPendingSourceUpload(): string {
   </section>`;
 }
 
+function renderSourceIndexingProgress(): string {
+  if (!state.sourceIndexingId) return "";
+  const source = state.sources.find((item) => item.id === state.sourceIndexingId);
+  return `<section class="source-indexing-card" aria-live="polite">
+    <div>
+      <span class="storage-state">استخراج وفهرسة</span>
+      <h2>${escapeHtml(source?.title ?? "مصدر PDF")}</h2>
+      <p>${escapeHtml(state.sourceIndexingMessage || "جارٍ تجهيز ملف PDF…")}</p>
+      <div class="upload-progress-track"><span style="width:${state.sourceIndexingProgress}%"></span></div>
+    </div>
+    <strong dir="ltr">${state.sourceIndexingProgress}%</strong>
+  </section>`;
+}
+
 function renderAdmin(): string {
   const activeSources = state.sources.filter((source) => source.status !== "مؤرشف").length;
   const indexedSources = state.sources.filter((source) => source.status === "مفهرس").length;
@@ -570,11 +592,12 @@ function renderAdmin(): string {
   const visibleSources = state.sources.filter((source) => state.sourceFilter === "الكل" || source.status === state.sourceFilter);
   const selectedSource = state.sources.find((source) => source.id === state.selectedSourceId);
   return `
-    <section class="page-heading"><div><span class="eyebrow">لوحة مالك المنصة</span><h1>إدارة المصادر</h1><p>رفع ملفات PDF فعليًا إلى Google Drive، وتسجيل بياناتها في Supabase، مع استكمال الرفع ومنع التكرار.</p></div><span class="demo-badge">Phase 0-F2 · رفع PDF</span></section>
+    <section class="page-heading"><div><span class="eyebrow">لوحة مالك المنصة</span><h1>إدارة المصادر</h1><p>رفع ملفات PDF، واستخراج النص القابل للتحديد، وحفظ مقاطع الفهرسة في Supabase دون OCR في هذه المرحلة.</p></div><span class="demo-badge">Phase 0-G · استخراج PDF</span></section>
 
     ${renderSourceStoragePanel()}
     ${renderGoogleDrivePanel()}
     ${renderPendingSourceUpload()}
+    ${renderSourceIndexingProgress()}
 
     <section class="source-stats" aria-label="ملخص المصادر">
       <article><span>المصادر النشطة</span><strong>${activeSources}</strong></article>
@@ -601,7 +624,7 @@ function renderAdmin(): string {
 
     <section class="source-table-wrap">
       <div class="source-list-heading">
-        <div><h2>مكتبة المصادر</h2><p>يكشف واثق التكرار قبل الحفظ، ويمنح كل مصدر رقمًا ثابتًا يسهل تتبعه لاحقًا عند ربط Drive والفهرسة.</p></div>
+        <div><h2>مكتبة المصادر</h2><p>بعد رفع PDF يمكنك استخراج نصه وفهرسته. الملفات المصورة تُوسم بوضوح بأنها تحتاج OCR بدل ادعاء قراءة ما لا يُقرأ.</p></div>
         <label class="search-field"><span>بحث</span><input id="source-search" placeholder="اسم المصدر أو المادة أو رقم الفهرسة"/></label>
       </div>
       <div class="source-filter-row">${(["الكل", "جاهز للفهرسة", "مفهرس", "يحتاج مراجعة", "مؤرشف"] as const).map((filter) => `<button class="filter-chip ${state.sourceFilter === filter ? "active" : ""}" data-source-filter="${filter}">${filter}</button>`).join("")}</div>
@@ -645,6 +668,8 @@ function renderSourceForm(): string {
 function renderSourceDetails(source: ManagedSource): string {
   const subject = SUBJECTS.find((item) => item.id === source.subjectId)?.label ?? "غير محددة";
   const reference = source.mode === "file" ? source.fileName ?? "ملف PDF" : source.url ?? "رابط";
+  const extractionStatus = source.extractionStatus ?? "لم يبدأ";
+  const headings = source.detectedHeadings ?? [];
   return `
     <section class="source-details-card" aria-label="تفاصيل المصدر">
       <header><div><span class="eyebrow">تفاصيل المصدر</span><h2>${escapeHtml(source.title)}</h2></div><button class="ghost-btn compact" data-action="close-source-details">إغلاق</button></header>
@@ -656,13 +681,23 @@ function renderSourceDetails(source: ManagedSource): string {
         <div><span>الإصدار</span><strong>${escapeHtml(source.version)}</strong></div>
         <div><span>الحالة</span><strong>${escapeHtml(source.status)}</strong></div>
         <div><span>حالة الملف</span><strong>${escapeHtml(source.uploadState ?? (source.mode === "url" ? "رابط" : "غير مرفوع"))}</strong></div>
+        <div><span>حالة الاستخراج</span><strong>${escapeHtml(extractionStatus)}</strong></div>
         <div><span>حجم الملف</span><strong>${source.fileSizeBytes ? formatFileSize(source.fileSizeBytes) : "—"}</strong></div>
+        <div><span>الصفحات المستخرجة</span><strong>${source.extractedPageCount ?? "—"}</strong></div>
+        <div><span>عدد الحروف</span><strong>${source.extractedCharacterCount?.toLocaleString("ar-OM") ?? "—"}</strong></div>
+        <div><span>لغة النص</span><strong>${escapeHtml(source.extractedLanguage ?? "—")}</strong></div>
         <div><span>أضيف في</span><strong>${formatArabicDate(source.createdAt.slice(0, 10))}</strong></div>
         <div><span>آخر تحديث</span><strong>${formatArabicDate(source.updatedAt.slice(0, 10))}</strong></div>
       </div>
       <div class="source-reference"><span>${source.mode === "file" ? "اسم الملف" : "الرابط"}</span><code>${escapeHtml(reference)}</code></div>
       <div class="source-reference"><span>مسار Google Drive</span><code>${escapeHtml(source.drivePath)}</code></div>
-      ${source.driveWebViewLink ? `<a class="secondary-btn compact source-drive-link" href="${escapeHtml(source.driveWebViewLink)}" target="_blank" rel="noreferrer">فتح الملف في Google Drive</a>` : ""}
+      ${source.extractionMessage ? `<div class="extraction-note status-${extractionStatus === "مكتمل" ? "ok" : extractionStatus === "يحتاج OCR" || extractionStatus === "فشل" ? "warn" : "idle"}"><strong>${escapeHtml(extractionStatus)}</strong><p>${escapeHtml(source.extractionMessage)}</p></div>` : ""}
+      ${source.extractionPreview ? `<div class="extraction-preview"><span>معاينة النص المستخرج</span><p>${escapeHtml(source.extractionPreview)}</p></div>` : ""}
+      ${headings.length ? `<div class="detected-headings"><span>عناوين مرشحة وليست معتمدة بعد</span><div>${headings.slice(0, 12).map((heading) => `<small>${escapeHtml(heading)}</small>`).join("")}</div></div>` : ""}
+      <div class="source-detail-actions">
+        ${source.mode === "file" && source.driveFileId && source.status !== "مؤرشف" ? `<button class="primary-btn compact" data-action="index-source" data-source-id="${source.id}" ${state.sourceIndexingId ? "disabled" : ""}>${source.extractionStatus === "مكتمل" ? "إعادة استخراج النص" : "استخراج النص وفهرسته"}</button>` : ""}
+        ${source.driveWebViewLink ? `<a class="secondary-btn compact source-drive-link" href="${escapeHtml(source.driveWebViewLink)}" target="_blank" rel="noreferrer">فتح الملف في Google Drive</a>` : ""}
+      </div>
     </section>
   `;
 }
@@ -670,16 +705,26 @@ function renderSourceDetails(source: ManagedSource): string {
 function renderSourceRow(source: ManagedSource): string {
   const subject = SUBJECTS.find((item) => item.id === source.subjectId)?.label ?? "غير محددة";
   const sourceRef = source.mode === "file" ? source.fileName ?? "ملف PDF" : source.url ?? "رابط";
+  const indexing = state.sourceIndexingId === source.id;
+  const canExtract = source.mode === "file" && Boolean(source.driveFileId) && source.uploadState === "مرفوع";
+  const extractLabel = indexing ? "جارٍ الاستخراج…" : source.extractionStatus === "مكتمل" ? "إعادة الفهرسة" : "استخراج وفهرسة";
   const actions = source.status === "مؤرشف"
     ? `<button class="text-btn" data-action="view-source" data-source-id="${source.id}">تفاصيل</button><button class="text-btn" data-action="restore-source" data-source-id="${source.id}">استعادة</button>`
-    : `<button class="text-btn" data-action="view-source" data-source-id="${source.id}">تفاصيل</button>${source.status !== "مفهرس" ? `<button class="text-btn" data-action="index-source" data-source-id="${source.id}">محاكاة الفهرسة</button>` : ""}<button class="text-btn danger-text" data-action="archive-source" data-source-id="${source.id}">أرشفة</button>`;
+    : `<button class="text-btn" data-action="view-source" data-source-id="${source.id}">تفاصيل</button>${canExtract ? `<button class="text-btn" data-action="index-source" data-source-id="${source.id}" ${state.sourceIndexingId ? "disabled" : ""}>${extractLabel}</button>` : ""}<button class="text-btn danger-text" data-action="archive-source" data-source-id="${source.id}" ${indexing ? "disabled" : ""}>أرشفة</button>`;
   return `<article class="source-row-card" data-source-search="${escapeHtml(`${source.title} ${source.catalogCode} ${source.authority} ${source.kind} ${subject} ${source.grade} ${source.version} ${sourceRef}`)}">
     <div class="source-main"><span class="source-mode-icon">${source.mode === "file" ? icon("files") : icon("spark")}</span><div><strong>${escapeHtml(source.title)}</strong><small>${escapeHtml(source.catalogCode)}</small></div></div>
     <div class="source-meta"><span>${escapeHtml(subject)} · الصف ${source.grade}</span><small>${escapeHtml(source.authority)} · ${escapeHtml(source.version)}${source.fileSizeBytes ? ` · ${formatFileSize(source.fileSizeBytes)}` : ""}</small></div>
-    <div class="source-state-stack"><span class="source-status status-${sourceStatusSlug(source.status)}">${source.status}</span>${source.mode === "file" ? `<small class="upload-state upload-${source.uploadState === "مرفوع" ? "done" : source.uploadState === "مؤرشف" ? "archived" : "pending"}">${escapeHtml(source.uploadState ?? "غير مرفوع")}</small>` : ""}</div>
+    <div class="source-state-stack"><span class="source-status status-${sourceStatusSlug(source.status)}">${source.status}</span>${source.mode === "file" ? `<small class="upload-state upload-${source.uploadState === "مرفوع" ? "done" : source.uploadState === "مؤرشف" ? "archived" : "pending"}">${escapeHtml(source.uploadState ?? "غير مرفوع")}</small>` : ""}${source.mode === "file" ? `<small class="extraction-state extraction-${extractionStatusSlug(source.extractionStatus)}">${escapeHtml(source.extractionStatus ?? "لم يبدأ")}</small>` : ""}</div>
     <div class="source-actions">${actions}</div>
     <code class="source-path">${escapeHtml(source.drivePath)}</code>
   </article>`;
+}
+
+function extractionStatusSlug(status: ManagedSource["extractionStatus"]): string {
+  if (status === "مكتمل") return "done";
+  if (status === "جارٍ الاستخراج") return "busy";
+  if (status === "يحتاج OCR" || status === "فشل") return "review";
+  return "idle";
 }
 
 function sourceStatusSlug(status: SourceStatus): string {
@@ -841,7 +886,7 @@ function handleAction(action: string, element: HTMLElement): void {
   }
   if (action === "archive-source" && sourceId) { void archiveSource(sourceId); return; }
   if (action === "restore-source" && sourceId) { void restoreSource(sourceId); return; }
-  if (action === "index-source" && sourceId) return updateSourceStatus(sourceId, "مفهرس", "تمت محاكاة فهرسة المصدر بنجاح.");
+  if (action === "index-source" && sourceId) { void extractAndIndexSource(sourceId); return; }
 }
 
 function nextStep(): void {
@@ -1222,6 +1267,79 @@ async function cancelPendingSourceUpload(): Promise<void> {
   } catch (error) {
     showToast(error instanceof Error ? error.message : "تعذر إلغاء جلسة الرفع. أعد المحاولة.");
   }
+}
+
+async function extractAndIndexSource(sourceId: string): Promise<void> {
+  const source = state.sources.find((item) => item.id === sourceId);
+  if (!source || source.mode !== "file" || !source.driveFileId) {
+    showToast("هذا المصدر لا يحتوي ملف PDF مرفوعًا قابلًا للاستخراج.");
+    return;
+  }
+  if (!googleDriveService || !centralSourceStore || state.driveStatus !== "متصل" || state.sourceStorageStatus !== "متصل") {
+    showToast("سجّل الدخول وتأكد من اتصال Google Drive قبل الفهرسة.");
+    return;
+  }
+  if (state.sourceIndexingId) {
+    showToast("انتظر اكتمال فهرسة المصدر الحالي أولًا.");
+    return;
+  }
+
+  state.sourceIndexingId = sourceId;
+  state.sourceIndexingProgress = 1;
+  state.sourceIndexingMessage = "جارٍ تجهيز رابط PDF الآمن…";
+  state.sources = state.sources.map((item) => item.id === sourceId
+    ? { ...item, extractionStatus: "جارٍ الاستخراج", extractionMessage: state.sourceIndexingMessage }
+    : item);
+  render();
+
+  try {
+    await centralSourceStore.updateExtractionState(sourceId, "جارٍ الاستخراج", "جارٍ قراءة صفحات PDF واستخراج النص القابل للتحديد.");
+    const access = await googleDriveService.getPdfSourceAccess(sourceId);
+    const result = await extractPdfText(access, updateSourceIndexingProgress);
+    state.sourceIndexingProgress = 96;
+    state.sourceIndexingMessage = result.requiresOcr
+      ? "لم يظهر نص كافٍ؛ جارٍ تسجيل أن الملف يحتاج OCR…"
+      : `جارٍ حفظ ${result.chunks.length} مقطعًا في سجل الفهرسة…`;
+    render();
+    const saved = await centralSourceStore.saveSourceExtraction(sourceId, result);
+    const remoteSources = await centralSourceStore.listSources();
+    state.sources = remoteSources;
+    saveSources(remoteSources);
+    state.sourceIndexingProgress = 100;
+    state.sourceIndexingMessage = saved.requiresOcr
+      ? "الملف مصور ويحتاج OCR قبل استخدامه مصدرًا نصيًا."
+      : `اكتملت الفهرسة: ${saved.pageCount} صفحة و${saved.chunkCount} مقطع.`;
+    render();
+    showToast(state.sourceIndexingMessage);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "تعذر استخراج نص PDF.";
+    await centralSourceStore.updateExtractionState(sourceId, "فشل", message).catch(() => undefined);
+    const remoteSources = await centralSourceStore.listSources().catch(() => null);
+    if (remoteSources) { state.sources = remoteSources; saveSources(remoteSources); }
+    state.sourceIndexingMessage = message;
+    render();
+    showToast(message);
+  } finally {
+    window.setTimeout(() => {
+      if (state.sourceIndexingId === sourceId) {
+        state.sourceIndexingId = "";
+        state.sourceIndexingProgress = 0;
+        state.sourceIndexingMessage = "";
+        render();
+      }
+    }, 900);
+  }
+}
+
+function updateSourceIndexingProgress(progress: PdfExtractionProgress): void {
+  state.sourceIndexingProgress = progress.percent;
+  state.sourceIndexingMessage = progress.message;
+  const message = document.querySelector<HTMLElement>(".source-indexing-card p");
+  const value = document.querySelector<HTMLElement>(".source-indexing-card > strong");
+  const bar = document.querySelector<HTMLElement>(".source-indexing-card .upload-progress-track span");
+  if (message) message.textContent = progress.message;
+  if (value) value.textContent = `${progress.percent}%`;
+  if (bar) bar.style.width = `${progress.percent}%`;
 }
 
 function exportSourceRegistry(): void {

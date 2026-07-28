@@ -1,10 +1,12 @@
-# رفع Phase 0-F2 Fix 1 عبر واجهة GitHub
+# رفع Phase 0-G عبر واجهة GitHub
 
-1. أنشئ فرعًا من `main` باسم `fix/phase-0-f2-refresh-view`.
-2. ارفع محتويات حزمة الملفات المعدلة فقط.
-3. استخدم رسالة الالتزام: `fix: إبقاء صفحة إدارة المحتوى بعد تحديث المتصفح`.
-4. افتح Pull Request إلى `main`.
-5. بعد نجاح الفحص، ادمج الطلب وانتظر نشر GitHub Pages.
-6. افتح إدارة المحتوى واضغط `Ctrl + F5` وتأكد من بقاء الصفحة نفسها.
+1. أنشئ فرعًا من `main` باسم:
+   `feat/phase-0-g-pdf-extraction`
+2. فك ضغط حزمة Changed Files Only.
+3. ارفع محتوياتها إلى الفرع عبر Add file → Upload files.
+4. استخدم رسالة الالتزام:
+   `feat: استخراج نصوص PDF وفهرستها في Phase 0-G`
+5. افتح Pull Request إلى `main`.
+6. لا تدمج قبل نجاح الفحص وتنفيذ خطوات Supabase الواردة في دليل النشر.
 
-لا يوجد تغيير في `.github/workflows/pages.yml` أو SQL أو Edge Function.
+ملف `.github/workflows/pages.yml` لم يتغير في هذه المرحلة.

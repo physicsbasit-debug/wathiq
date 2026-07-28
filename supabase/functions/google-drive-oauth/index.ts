@@ -105,6 +105,7 @@ Deno.serve(async (req) => {
     if (route === "cancel-upload" && req.method === "POST") return await handleCancelUpload(req, user.id);
     if (route === "archive-source" && req.method === "POST") return await handleArchiveSource(req, user.id);
     if (route === "restore-source" && req.method === "POST") return await handleRestoreSource(req, user.id);
+    if (route === "source-file" && req.method === "GET") return await handleSourceFile(req, url, user.id);
     return json(req, { error: "المسار المطلوب غير موجود." }, 404);
   } catch (error) {
     if (route === "callback") return redirectToApp("error", errorMessage(error));
@@ -396,14 +397,44 @@ async function handleRestoreSource(req: Request, ownerId: string): Promise<Respo
   if (!currentParent) throw new Error("تعذر تحديد مجلد الأرشيف.");
   await moveDriveFile(accessToken, row.drive_file_id, currentParent, row.drive_original_parent_folder_id);
   const now = new Date().toISOString();
+  const restoredStatus = row.extraction_status === "مكتمل" ? "مفهرس" : row.extraction_status === "يحتاج OCR" || row.extraction_status === "فشل" ? "يحتاج مراجعة" : "جاهز للفهرسة";
   const { data, error } = await admin.from("source_registry").update({
-    status: "جاهز للفهرسة",
+    status: restoredStatus,
     upload_state: "مرفوع",
     drive_parent_folder_id: row.drive_original_parent_folder_id,
     updated_at: now,
   }).eq("owner_id", ownerId).eq("id", sourceId).select("*").single();
   if (error) throw new Error(`تعذر استعادة المصدر: ${error.message}`);
   return json(req, { ok: true, source: sourceRowToPayload(data as Record<string, unknown>) });
+}
+
+async function handleSourceFile(req: Request, url: URL, ownerId: string): Promise<Response> {
+  const sourceId = requireText(url.searchParams.get("sourceId"), "معرف المصدر غير موجود.");
+  const row = await getSourceRow(ownerId, sourceId);
+  const driveFileId = requireText(row.drive_file_id, "ملف المصدر غير مرفوع إلى Google Drive.");
+  if (row.mime_type !== PDF_MIME) throw httpError("هذا المصدر ليس ملف PDF قابلًا للاستخراج.", 409);
+  if (row.upload_state === "مؤرشف" || row.status === "مؤرشف") throw httpError("استعد المصدر من الأرشيف قبل استخراج محتواه.", 409);
+
+  const connection = await requireConnection(ownerId);
+  const accessToken = await validAccessToken(connection);
+  const downloadUrl = new URL(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(driveFileId)}`);
+  downloadUrl.searchParams.set("alt", "media");
+  const requestHeaders: Record<string, string> = { Authorization: `Bearer ${accessToken}` };
+  const range = req.headers.get("Range");
+  if (range) requestHeaders.Range = range;
+  const response = await fetch(downloadUrl.toString(), { method: "GET", headers: requestHeaders });
+  if (!response.ok) throw new Error(await googleError(response, "تعذر تنزيل ملف PDF من Google Drive."));
+
+  const headers = new Headers(corsHeaders(req));
+  for (const name of ["Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "ETag", "Last-Modified"]) {
+    const value = response.headers.get(name);
+    if (value) headers.set(name, value);
+  }
+  headers.set("Content-Type", PDF_MIME);
+  headers.set("Cache-Control", "private, no-store");
+  headers.set("Content-Disposition", `inline; filename*=UTF-8''${encodeURIComponent(typeof row.file_name === "string" ? row.file_name : "source.pdf")}`);
+  headers.set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges, ETag, Last-Modified");
+  return new Response(response.body, { status: response.status, headers });
 }
 
 async function finalizeUpload(ownerId: string, session: SourceUploadSessionRow, file: GoogleDriveFile): Promise<Record<string, unknown>> {
@@ -589,6 +620,15 @@ function sourcePayloadToRow(ownerId: string, source: Record<string, unknown>): R
     drive_md5_checksum: source.driveMd5Checksum || null,
     upload_state: source.uploadState ?? null,
     uploaded_at: source.uploadedAt ?? null,
+    extraction_status: source.extractionStatus ?? null,
+    extraction_message: source.extractionMessage ?? null,
+    extracted_page_count: source.extractedPageCount ?? null,
+    extracted_character_count: source.extractedCharacterCount ?? null,
+    extracted_language: source.extractedLanguage ?? null,
+    extraction_preview: source.extractionPreview ?? null,
+    detected_headings: source.detectedHeadings ?? [],
+    extracted_at: source.extractedAt ?? null,
+    extraction_version: source.extractionVersion ?? null,
   };
 }
 
@@ -615,9 +655,15 @@ function sourceRowToPayload(row: Record<string, unknown>): Record<string, unknow
     ["mime_type", "mimeType"], ["drive_file_id", "driveFileId"], ["drive_parent_folder_id", "driveParentFolderId"],
     ["drive_original_parent_folder_id", "driveOriginalParentFolderId"], ["drive_web_view_link", "driveWebViewLink"],
     ["drive_md5_checksum", "driveMd5Checksum"], ["upload_state", "uploadState"], ["uploaded_at", "uploadedAt"],
+    ["extraction_status", "extractionStatus"], ["extraction_message", "extractionMessage"],
+    ["extracted_language", "extractedLanguage"], ["extraction_preview", "extractionPreview"],
+    ["extracted_at", "extractedAt"], ["extraction_version", "extractionVersion"],
   ];
   mappings.forEach(([rowKey, sourceKey]) => { if (typeof row[rowKey] === "string" && row[rowKey]) source[sourceKey] = row[rowKey]; });
   if (typeof row.file_size_bytes === "number") source.fileSizeBytes = row.file_size_bytes;
+  if (typeof row.extracted_page_count === "number") source.extractedPageCount = row.extracted_page_count;
+  if (typeof row.extracted_character_count === "number") source.extractedCharacterCount = row.extracted_character_count;
+  if (Array.isArray(row.detected_headings)) source.detectedHeadings = row.detected_headings.filter((item) => typeof item === "string");
   return source;
 }
 
@@ -736,7 +782,7 @@ function corsHeaders(req: Request): HeadersInit {
   const origin = req.headers.get("Origin");
   return {
     "Access-Control-Allow-Origin": origin === appOrigin ? origin : appOrigin,
-    "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-wathiq-upload-id, x-wathiq-upload-start, x-wathiq-upload-end, x-wathiq-upload-total",
+    "Access-Control-Allow-Headers": "authorization, apikey, content-type, range, x-wathiq-upload-id, x-wathiq-upload-start, x-wathiq-upload-end, x-wathiq-upload-total",
     "Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
     Vary: "Origin",
   };
