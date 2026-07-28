@@ -1,9 +1,9 @@
 {
   "name": "wathiq",
-  "version": "0.0.17",
+  "version": "0.0.18",
   "private": true,
   "type": "module",
-  "description": "واثق: استخراج فهرس الكتب العربية متعدد الأعمدة اعتمادًا على ترقيم الوحدات والدروس",
+  "description": "واثق: إعادة بناء استخراج الفهرس على مرجع ذهبي مع منع حفظ أي هيكل ناقص",
   "scripts": {
     "build": "node scripts/build.mjs",
     "dev": "node scripts/serve.mjs",
