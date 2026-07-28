@@ -8,7 +8,7 @@ import {
   validateExamSetup,
 } from "./domain.js";
 import { clearDraft, loadDraft, loadProfile, loadSources, saveDraft, saveProfile, saveSources } from "./storage.js";
-import type { ExamDraft, ManagedSource, PlanItem, QuestionCounts, SourceDraft, SourceStatus, ViewName, WizardStep } from "./types.js";
+import type { ExamDraft, ManagedSource, PlanItem, QuestionCounts, SourceDraft, SourceStatus, SourceStructureNode, SourceStructureNodeType, ViewName, WizardStep } from "./types.js";
 import { escapeHtml, formatArabicDate, icon } from "./ui.js";
 import { buildSourceDrivePath, changeSourceStatus, createEmptySourceDraft, createManagedSource, findDuplicateContentSource, findDuplicateSource, sourceSubjectLabel, SOURCE_KINDS, SOURCE_SEMESTERS, validateSourceDraft } from "./source-domain.js";
 import { createRegistryBackup, mergeSourceRegistry, parseRegistryBackup } from "./source-registry.js";
@@ -18,6 +18,7 @@ import { GoogleDriveService, type GoogleDriveStatus, type PendingSourceUpload, t
 import { extractPdfText, shouldInvalidateLegacyExtraction, type PdfExtractionProgress } from "./pdf-indexer.js";
 import { extractPdfWithArabicOcr } from "./ocr-indexer.js";
 import { resolveInitialView, viewFromHash, viewHash } from "./navigation.js";
+import { createManualStructureNode, extractSourceStructure, resequenceStructureNodes, SOURCE_STRUCTURE_NODE_TYPES, validateSourceStructure } from "./source-structure.js";
 
 const appRoot = document.querySelector<HTMLDivElement>("#app");
 if (!appRoot) throw new Error("تعذر العثور على جذر التطبيق.");
@@ -54,6 +55,12 @@ interface AppState {
   sourceIndexingId: string;
   sourceIndexingProgress: number;
   sourceIndexingMessage: string;
+  structureSourceId: string;
+  structureNodes: SourceStructureNode[];
+  structureLoaded: boolean;
+  structureBusy: boolean;
+  structureMessage: string;
+  structureDirty: boolean;
 }
 
 
@@ -108,6 +115,12 @@ const state: AppState = {
   sourceIndexingId: "",
   sourceIndexingProgress: 0,
   sourceIndexingMessage: "",
+  structureSourceId: "",
+  structureNodes: [],
+  structureLoaded: false,
+  structureBusy: false,
+  structureMessage: "",
+  structureDirty: false,
 };
 
 let saveTimer: number | undefined;
@@ -240,7 +253,7 @@ function renderHome(): string {
   return `
     <section class="hero-panel">
       <div class="hero-copy">
-        <span class="eyebrow">نسخة المرحلة 0-G Fix 2B</span>
+        <span class="eyebrow">نسخة المرحلة 0-H1</span>
         <h1>أنشئ اختبارك القصير بثقة.</h1>
         <p>أربع خطوات واضحة. المصادر والفحوص وجدول المواصفات تعمل في الخلفية، حيث تنتمي التفاصيل المزعجة.</p>
         <div class="hero-actions">
@@ -593,7 +606,7 @@ function renderAdmin(): string {
   const visibleSources = state.sources.filter((source) => state.sourceFilter === "الكل" || source.status === state.sourceFilter);
   const selectedSource = state.sources.find((source) => source.id === state.selectedSourceId);
   return `
-    <section class="page-heading"><div><span class="eyebrow">لوحة مالك المنصة</span><h1>إدارة المصادر</h1><p>رفع ملفات PDF، واستخراج النص القابل للتحديد، وتشغيل OCR عربي فعلي عند فشل طبقة النص، ثم حفظ مقاطع الفهرسة في Supabase.</p></div><span class="demo-badge">Phase 0-G Fix 2B · OCR عربي</span></section>
+    <section class="page-heading"><div><span class="eyebrow">لوحة مالك المنصة</span><h1>إدارة المصادر</h1><p>رفع المصادر واستخراج نصها، ثم بناء هيكل الوحدات والدروس من الفهرس ومراجعته قبل الاعتماد.</p></div><span class="demo-badge">Phase 0-H1 · هيكل الكتاب</span></section>
 
     ${renderSourceStoragePanel()}
     ${renderGoogleDrivePanel()}
@@ -697,12 +710,57 @@ function renderSourceDetails(source: ManagedSource): string {
       ${source.extractionMessage ? `<div class="extraction-note status-${extractionStatus === "مكتمل" ? "ok" : extractionStatus === "يحتاج OCR" || extractionStatus === "فشل" ? "warn" : "idle"}"><strong>${escapeHtml(extractionStatus)}</strong><p>${escapeHtml(source.extractionMessage)}</p></div>` : ""}
       ${source.extractionPreview ? `<div class="extraction-preview"><span>معاينة النص المستخرج</span><p>${escapeHtml(source.extractionPreview)}</p></div>` : ""}
       ${headings.length ? `<div class="detected-headings"><span>عناوين مرشحة وليست معتمدة بعد</span><div>${headings.slice(0, 12).map((heading) => `<small>${escapeHtml(heading)}</small>`).join("")}</div></div>` : ""}
+      ${renderSourceStructurePanel(source)}
       <div class="source-detail-actions">
         ${source.mode === "file" && source.driveFileId && source.status !== "مؤرشف" ? `<button class="primary-btn compact" data-action="index-source" data-source-id="${source.id}" ${state.sourceIndexingId ? "disabled" : ""}>${sourceExtractionActionLabel(source, state.sourceIndexingId === source.id)}</button>` : ""}
         ${source.driveWebViewLink ? `<a class="secondary-btn compact source-drive-link" href="${escapeHtml(source.driveWebViewLink)}" target="_blank" rel="noreferrer">فتح الملف في Google Drive</a>` : ""}
       </div>
     </section>
   `;
+}
+
+function renderSourceStructurePanel(source: ManagedSource): string {
+  const eligible = source.mode === "file" && source.extractionStatus === "مكتمل" && source.status === "مفهرس";
+  if (!eligible) {
+    return `<section class="source-structure-card unavailable"><div><span class="eyebrow">هيكل الكتاب</span><h3>يظهر بعد اكتمال استخراج النص</h3><p>استخرج النص وفهرسه أولًا، ثم سيبحث واثق عن الفهرس والوحدات والدروس.</p></div></section>`;
+  }
+  if (state.structureSourceId !== source.id || !state.structureLoaded) {
+    return `<section class="source-structure-card loading"><div><span class="eyebrow">هيكل الكتاب</span><h3>${state.structureBusy ? "جارٍ تحميل الهيكل…" : "جارٍ التحقق من الهيكل المحفوظ…"}</h3><p>${escapeHtml(state.structureMessage || "انتظر لحظة؛ لا توجد طقوس إضافية مطلوبة.")}</p></div></section>`;
+  }
+  if (!state.structureNodes.length) {
+    return `<section class="source-structure-card empty"><div><span class="eyebrow">Phase 0-H1</span><h3>الوحدات والدروس لم تُستخرج بعد</h3><p>${escapeHtml(state.structureMessage || "سيبحث واثق عن صفحة المحتويات وينظف التكرارات وأرقام الصفحات قبل عرض الهيكل للمراجعة.")}</p></div><button class="primary-btn compact" data-action="extract-source-structure" data-source-id="${source.id}" ${state.structureBusy ? "disabled" : ""}>${state.structureBusy ? "جارٍ الاستخراج…" : "استخراج هيكل الكتاب"}</button></section>`;
+  }
+  const validation = validateSourceStructure(state.structureNodes);
+  const approved = state.structureNodes.every((node) => node.reviewStatus === "معتمد");
+  const units = state.structureNodes.filter((node) => node.nodeType === "وحدة");
+  return `<section class="source-structure-card review">
+    <header><div><span class="eyebrow">هيكل الكتاب</span><h3>${approved ? "هيكل معتمد" : "مراجعة الوحدات والدروس"}</h3><p>${escapeHtml(state.structureMessage || `استخرج واثق ${units.length} وحدة و${state.structureNodes.length - units.length} عنصرًا تابعًا.`)}</p></div><span class="structure-review-badge ${approved ? "approved" : "draft"}">${approved ? "معتمد" : state.structureDirty ? "تعديلات غير محفوظة" : "مرشح للمراجعة"}</span></header>
+    ${!validation.valid ? `<div class="structure-validation"><strong>يحتاج ضبطًا قبل الاعتماد</strong><ul>${validation.issues.slice(0, 5).map((issue) => `<li>${escapeHtml(issue)}</li>`).join("")}</ul></div>` : ""}
+    <div class="structure-tree">${state.structureNodes.map((node, index) => renderStructureNodeRow(node, index, units)).join("")}</div>
+    <div class="structure-toolbar">
+      <button class="ghost-btn compact" data-action="add-structure-unit" data-source-id="${source.id}" ${state.structureBusy ? "disabled" : ""}>إضافة وحدة</button>
+      <button class="ghost-btn compact" data-action="add-structure-child" data-source-id="${source.id}" ${state.structureBusy || !units.length ? "disabled" : ""}>إضافة عنصر تابع</button>
+      <button class="ghost-btn compact" data-action="reextract-source-structure" data-source-id="${source.id}" ${state.structureBusy ? "disabled" : ""}>إعادة الاستخراج</button>
+      <span class="structure-spacer"></span>
+      <button class="secondary-btn compact" data-action="save-source-structure" data-source-id="${source.id}" ${state.structureBusy || !validation.valid ? "disabled" : ""}>حفظ التعديلات</button>
+      <button class="primary-btn compact" data-action="approve-source-structure" data-source-id="${source.id}" ${state.structureBusy || !validation.valid ? "disabled" : ""}>اعتماد الهيكل</button>
+    </div>
+  </section>`;
+}
+
+function renderStructureNodeRow(node: SourceStructureNode, index: number, units: SourceStructureNode[]): string {
+  const child = node.parentId !== null;
+  const parentOptions = [`<option value="">بدون وحدة</option>`, ...units.filter((unit) => unit.id !== node.id).map((unit) => `<option value="${unit.id}" ${node.parentId === unit.id ? "selected" : ""}>${escapeHtml(unit.title)}</option>`)].join("");
+  return `<article class="structure-node-row ${child ? "child" : "root"}" data-structure-row="${node.id}">
+    <div class="structure-move"><button class="icon-btn" data-action="move-structure-up" data-structure-id="${node.id}" ${index === 0 ? "disabled" : ""} aria-label="تحريك لأعلى">↑</button><button class="icon-btn" data-action="move-structure-down" data-structure-id="${node.id}" ${index === state.structureNodes.length - 1 ? "disabled" : ""} aria-label="تحريك لأسفل">↓</button></div>
+    <label><span>النوع</span><select data-structure-type="${node.id}">${SOURCE_STRUCTURE_NODE_TYPES.map((type) => `<option value="${type}" ${node.nodeType === type ? "selected" : ""}>${type}</option>`).join("")}</select></label>
+    <label class="structure-title-field"><span>العنوان</span><input data-structure-title="${node.id}" value="${escapeHtml(node.title)}"/></label>
+    <label><span>يتبع</span><select data-structure-parent="${node.id}" ${node.nodeType === "وحدة" ? "disabled" : ""}>${parentOptions}</select></label>
+    <label><span>من صفحة</span><input type="number" min="1" data-structure-page-start="${node.id}" value="${node.pageStart}"/></label>
+    <label><span>إلى صفحة</span><input type="number" min="1" data-structure-page-end="${node.id}" value="${node.pageEnd}"/></label>
+    <div class="structure-confidence"><span>الثقة</span><strong>${Math.round(node.confidence * 100)}%</strong></div>
+    <button class="danger-link compact" data-action="delete-structure-node" data-structure-id="${node.id}">حذف</button>
+  </article>`;
 }
 
 function renderSourceRow(source: ManagedSource): string {
@@ -888,16 +946,29 @@ function handleAction(action: string, element: HTMLElement): void {
   if (action === "export-source-registry") return exportSourceRegistry();
   if (action === "close-source-details") {
     state.selectedSourceId = "";
+    resetSourceStructureState();
     render();
     return;
   }
   const sourceId = element.dataset.sourceId;
   if (action === "view-source" && sourceId) {
     state.selectedSourceId = sourceId;
+    resetSourceStructureState(sourceId);
     render();
+    void loadSourceStructure(sourceId);
     window.setTimeout(() => document.querySelector(".source-details-card")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
     return;
   }
+  if (action === "extract-source-structure" && sourceId) { void extractAndSaveSourceStructure(sourceId); return; }
+  if (action === "reextract-source-structure" && sourceId) { void extractAndSaveSourceStructure(sourceId, true); return; }
+  if (action === "save-source-structure" && sourceId) { void saveCurrentSourceStructure(sourceId, false); return; }
+  if (action === "approve-source-structure" && sourceId) { void saveCurrentSourceStructure(sourceId, true); return; }
+  if (action === "add-structure-unit" && sourceId) { addStructureNode(sourceId, "وحدة"); return; }
+  if (action === "add-structure-child" && sourceId) { addStructureNode(sourceId, "درس"); return; }
+  const structureId = element.dataset.structureId;
+  if (action === "delete-structure-node" && structureId) { deleteStructureNode(structureId); return; }
+  if (action === "move-structure-up" && structureId) { moveStructureNode(structureId, -1); return; }
+  if (action === "move-structure-down" && structureId) { moveStructureNode(structureId, 1); return; }
   if (action === "archive-source" && sourceId) { void archiveSource(sourceId); return; }
   if (action === "restore-source" && sourceId) { void restoreSource(sourceId); return; }
   if (action === "index-source" && sourceId) { void extractAndIndexSource(sourceId); return; }
@@ -1168,6 +1239,27 @@ function bindAdmin(): void {
     state.sourceDraft.rightsConfirmed = (event.target as HTMLInputElement).checked;
   });
 
+  document.querySelectorAll<HTMLInputElement>("[data-structure-title]").forEach((input) => {
+    input.addEventListener("input", () => updateStructureNode(input.dataset.structureTitle ?? "", { title: input.value }, false));
+  });
+  document.querySelectorAll<HTMLInputElement>("[data-structure-page-start]").forEach((input) => {
+    input.addEventListener("change", () => updateStructureNode(input.dataset.structurePageStart ?? "", { pageStart: Math.max(1, Number(input.value) || 1) }, true));
+  });
+  document.querySelectorAll<HTMLInputElement>("[data-structure-page-end]").forEach((input) => {
+    input.addEventListener("change", () => updateStructureNode(input.dataset.structurePageEnd ?? "", { pageEnd: Math.max(1, Number(input.value) || 1) }, true));
+  });
+  document.querySelectorAll<HTMLSelectElement>("[data-structure-type]").forEach((select) => {
+    select.addEventListener("change", () => {
+      const id = select.dataset.structureType ?? "";
+      const nodeType = select.value as SourceStructureNodeType;
+      const fallbackParent = state.structureNodes.find((node) => node.nodeType === "وحدة" && node.id !== id)?.id ?? null;
+      updateStructureNode(id, { nodeType, parentId: nodeType === "وحدة" ? null : (state.structureNodes.find((node) => node.id === id)?.parentId ?? fallbackParent) }, true);
+    });
+  });
+  document.querySelectorAll<HTMLSelectElement>("[data-structure-parent]").forEach((select) => {
+    select.addEventListener("change", () => updateStructureNode(select.dataset.structureParent ?? "", { parentId: select.value || null }, true));
+  });
+
   document.querySelector<HTMLInputElement>("#source-registry-file")?.addEventListener("change", async (event) => {
     const file = (event.target as HTMLInputElement).files?.[0];
     if (!file) return;
@@ -1405,6 +1497,185 @@ function updateSourceIndexingProgress(progress: PdfExtractionProgress): void {
   if (message) message.textContent = progress.message;
   if (value) value.textContent = `${progress.percent}%`;
   if (bar) bar.style.width = `${progress.percent}%`;
+}
+
+function resetSourceStructureState(sourceId = ""): void {
+  state.structureSourceId = sourceId;
+  state.structureNodes = [];
+  state.structureLoaded = false;
+  state.structureBusy = false;
+  state.structureMessage = "";
+  state.structureDirty = false;
+}
+
+async function loadSourceStructure(sourceId: string): Promise<void> {
+  if (!centralSourceStore || state.sourceStorageStatus !== "متصل") {
+    state.structureSourceId = sourceId;
+    state.structureLoaded = true;
+    state.structureMessage = "يلزم الاتصال بالسجل المركزي لحفظ هيكل الكتاب ومراجعته.";
+    render();
+    return;
+  }
+  state.structureSourceId = sourceId;
+  state.structureBusy = true;
+  state.structureMessage = "جارٍ تحميل الهيكل المحفوظ…";
+  render();
+  try {
+    const nodes = await centralSourceStore.listSourceStructure(sourceId);
+    if (state.structureSourceId !== sourceId) return;
+    state.structureNodes = resequenceStructureNodes(nodes);
+    state.structureLoaded = true;
+    state.structureBusy = false;
+    state.structureDirty = false;
+    state.structureMessage = nodes.length
+      ? nodes.every((node) => node.reviewStatus === "معتمد") ? "الهيكل معتمد ومحفوظ مركزيًا." : "الهيكل محفوظ كمسودة مراجعة."
+      : "لا يوجد هيكل محفوظ لهذا المصدر بعد.";
+    render();
+  } catch (error) {
+    if (state.structureSourceId !== sourceId) return;
+    state.structureLoaded = true;
+    state.structureBusy = false;
+    state.structureMessage = error instanceof Error ? error.message : "تعذر تحميل هيكل المصدر.";
+    render();
+  }
+}
+
+async function extractAndSaveSourceStructure(sourceId: string, replaceExisting = false): Promise<void> {
+  if (!centralSourceStore || state.sourceStorageStatus !== "متصل") {
+    showToast("سجّل دخول مالك المنصة أولًا.");
+    return;
+  }
+  const source = state.sources.find((item) => item.id === sourceId);
+  if (!source || source.extractionStatus !== "مكتمل") {
+    showToast("أكمل استخراج نص المصدر قبل بناء الهيكل.");
+    return;
+  }
+  if (state.structureNodes.length && !replaceExisting) {
+    showToast("يوجد هيكل محفوظ بالفعل؛ استخدم إعادة الاستخراج لاستبداله.");
+    return;
+  }
+  state.structureSourceId = sourceId;
+  state.structureLoaded = true;
+  state.structureBusy = true;
+  state.structureMessage = "جارٍ قراءة صفحات الفهرسة واكتشاف الفهرس…";
+  render();
+  try {
+    const chunks = await centralSourceStore.listSourceChunks(sourceId);
+    if (!chunks.length) throw new Error("لا توجد مقاطع نصية مفهرسة لهذا المصدر.");
+    const result = extractSourceStructure(sourceId, chunks, source.extractedPageCount ?? 1);
+    if (!result.nodes.length) {
+      state.structureNodes = [];
+      state.structureMessage = result.message;
+      state.structureBusy = false;
+      render();
+      showToast(result.message);
+      return;
+    }
+    await centralSourceStore.replaceSourceStructure(sourceId, result.nodes);
+    state.structureNodes = result.nodes;
+    state.structureMessage = result.message;
+    state.structureBusy = false;
+    state.structureDirty = false;
+    render();
+    showToast(result.message);
+  } catch (error) {
+    state.structureBusy = false;
+    state.structureMessage = error instanceof Error ? error.message : "تعذر استخراج هيكل الكتاب.";
+    render();
+    showToast(state.structureMessage);
+  }
+}
+
+function updateStructureNode(
+  nodeId: string,
+  changes: Partial<Pick<SourceStructureNode, "title" | "nodeType" | "parentId" | "pageStart" | "pageEnd">>,
+  rerender: boolean,
+): void {
+  if (!nodeId) return;
+  const now = new Date().toISOString();
+  state.structureNodes = state.structureNodes.map((node) => {
+    if (node.id !== nodeId) return node;
+    const next = { ...node, ...changes, reviewStatus: "مرشح" as const, updatedAt: now };
+    if (next.nodeType === "وحدة") next.parentId = null;
+    if (next.pageEnd < next.pageStart) next.pageEnd = next.pageStart;
+    return next;
+  });
+  state.structureNodes = resequenceStructureNodes(state.structureNodes);
+  state.structureDirty = true;
+  state.structureMessage = "عدّل الهيكل ثم احفظه أو اعتمده.";
+  if (rerender) render();
+}
+
+function addStructureNode(sourceId: string, nodeType: SourceStructureNodeType): void {
+  const units = state.structureNodes.filter((node) => node.nodeType === "وحدة");
+  const parent = nodeType === "وحدة" ? null : units.at(-1) ?? null;
+  const pageStart = parent?.pageStart ?? Math.max(1, state.structureNodes.at(-1)?.pageEnd ?? 1);
+  const node = createManualStructureNode(sourceId, nodeType, parent?.id ?? null, pageStart, state.structureNodes.length);
+  state.structureNodes = resequenceStructureNodes([...state.structureNodes, node]);
+  state.structureDirty = true;
+  state.structureMessage = "تمت إضافة عنصر يدوي؛ أكمل عنوانه وصفحاته قبل الحفظ.";
+  render();
+}
+
+function deleteStructureNode(nodeId: string): void {
+  const removedIds = new Set([nodeId, ...state.structureNodes.filter((node) => node.parentId === nodeId).map((node) => node.id)]);
+  state.structureNodes = resequenceStructureNodes(state.structureNodes.filter((node) => !removedIds.has(node.id)));
+  state.structureDirty = true;
+  state.structureMessage = removedIds.size > 1 ? "حُذفت الوحدة وعناصرها التابعة من مسودة المراجعة." : "حُذف العنصر من مسودة المراجعة.";
+  render();
+}
+
+function moveStructureNode(nodeId: string, direction: -1 | 1): void {
+  const node = state.structureNodes.find((item) => item.id === nodeId);
+  if (!node) return;
+  const siblings = state.structureNodes.filter((item) => item.parentId === node.parentId).sort((left, right) => left.orderIndex - right.orderIndex);
+  const index = siblings.findIndex((item) => item.id === nodeId);
+  const target = siblings[index + direction];
+  if (!target) return;
+  const next = state.structureNodes.map((item) => {
+    if (item.id === node.id) return { ...item, orderIndex: target.orderIndex, reviewStatus: "مرشح" as const, updatedAt: new Date().toISOString() };
+    if (item.id === target.id) return { ...item, orderIndex: node.orderIndex, reviewStatus: "مرشح" as const, updatedAt: new Date().toISOString() };
+    return item;
+  });
+  state.structureNodes = resequenceStructureNodes(next);
+  state.structureDirty = true;
+  state.structureMessage = "تغير ترتيب الهيكل؛ احفظ التعديلات.";
+  render();
+}
+
+async function saveCurrentSourceStructure(sourceId: string, approve: boolean): Promise<void> {
+  if (!centralSourceStore || state.sourceStorageStatus !== "متصل") {
+    showToast("يلزم الاتصال بالسجل المركزي لحفظ الهيكل.");
+    return;
+  }
+  const validation = validateSourceStructure(state.structureNodes);
+  if (!validation.valid) {
+    showToast(validation.issues[0] ?? "أكمل بيانات الهيكل قبل الحفظ.");
+    return;
+  }
+  state.structureBusy = true;
+  state.structureMessage = approve ? "جارٍ اعتماد الهيكل…" : "جارٍ حفظ التعديلات…";
+  render();
+  try {
+    const now = new Date().toISOString();
+    const nodes = resequenceStructureNodes(state.structureNodes).map((node) => ({
+      ...node,
+      reviewStatus: approve ? "معتمد" as const : node.reviewStatus,
+      updatedAt: now,
+    }));
+    await centralSourceStore.replaceSourceStructure(sourceId, nodes);
+    state.structureNodes = nodes;
+    state.structureBusy = false;
+    state.structureDirty = false;
+    state.structureMessage = approve ? "تم اعتماد الهيكل وحفظه مركزيًا." : "تم حفظ مسودة الهيكل مركزيًا.";
+    render();
+    showToast(state.structureMessage);
+  } catch (error) {
+    state.structureBusy = false;
+    state.structureMessage = error instanceof Error ? error.message : "تعذر حفظ هيكل المصدر.";
+    render();
+    showToast(state.structureMessage);
+  }
 }
 
 function exportSourceRegistry(): void {

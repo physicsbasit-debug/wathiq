@@ -1,4 +1,4 @@
-import type { ManagedSource, SourceExtractionResult, SourceExtractionStatus, SourceOcrPage, SourceStatus, SourceTextChunk } from "./types.js";
+import type { ManagedSource, SourceExtractionResult, SourceExtractionStatus, SourceOcrPage, SourceStatus, SourceStructureNode, SourceStructureReviewStatus, SourceTextChunk } from "./types.js";
 import { normalizeManagedSource } from "./source-registry.js";
 import type { WathiqRuntimeConfig } from "./runtime-config.js";
 
@@ -63,6 +63,32 @@ interface SourceRow {
   extraction_version: string | null;
 }
 
+interface SourceChunkRow {
+  owner_id: string;
+  source_id: string;
+  chunk_index: number;
+  page_from: number;
+  page_to: number;
+  content: string;
+  character_count: number;
+}
+
+interface SourceStructureRow {
+  owner_id: string;
+  source_id: string;
+  id: string;
+  parent_id: string | null;
+  node_type: string;
+  title: string;
+  page_start: number;
+  page_end: number;
+  order_index: number;
+  confidence: number;
+  review_status: string;
+  extraction_method: string;
+  created_at: string;
+  updated_at: string;
+}
 
 interface SourceOcrPageRow {
   owner_id: string;
@@ -334,6 +360,120 @@ export class CentralSourceStore {
           ...(extractionStatus === "فشل" || extractionStatus === "يحتاج OCR" ? { status: "يحتاج مراجعة" } : {}),
         }),
       },
+    );
+  }
+
+  async listSourceChunks(sourceId: string): Promise<SourceTextChunk[]> {
+    const session = await this.requireSession();
+    const payload = await this.dataRequest(
+      `/rest/v1/source_chunks?owner_id=eq.${encodeURIComponent(session.userId)}&source_id=eq.${encodeURIComponent(sourceId)}&select=*&order=chunk_index.asc`,
+      { method: "GET" },
+    );
+    if (!Array.isArray(payload)) throw new Error("تعذر قراءة مقاطع المصدر المفهرسة.");
+    return payload.flatMap((raw) => {
+      if (typeof raw !== "object" || raw === null) return [];
+      const row = raw as Partial<SourceChunkRow>;
+      if (
+        typeof row.chunk_index !== "number" ||
+        typeof row.page_from !== "number" ||
+        typeof row.page_to !== "number" ||
+        typeof row.content !== "string" ||
+        typeof row.character_count !== "number"
+      ) return [];
+      return [{
+        chunkIndex: row.chunk_index,
+        pageFrom: row.page_from,
+        pageTo: row.page_to,
+        content: row.content,
+        characterCount: row.character_count,
+      } satisfies SourceTextChunk];
+    });
+  }
+
+  async listSourceStructure(sourceId: string): Promise<SourceStructureNode[]> {
+    const session = await this.requireSession();
+    const payload = await this.dataRequest(
+      `/rest/v1/source_structure_nodes?owner_id=eq.${encodeURIComponent(session.userId)}&source_id=eq.${encodeURIComponent(sourceId)}&select=*&order=order_index.asc`,
+      { method: "GET" },
+    );
+    if (!Array.isArray(payload)) throw new Error("تعذر قراءة هيكل المصدر.");
+    return payload.flatMap((raw) => {
+      if (typeof raw !== "object" || raw === null) return [];
+      const row = raw as Partial<SourceStructureRow>;
+      const validTypes = new Set(["وحدة", "درس", "موضوع", "نشاط", "مراجعة", "أسئلة"]);
+      const validStatuses = new Set(["مرشح", "معتمد"]);
+      if (
+        typeof row.id !== "string" ||
+        typeof row.source_id !== "string" ||
+        typeof row.node_type !== "string" || !validTypes.has(row.node_type) ||
+        typeof row.title !== "string" ||
+        typeof row.page_start !== "number" ||
+        typeof row.page_end !== "number" ||
+        typeof row.order_index !== "number" ||
+        typeof row.confidence !== "number" ||
+        typeof row.review_status !== "string" || !validStatuses.has(row.review_status) ||
+        typeof row.extraction_method !== "string" ||
+        typeof row.created_at !== "string" ||
+        typeof row.updated_at !== "string"
+      ) return [];
+      return [{
+        id: row.id,
+        sourceId: row.source_id,
+        parentId: typeof row.parent_id === "string" ? row.parent_id : null,
+        nodeType: row.node_type as SourceStructureNode["nodeType"],
+        title: row.title,
+        pageStart: row.page_start,
+        pageEnd: row.page_end,
+        orderIndex: row.order_index,
+        confidence: row.confidence,
+        reviewStatus: row.review_status as SourceStructureReviewStatus,
+        extractionMethod: row.extraction_method,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      } satisfies SourceStructureNode];
+    });
+  }
+
+  async replaceSourceStructure(sourceId: string, nodes: SourceStructureNode[]): Promise<void> {
+    const session = await this.requireSession();
+    const ownerId = session.userId;
+    const encodedOwner = encodeURIComponent(ownerId);
+    const encodedSource = encodeURIComponent(sourceId);
+    if (nodes.length) {
+      const rows = nodes.map((node) => ({
+        owner_id: ownerId,
+        source_id: sourceId,
+        id: node.id,
+        parent_id: node.parentId,
+        node_type: node.nodeType,
+        title: node.title.trim(),
+        page_start: node.pageStart,
+        page_end: node.pageEnd,
+        order_index: node.orderIndex,
+        confidence: node.confidence,
+        review_status: node.reviewStatus,
+        extraction_method: node.extractionMethod,
+        created_at: node.createdAt,
+        updated_at: node.updatedAt,
+      }));
+      await this.dataRequest(
+        "/rest/v1/source_structure_nodes?on_conflict=owner_id,source_id,id",
+        {
+          method: "POST",
+          headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+          body: JSON.stringify(rows),
+        },
+      );
+      const ids = nodes.map((node) => encodeURIComponent(node.id)).join(",");
+      await this.dataRequest(
+        `/rest/v1/source_structure_nodes?owner_id=eq.${encodedOwner}&source_id=eq.${encodedSource}&id=not.in.(${ids})`,
+        { method: "DELETE", headers: { Prefer: "return=minimal" } },
+      );
+      return;
+    }
+    await this.dataRequest(
+      `/rest/v1/source_structure_nodes?owner_id=eq.${encodedOwner}&source_id=eq.${encodedSource}`,
+      { method: "DELETE", headers: { Prefer: "return=minimal" } },
     );
   }
 

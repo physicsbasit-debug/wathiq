@@ -343,3 +343,78 @@ test("يرقّي المصدر القديم إلى فصل غير محدد بدل 
   assert.equal(row.semester, "غير محدد");
   assert.equal(rowToSource(row).semester, "غير محدد");
 });
+
+test("يقرأ مقاطع المصدر وهيكله ويحفظ الهيكل المركزي", async () => {
+  memory.clear();
+  const ownerId = "11111111-1111-1111-1111-111111111111";
+  const calls = [];
+  const node = {
+    id: "structure-unit-1",
+    sourceId: "source-1",
+    parentId: null,
+    nodeType: "وحدة",
+    title: "الوحدة الأولى: الشحنة الكهربائية",
+    pageStart: 17,
+    pageEnd: 24,
+    orderIndex: 0,
+    confidence: 0.97,
+    reviewStatus: "مرشح",
+    extractionMethod: "toc-heuristic-1",
+    createdAt: "2026-07-28T10:00:00.000Z",
+    updatedAt: "2026-07-28T10:00:00.000Z",
+  };
+  const fetcher = async (url, init = {}) => {
+    calls.push({ url: String(url), init });
+    if (String(url).includes("/auth/v1/token?grant_type=password")) {
+      return Response.json({
+        access_token: "user-jwt",
+        refresh_token: "refresh-jwt",
+        expires_in: 3600,
+        user: { id: ownerId, email: "owner@example.com" },
+      });
+    }
+    if (init.method === "GET" && String(url).includes("source_chunks")) {
+      return Response.json([{
+        owner_id: ownerId,
+        source_id: "source-1",
+        chunk_index: 0,
+        page_from: 3,
+        page_to: 3,
+        content: "المحتويات",
+        character_count: 9,
+      }]);
+    }
+    if (init.method === "GET" && String(url).includes("source_structure_nodes")) {
+      return Response.json([{
+        owner_id: ownerId,
+        source_id: node.sourceId,
+        id: node.id,
+        parent_id: node.parentId,
+        node_type: node.nodeType,
+        title: node.title,
+        page_start: node.pageStart,
+        page_end: node.pageEnd,
+        order_index: node.orderIndex,
+        confidence: node.confidence,
+        review_status: node.reviewStatus,
+        extraction_method: node.extractionMethod,
+        created_at: node.createdAt,
+        updated_at: node.updatedAt,
+      }]);
+    }
+    return new Response(null, { status: 204 });
+  };
+  const store = new CentralSourceStore({
+    supabaseUrl: "https://project.supabase.co",
+    supabasePublishableKey: "sb_publishable_test",
+  }, fetcher);
+  await store.signIn("owner@example.com", "secret");
+  const chunks = await store.listSourceChunks("source-1");
+  assert.equal(chunks[0].pageFrom, 3);
+  const nodes = await store.listSourceStructure("source-1");
+  assert.deepEqual(nodes, [node]);
+  await store.replaceSourceStructure("source-1", [node]);
+  const structureCalls = calls.filter((call) => call.url.includes("source_structure_nodes"));
+  assert.equal(structureCalls.at(-2).init.method, "POST");
+  assert.equal(structureCalls.at(-1).init.method, "DELETE");
+});
