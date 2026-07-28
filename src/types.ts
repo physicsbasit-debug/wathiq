@@ -113,6 +113,7 @@ export type SourceStatus = "جاهز للفهرسة" | "مفهرس" | "يحتا�
 export type SourceAuthority = "منهج عُماني" | "كامبريدج" | "مصدر عالمي";
 export type SourceUploadState = "غير مرفوع" | "قيد الرفع" | "مرفوع" | "فشل الرفع" | "مؤرشف";
 export type SourceExtractionStatus = "لم يبدأ" | "جارٍ الاستخراج" | "مكتمل" | "يحتاج OCR" | "فشل";
+export type SourceExtractionMethod = "pdf-text" | "google-vision-ocr";
 
 export interface SourceDraft {
   mode: SourceMode;
@@ -165,6 +166,15 @@ export interface ManagedSource {
   extractionVersion?: string;
 }
 
+export interface SourceOcrPage {
+  pageNumber: number;
+  content: string;
+  characterCount: number;
+  confidence: number | null;
+  provider: string;
+  processedAt: string;
+}
+
 export interface SourceTextChunk {
   chunkIndex: number;
   pageFrom: number;
@@ -191,6 +201,7 @@ export interface SourceExtractionQuality {
 }
 
 export interface SourceExtractionResult {
+  method: SourceExtractionMethod;
   pageCount: number;
   characterCount: number;
   nonEmptyPageCount: number;

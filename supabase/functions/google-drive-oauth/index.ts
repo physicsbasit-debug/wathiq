@@ -4,12 +4,14 @@ const SUPABASE_URL = requiredEnv("SUPABASE_URL");
 const SUPABASE_SERVICE_ROLE_KEY = requiredEnv("SUPABASE_SERVICE_ROLE_KEY");
 const GOOGLE_CLIENT_ID = requiredEnv("GOOGLE_CLIENT_ID");
 const GOOGLE_CLIENT_SECRET = requiredEnv("GOOGLE_CLIENT_SECRET");
+const GOOGLE_CLOUD_VISION_API_KEY = Deno.env.get("GOOGLE_CLOUD_VISION_API_KEY")?.trim() ?? "";
 const WATHIQ_APP_URL = requiredEnv("WATHIQ_APP_URL");
 const FUNCTION_URL = `${SUPABASE_URL}/functions/v1/google-drive-oauth`;
 const GOOGLE_SCOPE = "https://www.googleapis.com/auth/drive.file";
 const FOLDER_MIME = "application/vnd.google-apps.folder";
 const PDF_MIME = "application/pdf";
 const MAX_SOURCE_PDF_BYTES = 500 * 1024 * 1024;
+const MAX_OCR_IMAGE_BYTES = 10 * 1024 * 1024;
 const appOrigin = new URL(WATHIQ_APP_URL).origin;
 
 const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
@@ -106,12 +108,100 @@ Deno.serve(async (req) => {
     if (route === "archive-source" && req.method === "POST") return await handleArchiveSource(req, user.id);
     if (route === "restore-source" && req.method === "POST") return await handleRestoreSource(req, user.id);
     if (route === "source-file" && req.method === "GET") return await handleSourceFile(req, url, user.id);
+    if (route === "ocr-page" && req.method === "POST") return await handleOcrPage(req, user.id);
     return json(req, { error: "المسار المطلوب غير موجود." }, 404);
   } catch (error) {
     if (route === "callback") return redirectToApp("error", errorMessage(error));
     return json(req, { error: errorMessage(error) }, errorStatus(error));
   }
 });
+
+async function handleOcrPage(req: Request, ownerId: string): Promise<Response> {
+  if (!GOOGLE_CLOUD_VISION_API_KEY) {
+    throw httpError("خدمة OCR غير مهيأة بعد؛ أضف GOOGLE_CLOUD_VISION_API_KEY إلى أسرار Edge Functions.", 503);
+  }
+  const sourceId = requireText(req.headers.get("x-wathiq-source-id"), "معرف المصدر غير موجود.");
+  const pageNumber = requirePositiveInteger(req.headers.get("x-wathiq-page-number"), "رقم صفحة OCR غير صالح.");
+  const totalPages = requirePositiveInteger(req.headers.get("x-wathiq-total-pages"), "عدد صفحات OCR غير صالح.");
+  if (pageNumber > totalPages || totalPages > 300) throw httpError("نطاق صفحات OCR غير صالح.", 400);
+  const contentType = (req.headers.get("content-type") ?? "").split(";")[0]?.trim();
+  if (contentType !== "image/jpeg" && contentType !== "image/png") {
+    throw httpError("تقبل خدمة OCR صور JPEG أو PNG فقط.", 415);
+  }
+  const bytes = new Uint8Array(await req.arrayBuffer());
+  if (!bytes.length) throw httpError("صورة صفحة OCR فارغة.", 400);
+  if (bytes.length > MAX_OCR_IMAGE_BYTES) throw httpError("صورة صفحة OCR تتجاوز 10 ميجابايت.", 413);
+
+  const { data: source, error: sourceError } = await admin.from("source_registry")
+    .select("id,title")
+    .eq("owner_id", ownerId)
+    .eq("id", sourceId)
+    .maybeSingle();
+  if (sourceError) throw new Error(`تعذر التحقق من مصدر OCR: ${sourceError.message}`);
+  if (!source) throw httpError("المصدر المطلوب غير موجود أو لا يخص هذا الحساب.", 404);
+
+  const visionResponse = await fetch(
+    `https://vision.googleapis.com/v1/images:annotate?key=${encodeURIComponent(GOOGLE_CLOUD_VISION_API_KEY)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        requests: [{
+          image: { content: bytesToBase64(bytes) },
+          features: [{ type: "DOCUMENT_TEXT_DETECTION" }],
+          imageContext: { languageHints: ["ar", "en"] },
+        }],
+      }),
+    },
+  );
+  const payload = await visionResponse.json() as {
+    responses?: Array<{
+      fullTextAnnotation?: { text?: string; pages?: unknown[] };
+      textAnnotations?: Array<{ description?: string }>;
+      error?: { message?: string; code?: number };
+    }>;
+    error?: { message?: string };
+  };
+  if (!visionResponse.ok) {
+    throw httpError(payload.error?.message ?? `تعذر الاتصال بخدمة Google Vision (${visionResponse.status}).`, visionResponse.status);
+  }
+  const result = payload.responses?.[0];
+  if (result?.error?.message) throw httpError(result.error.message, result.error.code ?? 502);
+  const content = (result?.fullTextAnnotation?.text ?? result?.textAnnotations?.[0]?.description ?? "").trim();
+  const confidence = averageVisionConfidence(result?.fullTextAnnotation?.pages);
+  const processedAt = new Date().toISOString();
+
+  const { error: upsertError } = await admin.from("source_ocr_pages").upsert({
+    owner_id: ownerId,
+    source_id: sourceId,
+    page_number: pageNumber,
+    content,
+    character_count: content.length,
+    confidence,
+    provider: "google-cloud-vision",
+    processed_at: processedAt,
+  }, { onConflict: "owner_id,source_id,page_number" });
+  if (upsertError) throw new Error(`تعذر حفظ نتيجة OCR للصفحة ${pageNumber}: ${upsertError.message}`);
+
+  const { error: updateError } = await admin.from("source_registry").update({
+    status: "يحتاج مراجعة",
+    extraction_status: "جارٍ الاستخراج",
+    extraction_message: `تم OCR للصفحة ${pageNumber} من ${totalPages}. يمكن استكمال الصفحات المتبقية بعد أي انقطاع.`,
+    extraction_version: "google-cloud-vision-ocr-pending-1",
+    updated_at: processedAt,
+  }).eq("owner_id", ownerId).eq("id", sourceId);
+  if (updateError) throw new Error(`تعذر تحديث تقدم OCR: ${updateError.message}`);
+
+  return json(req, {
+    ok: true,
+    pageNumber,
+    content,
+    characterCount: content.length,
+    confidence,
+    provider: "google-cloud-vision",
+    processedAt,
+  });
+}
 
 async function handleStart(req: Request, ownerId: string): Promise<Response> {
   await admin.from("google_oauth_states").delete().lt("expires_at", new Date().toISOString());
@@ -757,6 +847,33 @@ async function googleError(response: Response, fallback: string): Promise<string
   } catch { return `${fallback} (${response.status})`; }
 }
 
+function bytesToBase64(bytes: Uint8Array): string {
+  const chunkSize = 32_768;
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + chunkSize, bytes.length)));
+  }
+  return btoa(binary);
+}
+
+function averageVisionConfidence(pages: unknown[] | undefined): number | null {
+  if (!Array.isArray(pages)) return null;
+  const values: number[] = [];
+  const visit = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+    if (typeof value !== "object" || value === null) return;
+    const record = value as Record<string, unknown>;
+    if (typeof record.confidence === "number" && Number.isFinite(record.confidence)) values.push(record.confidence);
+    for (const key of ["blocks", "paragraphs", "words", "symbols"]) visit(record[key]);
+  };
+  visit(pages);
+  if (!values.length) return null;
+  return Math.round((values.reduce((sum, value) => sum + value, 0) / values.length) * 10_000) / 10_000;
+}
+
 function receivedBytes(range: string | null): number {
   const match = range?.match(/bytes=0-(\d+)/);
   return match ? Number(match[1]) + 1 : 0;
@@ -782,7 +899,7 @@ function corsHeaders(req: Request): HeadersInit {
   const origin = req.headers.get("Origin");
   return {
     "Access-Control-Allow-Origin": origin === appOrigin ? origin : appOrigin,
-    "Access-Control-Allow-Headers": "authorization, apikey, content-type, range, x-wathiq-upload-id, x-wathiq-upload-start, x-wathiq-upload-end, x-wathiq-upload-total",
+    "Access-Control-Allow-Headers": "authorization, apikey, content-type, range, x-wathiq-upload-id, x-wathiq-upload-start, x-wathiq-upload-end, x-wathiq-upload-total, x-wathiq-source-id, x-wathiq-page-number, x-wathiq-total-pages",
     "Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
     Vary: "Origin",
   };

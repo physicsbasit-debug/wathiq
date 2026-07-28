@@ -162,6 +162,7 @@ test("يحفظ مقاطع الاستخراج ثم يحدّث ملخص المصد
   }, fetcher);
   await store.signIn("owner@example.com", "secret");
   const saved = await store.saveSourceExtraction("source-1", {
+    method: "pdf-text",
     pageCount: 2,
     characterCount: 500,
     nonEmptyPageCount: 2,
@@ -234,4 +235,99 @@ test("يلغي فهرسة قديمة مشوهة ويحذف مقاطعها قبل
   assert.equal(body.extracted_language, null);
   assert.equal(body.extraction_preview, null);
   assert.deepEqual(body.detected_headings, []);
+});
+
+test("يقرأ صفحات OCR المحفوظة ويدعم مسحها لإعادة التشغيل", async () => {
+  memory.clear();
+  const ownerId = "11111111-1111-1111-1111-111111111111";
+  const calls = [];
+  const fetcher = async (url, init = {}) => {
+    calls.push({ url: String(url), init });
+    if (String(url).includes("/auth/v1/token?grant_type=password")) {
+      return Response.json({
+        access_token: "user-jwt",
+        refresh_token: "refresh-jwt",
+        expires_in: 3600,
+        user: { id: ownerId, email: "owner@example.com" },
+      });
+    }
+    if (init.method === "GET" && String(url).includes("source_ocr_pages")) {
+      return Response.json([{
+        owner_id: ownerId,
+        source_id: "source-1",
+        page_number: 1,
+        content: "نص عربي واضح",
+        character_count: 13,
+        confidence: 0.91,
+        provider: "google-cloud-vision",
+        processed_at: "2026-07-28T10:00:00.000Z",
+      }]);
+    }
+    return new Response(null, { status: 204 });
+  };
+  const store = new CentralSourceStore({
+    supabaseUrl: "https://project.supabase.co",
+    supabasePublishableKey: "sb_publishable_test",
+  }, fetcher);
+  await store.signIn("owner@example.com", "secret");
+  const pages = await store.listOcrPages("source-1");
+  assert.equal(pages[0].pageNumber, 1);
+  assert.equal(pages[0].confidence, 0.91);
+  await store.clearOcrPages("source-1");
+  const ocrCalls = calls.filter((call) => call.url.includes("source_ocr_pages"));
+  assert.equal(ocrCalls[0].init.method, "GET");
+  assert.equal(ocrCalls[1].init.method, "DELETE");
+});
+
+test("يحفظ نتيجة OCR الناجحة بإصدار Google Vision", async () => {
+  memory.clear();
+  const ownerId = "11111111-1111-1111-1111-111111111111";
+  const calls = [];
+  const fetcher = async (url, init = {}) => {
+    calls.push({ url: String(url), init });
+    if (String(url).includes("/auth/v1/token?grant_type=password")) {
+      return Response.json({
+        access_token: "user-jwt",
+        refresh_token: "refresh-jwt",
+        expires_in: 3600,
+        user: { id: ownerId, email: "owner@example.com" },
+      });
+    }
+    return new Response(null, { status: 204 });
+  };
+  const store = new CentralSourceStore({
+    supabaseUrl: "https://project.supabase.co",
+    supabasePublishableKey: "sb_publishable_test",
+  }, fetcher);
+  await store.signIn("owner@example.com", "secret");
+  await store.saveSourceExtraction("source-1", {
+    method: "google-vision-ocr",
+    pageCount: 1,
+    characterCount: 350,
+    nonEmptyPageCount: 1,
+    language: "العربية",
+    preview: "الوحدة الأولى: المادة",
+    detectedHeadings: ["الوحدة الأولى: المادة"],
+    requiresOcr: false,
+    quality: {
+      accepted: true,
+      score: 94,
+      reason: "accepted",
+      message: "اجتاز النص العربي فحص الجودة الأولي.",
+      arabicLetterCount: 300,
+      wordCount: 70,
+      commonWordRatio: 0.2,
+      averageWordLength: 4.2,
+      longWordRatio: 0,
+      singleLetterWordRatio: 0,
+      topFiveLetterShare: 0.48,
+      qualityGateVersion: "arabic-quality-gate-1",
+    },
+    chunks: [{ chunkIndex: 0, pageFrom: 1, pageTo: 1, content: "نص عربي واضح ".repeat(25), characterCount: 350 }],
+  });
+  const patch = calls.filter((call) => call.init.method === "PATCH").at(-1);
+  const body = JSON.parse(patch.init.body);
+  assert.equal(body.extraction_status, "مكتمل");
+  assert.match(body.extraction_version, /^google-cloud-vision-ocr-1-/);
+  assert.match(body.extraction_message, /OCR/);
 });
