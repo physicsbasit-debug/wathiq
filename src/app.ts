@@ -15,10 +15,13 @@ import { createRegistryBackup, mergeSourceRegistry, parseRegistryBackup } from "
 import { CentralSourceStore } from "./central-source-store.js";
 import { getRuntimeConfig, isCentralStorageConfigured, isGoogleDriveConfigured } from "./runtime-config.js";
 import { GoogleDriveService, type GoogleDriveStatus, type PendingSourceUpload, type SourceUploadProgress } from "./google-drive.js";
+import { resolveInitialView, viewFromHash, viewHash } from "./navigation.js";
 
 const appRoot = document.querySelector<HTMLDivElement>("#app");
 if (!appRoot) throw new Error("تعذر العثور على جذر التطبيق.");
 const app: HTMLDivElement = appRoot;
+
+const ACTIVE_VIEW_STORAGE_KEY = "wathiq-active-view-v1";
 
 interface AppState {
   view: ViewName;
@@ -64,8 +67,10 @@ if (savedProfile) {
   initialDraft.directorate = savedProfile.directorate;
 }
 
+const initialView = resolveInitialView(window.location.hash, window.sessionStorage.getItem(ACTIVE_VIEW_STORAGE_KEY));
+
 const state: AppState = {
-  view: "home",
+  view: initialView,
   draft: initialDraft,
   saveState: savedDraft ? "محفوظ" : "غير محفوظ",
   libraryFilter: "الكل",
@@ -131,11 +136,32 @@ function showToast(message: string): void {
   }, 2200);
 }
 
+function syncActiveView(view: ViewName, replace = false): void {
+  window.sessionStorage.setItem(ACTIVE_VIEW_STORAGE_KEY, view);
+  const nextHash = viewHash(view);
+  if (window.location.hash === nextHash) return;
+  if (replace) window.history.replaceState({ view }, "", nextHash);
+  else window.history.pushState({ view }, "", nextHash);
+}
+
 function navigate(view: ViewName): void {
   state.view = view;
+  syncActiveView(view);
   render();
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
+
+function restoreViewFromLocation(): void {
+  const nextView = viewFromHash(window.location.hash) ?? "home";
+  if (nextView === state.view) return;
+  state.view = nextView;
+  window.sessionStorage.setItem(ACTIVE_VIEW_STORAGE_KEY, nextView);
+  render();
+  window.scrollTo({ top: 0, behavior: "auto" });
+}
+
+window.addEventListener("popstate", restoreViewFromLocation);
+window.addEventListener("hashchange", restoreViewFromLocation);
 
 function setStep(step: WizardStep): void {
   state.draft.currentStep = step;
@@ -1483,7 +1509,10 @@ function markCentralStorageError(error: unknown): void {
 
 async function bootstrapCentralStorage(): Promise<void> {
   const driveCallback = consumeGoogleDriveCallback();
-  if (driveCallback) state.view = "admin";
+  if (driveCallback) {
+    state.view = "admin";
+    syncActiveView("admin", true);
+  }
   if (!centralSourceStore) {
     render();
     return;
@@ -1517,5 +1546,6 @@ function renderTopSaveState(): void {
   });
 }
 
+syncActiveView(state.view, true);
 render();
 void bootstrapCentralStorage();
