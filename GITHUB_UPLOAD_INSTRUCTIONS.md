@@ -1,11 +1,12 @@
-# رفع Phase 0-G Fix 3 عبر GitHub
+# رفع Phase 0-H1 عبر GitHub
 
-1. أنشئ فرعًا من `main` باسم `fix/phase-0-g-semester-upload-finalization`.
-2. ارفع محتويات هذه الحزمة إلى الفرع.
-3. رسالة الالتزام: `fix: إضافة الفصل الدراسي وإصلاح حفظ رفع الكتب الكبيرة`.
-4. افتح Pull Request وانتظر نجاح الفحص.
-5. قبل الدمج: شغّل ملف SQL المنفصل في Supabase واستبدل Edge Function بالكامل.
-6. تأكد أن Verify JWT with legacy secret مغلق، ثم ادمج وانشر.
-7. في واثق اختر الفصل والملف نفسه، ثم اضغط استكمال الرفع والحفظ؛ لا يعاد رفع الأجزاء المكتملة.
+1. أنشئ فرعًا من `main` باسم:
+   `feat/phase-0-h1-source-structure`
+2. ارفع محتويات حزمة **Changed Files Only**.
+3. استخدم رسالة الالتزام:
+   `feat: استخراج هيكل الوحدات والدروس من فهرس الكتب`
+4. افتح Pull Request وانتظر الأخضر، ولا تدمج قبل تشغيل ملف SQL.
+5. نفّذ `supabase/phase_0_h1_source_structure.sql` من Supabase SQL Editor.
+6. بعد نجاح SQL ادمج الطلب وانتظر نشر GitHub Pages.
 
-ملف `pages.yml` لم يتغير.
+`pages.yml` وEdge Function لم يتغيرا.

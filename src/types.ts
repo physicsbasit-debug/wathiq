@@ -216,6 +216,37 @@ export interface SourceExtractionResult {
   chunks: SourceTextChunk[];
 }
 
+export type SourceStructureNodeType = "وحدة" | "درس" | "موضوع" | "نشاط" | "مراجعة" | "أسئلة";
+export type SourceStructureReviewStatus = "مرشح" | "معتمد";
+
+export interface SourceStructureNode {
+  id: string;
+  sourceId: string;
+  parentId: string | null;
+  nodeType: SourceStructureNodeType;
+  title: string;
+  pageStart: number;
+  pageEnd: number;
+  orderIndex: number;
+  confidence: number;
+  reviewStatus: SourceStructureReviewStatus;
+  extractionMethod: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SourceStructureExtractionResult {
+  sourceId: string;
+  nodes: SourceStructureNode[];
+  tocPages: number[];
+  usedFallback: boolean;
+  message: string;
+}
+
+export interface SourceStructureValidation {
+  valid: boolean;
+  issues: string[];
+}
 
 export interface SourceValidationIssue {
   field: keyof SourceDraft | "general";

@@ -1,9 +1,9 @@
 {
   "name": "wathiq",
-  "version": "0.0.13",
+  "version": "0.0.14",
   "private": true,
   "type": "module",
-  "description": "واثق: إضافة الفصل الدراسي للمصادر وإصلاح حفظ السجل بعد اكتمال رفع الكتب الكبيرة",
+  "description": "واثق: استخراج هيكل الوحدات والدروس من فهرس الكتب ومراجعته واعتماده مركزيًا",
   "scripts": {
     "build": "node scripts/build.mjs",
     "dev": "node scripts/serve.mjs",

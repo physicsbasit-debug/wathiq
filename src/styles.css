@@ -696,3 +696,42 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
   .source-indexing-card > strong { text-align: center; }
   .source-detail-actions > * { width: 100%; justify-content: center; }
 }
+
+/* Phase 0-H1: مراجعة هيكل الكتاب */
+.source-structure-card { margin-top: 18px; padding: 18px; border: 1px solid var(--border); border-radius: 16px; background: #fbfdff; display: grid; gap: 16px; }
+.source-structure-card > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.source-structure-card h3 { margin: 4px 0 6px; color: var(--navy); font-size: 20px; }
+.source-structure-card p { margin: 0; color: var(--muted); line-height: 1.7; }
+.source-structure-card.empty, .source-structure-card.loading, .source-structure-card.unavailable { grid-template-columns: 1fr auto; align-items: center; }
+.structure-review-badge { border-radius: 999px; padding: 7px 11px; font-size: 12px; font-weight: 800; white-space: nowrap; }
+.structure-review-badge.approved { background: #e6f6ec; color: #17643a; }
+.structure-review-badge.draft { background: #fff4dc; color: #8a5a00; }
+.structure-validation { padding: 13px 15px; border-radius: 12px; background: #fff4f1; color: #8a2c1f; }
+.structure-validation ul { margin: 7px 0 0; padding-right: 20px; }
+.structure-tree { display: grid; gap: 9px; }
+.structure-node-row { display: grid; grid-template-columns: auto 110px minmax(210px, 1.7fr) 170px 92px 92px 70px auto; gap: 8px; align-items: end; padding: 12px; border: 1px solid var(--border); border-radius: 13px; background: #fff; }
+.structure-node-row.child { margin-right: 28px; border-right: 4px solid #cbdaf0; }
+.structure-node-row label { display: grid; gap: 5px; min-width: 0; }
+.structure-node-row label > span, .structure-confidence span { color: var(--muted); font-size: 11px; font-weight: 700; }
+.structure-node-row input, .structure-node-row select { width: 100%; min-width: 0; padding: 9px 10px; border: 1px solid var(--border); border-radius: 9px; background: #fff; color: var(--text); font: inherit; }
+.structure-title-field { min-width: 220px; }
+.structure-move { display: flex; gap: 4px; align-items: center; padding-bottom: 2px; }
+.icon-btn { width: 30px; height: 30px; border: 1px solid var(--border); border-radius: 8px; background: #fff; color: var(--navy); cursor: pointer; font-weight: 900; }
+.icon-btn:disabled { opacity: .35; cursor: default; }
+.structure-confidence { display: grid; gap: 5px; align-self: center; text-align: center; }
+.structure-confidence strong { color: var(--navy); }
+.structure-toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; border-top: 1px solid var(--border); padding-top: 14px; }
+.structure-spacer { flex: 1; }
+
+@media (max-width: 1100px) {
+  .structure-node-row { grid-template-columns: auto 100px minmax(180px, 1fr) 150px 82px 82px; }
+  .structure-confidence, .structure-node-row > .danger-link { grid-column: auto; }
+}
+
+@media (max-width: 760px) {
+  .source-structure-card > header, .source-structure-card.empty, .source-structure-card.loading, .source-structure-card.unavailable { grid-template-columns: 1fr; display: grid; }
+  .structure-node-row, .structure-node-row.child { grid-template-columns: 1fr 1fr; margin-right: 0; }
+  .structure-move, .structure-title-field, .structure-node-row > .danger-link { grid-column: 1 / -1; }
+  .structure-spacer { display: none; }
+  .structure-toolbar > button { flex: 1 1 160px; }
+}
