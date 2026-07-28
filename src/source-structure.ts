@@ -526,6 +526,22 @@ export function resequenceStructureNodes(nodes: SourceStructureNode[]): SourceSt
   return ordered.map((node, orderIndex) => ({ ...node, orderIndex }));
 }
 
+
+export function shouldQuarantineLegacyStructureDraft(nodes: SourceStructureNode[]): boolean {
+  if (!nodes.length) return false;
+  if (nodes.some((node) => node.reviewStatus === "معتمد" || node.extractionMethod === "manual")) return false;
+  if (nodes.every((node) => node.extractionMethod.startsWith(STRUCTURE_VERSION))) return false;
+
+  const noisyCount = nodes.filter((node) => looksLikeFormulaOrNoise(node.title) || !titleHasEnoughMeaning(node.title)).length;
+  const unitCount = nodes.filter((node) => node.nodeType === "وحدة").length;
+  const noiseRatio = noisyCount / nodes.length;
+  const unitRatio = unitCount / nodes.length;
+
+  return noisyCount >= 3
+    || noiseRatio >= 0.2
+    || (nodes.length >= 15 && unitRatio >= 0.7);
+}
+
 export function validateSourceStructure(nodes: SourceStructureNode[]): SourceStructureValidation {
   const issues: string[] = [];
   if (!nodes.length) issues.push("لا يوجد هيكل لاعتماده.");

@@ -19,5 +19,5 @@ test("يلغي المحرك تصنيف السطر الرقمي العام كوح
 });
 
 test("يرفع إصدار واثق إلى Fix 1", () => {
-  assert.equal(packageJson.version, "0.0.15");
+  assert.equal(packageJson.version, "0.0.16");
 });

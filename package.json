@@ -1,9 +1,9 @@
 {
   "name": "wathiq",
-  "version": "0.0.15",
+  "version": "0.0.16",
   "private": true,
   "type": "module",
-  "description": "واثق: استخراج موثوق لهيكل الكتب مع رفض المعادلات وتحديد صفحات الفهرس يدويًا",
+  "description": "واثق: تنظيف مسودات الهيكل القديمة المشوهة تلقائيًا قبل إعادة الاستخراج الموثوق",
   "scripts": {
     "build": "node scripts/build.mjs",
     "dev": "node scripts/serve.mjs",
