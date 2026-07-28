@@ -311,12 +311,24 @@ async function handlePrepareUpload(req: Request, ownerId: string): Promise<Respo
     const session = existingSession as SourceUploadSessionRow;
     const stillUsable = session.status !== "completed" && new Date(session.expires_at).getTime() > Date.now();
     if (stillUsable) {
+      const connection = await requireConnection(ownerId);
+      const accessToken = await validAccessToken(connection);
+      const folderMap = await ensureFolderTree(accessToken, connection.folder_map ?? {});
+      const target = await ensureSourceFolder(accessToken, folderMap, source);
+      const { error: updateError } = await admin.from("source_upload_sessions").update({
+        target_folder_id: target.folderId,
+        drive_path: target.drivePath,
+        source_payload: { ...source, drivePath: target.drivePath },
+        updated_at: new Date().toISOString(),
+      }).eq("id", session.id).eq("owner_id", ownerId);
+      if (updateError) throw new Error(`تعذر تحديث بيانات جلسة الرفع: ${updateError.message}`);
+      await updateFolderMap(ownerId, folderMap);
       return json(req, {
         ok: true,
         uploadId: session.id,
         bytesUploaded: session.bytes_uploaded,
         totalBytes: session.total_bytes,
-        drivePath: session.drive_path,
+        drivePath: target.drivePath,
         resumed: true,
       });
     }
@@ -530,6 +542,10 @@ async function handleSourceFile(req: Request, url: URL, ownerId: string): Promis
 async function finalizeUpload(ownerId: string, session: SourceUploadSessionRow, file: GoogleDriveFile): Promise<Record<string, unknown>> {
   if (!file.id) throw new Error("لم يرجع Google معرف الملف بعد اكتمال الرفع.");
   const now = new Date().toISOString();
+  const currentParent = file.parents?.[0];
+  if (currentParent && currentParent !== session.target_folder_id) {
+    await moveDriveFile(await validAccessToken(await requireConnection(ownerId)), file.id, currentParent, session.target_folder_id);
+  }
   const source = {
     ...session.source_payload,
     contentFingerprint: session.content_fingerprint,
@@ -542,6 +558,8 @@ async function finalizeUpload(ownerId: string, session: SourceUploadSessionRow, 
     driveMd5Checksum: file.md5Checksum ?? "",
     uploadState: "مرفوع",
     uploadedAt: now,
+    extractionStatus: typeof session.source_payload.extractionStatus === "string" ? session.source_payload.extractionStatus : "لم يبدأ",
+    semester: typeof session.source_payload.semester === "string" ? session.source_payload.semester : "غير محدد",
     status: "جاهز للفهرسة",
     drivePath: session.drive_path,
     updatedAt: now,
@@ -595,6 +613,8 @@ async function ensureSourceFolder(
   const kind = requireText(source.kind, "نوع المصدر غير موجود.");
   const grade = requirePositiveInteger(source.grade, "صف المصدر غير صالح.");
   const subjectLabel = safeSegment(requireText(source.subjectLabel, "اسم المادة غير موجود."));
+  const semester = typeof source.semester === "string" && source.semester ? source.semester : "غير محدد";
+  const semesterSegment = semester === "الفصل الأول" ? "الفصل_الأول" : semester === "الفصل الثاني" ? "الفصل_الثاني" : semester === "العام الكامل" ? "العام_الكامل" : "فصل_غير_محدد";
   const gradeSegment = `الصف_${String(grade).padStart(2, "0")}`;
   let baseId: string | undefined;
   let baseName: string;
@@ -602,15 +622,15 @@ async function ensureSourceFolder(
   if (kind === "اختبار كامبريدج") {
     baseId = folderMap.cambridge;
     baseName = "02_اختبارات_كامبريدج";
-    segments = [subjectLabel, gradeSegment, "أوراق_الأسئلة"];
+    segments = [subjectLabel, gradeSegment, semesterSegment, "أوراق_الأسئلة"];
   } else if (kind === "مصدر عالمي") {
     baseId = folderMap.global;
     baseName = "03_مصادر_عالمية";
-    segments = [subjectLabel, gradeSegment, "مصادر_مساندة"];
+    segments = [subjectLabel, gradeSegment, semesterSegment, "مصادر_مساندة"];
   } else {
     baseId = folderMap.oman;
     baseName = "01_المنهج_العماني";
-    segments = [gradeSegment, subjectLabel, folderForKind(kind)];
+    segments = [gradeSegment, subjectLabel, semesterSegment, folderForKind(kind)];
   }
   if (!baseId) throw new Error("المجلد الأساسي للمصدر غير جاهز.");
   let parentId = baseId;
@@ -693,6 +713,7 @@ function sourcePayloadToRow(ownerId: string, source: Record<string, unknown>): R
     grade: source.grade,
     subject_id: source.subjectId,
     version: source.version,
+    semester: source.semester ?? "غير محدد",
     file_name: source.fileName ?? null,
     url: source.url ?? null,
     rights_confirmed: source.rightsConfirmed ?? true,
@@ -710,7 +731,7 @@ function sourcePayloadToRow(ownerId: string, source: Record<string, unknown>): R
     drive_md5_checksum: source.driveMd5Checksum || null,
     upload_state: source.uploadState ?? null,
     uploaded_at: source.uploadedAt ?? null,
-    extraction_status: source.extractionStatus ?? null,
+    extraction_status: source.extractionStatus ?? "لم يبدأ",
     extraction_message: source.extractionMessage ?? null,
     extracted_page_count: source.extractedPageCount ?? null,
     extracted_character_count: source.extractedCharacterCount ?? null,
@@ -734,6 +755,7 @@ function sourceRowToPayload(row: Record<string, unknown>): Record<string, unknow
     grade: row.grade,
     subjectId: row.subject_id,
     version: row.version,
+    semester: typeof row.semester === "string" ? row.semester : "غير محدد",
     rightsConfirmed: row.rights_confirmed,
     status: row.status,
     drivePath: row.drive_path,

@@ -10,7 +10,7 @@ import {
 import { clearDraft, loadDraft, loadProfile, loadSources, saveDraft, saveProfile, saveSources } from "./storage.js";
 import type { ExamDraft, ManagedSource, PlanItem, QuestionCounts, SourceDraft, SourceStatus, ViewName, WizardStep } from "./types.js";
 import { escapeHtml, formatArabicDate, icon } from "./ui.js";
-import { buildSourceDrivePath, changeSourceStatus, createEmptySourceDraft, createManagedSource, findDuplicateContentSource, findDuplicateSource, sourceSubjectLabel, SOURCE_KINDS, validateSourceDraft } from "./source-domain.js";
+import { buildSourceDrivePath, changeSourceStatus, createEmptySourceDraft, createManagedSource, findDuplicateContentSource, findDuplicateSource, sourceSubjectLabel, SOURCE_KINDS, SOURCE_SEMESTERS, validateSourceDraft } from "./source-domain.js";
 import { createRegistryBackup, mergeSourceRegistry, parseRegistryBackup } from "./source-registry.js";
 import { CentralSourceStore } from "./central-source-store.js";
 import { getRuntimeConfig, isCentralStorageConfigured, isGoogleDriveConfigured } from "./runtime-config.js";
@@ -649,6 +649,7 @@ function renderSourceForm(): string {
         <label class="field full"><span>اسم المصدر</span><input id="source-title" value="${escapeHtml(draft.title)}" placeholder="مثال: كتاب الطالب للفيزياء"/>${issueFor("title") ? `<small class="field-error">${issueFor("title")}</small>` : ""}</label>
         <label class="field"><span>نوع المصدر</span><select id="source-kind">${SOURCE_KINDS.map((kind) => `<option value="${kind}" ${draft.kind === kind ? "selected" : ""}>${kind}</option>`).join("")}</select></label>
         <label class="field"><span>الإصدار أو السنة</span><input id="source-version" value="${escapeHtml(draft.version)}" placeholder="مثال: 2026 أو الإصدار الثاني"/>${issueFor("version") ? `<small class="field-error">${issueFor("version")}</small>` : ""}</label>
+        <label class="field"><span>الفصل الدراسي</span><select id="source-semester"><option value="">اختر الفصل</option>${SOURCE_SEMESTERS.map((semester) => `<option value="${semester}" ${draft.semester === semester ? "selected" : ""}>${semester}</option>`).join("")}</select>${issueFor("semester") ? `<small class="field-error">${issueFor("semester")}</small>` : ""}</label>
         <label class="field"><span>الصف</span><select id="source-grade"><option value="">اختر الصف</option>${Array.from({ length: 12 }, (_, index) => index + 1).map((grade) => `<option value="${grade}" ${draft.grade === grade ? "selected" : ""}>الصف ${grade}</option>`).join("")}</select>${issueFor("grade") ? `<small class="field-error">${issueFor("grade")}</small>` : ""}</label>
         <label class="field"><span>المادة</span><select id="source-subject" ${draft.grade ? "" : "disabled"}><option value="">اختر المادة</option>${availableSourceSubjects.map((subject) => `<option value="${subject.id}" ${draft.subjectId === subject.id ? "selected" : ""}>${subject.label}</option>`).join("")}</select>${issueFor("subjectId") ? `<small class="field-error">${issueFor("subjectId")}</small>` : ""}</label>
         ${draft.mode === "file" ? `
@@ -680,6 +681,7 @@ function renderSourceDetails(source: ManagedSource): string {
         <div><span>النوع</span><strong>${escapeHtml(source.kind)}</strong></div>
         <div><span>المادة والصف</span><strong>${escapeHtml(subject)} · الصف ${source.grade}</strong></div>
         <div><span>الإصدار</span><strong>${escapeHtml(source.version)}</strong></div>
+        <div><span>الفصل الدراسي</span><strong>${escapeHtml(source.semester ?? "غير محدد")}</strong></div>
         <div><span>الحالة</span><strong>${escapeHtml(source.status)}</strong></div>
         <div><span>حالة الملف</span><strong>${escapeHtml(source.uploadState ?? (source.mode === "url" ? "رابط" : "غير مرفوع"))}</strong></div>
         <div><span>حالة الاستخراج</span><strong>${escapeHtml(extractionStatus)}</strong></div>
@@ -712,9 +714,9 @@ function renderSourceRow(source: ManagedSource): string {
   const actions = source.status === "مؤرشف"
     ? `<button class="text-btn" data-action="view-source" data-source-id="${source.id}">تفاصيل</button><button class="text-btn" data-action="restore-source" data-source-id="${source.id}">استعادة</button>`
     : `<button class="text-btn" data-action="view-source" data-source-id="${source.id}">تفاصيل</button>${canExtract ? `<button class="text-btn" data-action="index-source" data-source-id="${source.id}" ${state.sourceIndexingId ? "disabled" : ""}>${extractLabel}</button>` : ""}<button class="text-btn danger-text" data-action="archive-source" data-source-id="${source.id}" ${indexing ? "disabled" : ""}>أرشفة</button>`;
-  return `<article class="source-row-card" data-source-search="${escapeHtml(`${source.title} ${source.catalogCode} ${source.authority} ${source.kind} ${subject} ${source.grade} ${source.version} ${sourceRef}`)}">
+  return `<article class="source-row-card" data-source-search="${escapeHtml(`${source.title} ${source.catalogCode} ${source.authority} ${source.kind} ${subject} ${source.grade} ${source.semester ?? "غير محدد"} ${source.version} ${sourceRef}`)}">
     <div class="source-main"><span class="source-mode-icon">${source.mode === "file" ? icon("files") : icon("spark")}</span><div><strong>${escapeHtml(source.title)}</strong><small>${escapeHtml(source.catalogCode)}</small></div></div>
-    <div class="source-meta"><span>${escapeHtml(subject)} · الصف ${source.grade}</span><small>${escapeHtml(source.authority)} · ${escapeHtml(source.version)}${source.fileSizeBytes ? ` · ${formatFileSize(source.fileSizeBytes)}` : ""}</small></div>
+    <div class="source-meta"><span>${escapeHtml(subject)} · الصف ${source.grade}</span><small>${escapeHtml(source.authority)} · ${escapeHtml(source.semester ?? "غير محدد")} · ${escapeHtml(source.version)}${source.fileSizeBytes ? ` · ${formatFileSize(source.fileSizeBytes)}` : ""}</small></div>
     <div class="source-state-stack"><span class="source-status status-${sourceStatusSlug(source.status)}">${source.status}</span>${source.mode === "file" ? `<small class="upload-state upload-${source.uploadState === "مرفوع" ? "done" : source.uploadState === "مؤرشف" ? "archived" : "pending"}">${escapeHtml(source.uploadState ?? "غير مرفوع")}</small>` : ""}${source.mode === "file" ? `<small class="extraction-state extraction-${extractionStatusSlug(source.extractionStatus)}">${escapeHtml(source.extractionStatus ?? "لم يبدأ")}</small>` : ""}</div>
     <div class="source-actions">${actions}</div>
     <code class="source-path">${escapeHtml(source.drivePath)}</code>
@@ -843,6 +845,7 @@ function handleAction(action: string, element: HTMLElement): void {
       grade: pending.source.grade,
       subjectId: pending.source.subjectId,
       version: pending.source.version,
+      semester: pending.source.semester === "غير محدد" ? "" : pending.source.semester,
       fileName: pending.fileName,
       url: "",
       rightsConfirmed: true,
@@ -1137,6 +1140,10 @@ function bindAdmin(): void {
     state.sourceDraft.kind = (event.target as HTMLSelectElement).value as SourceDraft["kind"];
     render();
   });
+  document.querySelector<HTMLSelectElement>("#source-semester")?.addEventListener("change", (event) => {
+    state.sourceDraft.semester = (event.target as HTMLSelectElement).value as SourceDraft["semester"];
+    render();
+  });
   document.querySelector<HTMLSelectElement>("#source-grade")?.addEventListener("change", (event) => {
     const value = (event.target as HTMLSelectElement).value;
     state.sourceDraft.grade = value ? Number(value) : null;
@@ -1210,7 +1217,18 @@ async function saveSourceFromForm(): Promise<void> {
 
   const pending = state.pendingSourceUpload;
   const source = pending && pending.fileName === state.sourceFile.name
-    ? pending.source
+    ? {
+        ...pending.source,
+        title: state.sourceDraft.title.trim(),
+        kind: state.sourceDraft.kind,
+        grade: state.sourceDraft.grade ?? pending.source.grade,
+        subjectId: state.sourceDraft.subjectId,
+        version: state.sourceDraft.version.trim(),
+        semester: state.sourceDraft.semester || "غير محدد",
+        fileName: state.sourceFile.name,
+        drivePath: buildSourceDrivePath(state.sourceDraft),
+        updatedAt: new Date().toISOString(),
+      }
     : createManagedSource(state.sourceDraft);
   const metadataDuplicate = findDuplicateSource(state.sources, state.sourceDraft);
   if (!pending && metadataDuplicate) {

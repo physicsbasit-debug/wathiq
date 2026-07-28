@@ -13,7 +13,7 @@ globalThis.localStorage = {
 const source = {
   id: "source-1",
   catalogCode: "WTH-OM-G10-PHY-STU-2026-ABC123",
-  fingerprint: "file|كتاب الطالب|10|physics|2026|physics.pdf",
+  fingerprint: "file|كتاب الطالب|10|physics|الفصل الأول|2026|physics.pdf",
   authority: "منهج عُماني",
   title: "كتاب الطالب للفيزياء",
   kind: "كتاب الطالب",
@@ -21,10 +21,11 @@ const source = {
   grade: 10,
   subjectId: "physics",
   version: "2026",
+  semester: "الفصل الأول",
   fileName: "physics.pdf",
   rightsConfirmed: true,
   status: "جاهز للفهرسة",
-  drivePath: "واثق/01_مصادر_المنصة/01_المنهج_العماني/الصف_10/الفيزياء/كتاب_الطالب/",
+  drivePath: "واثق/01_مصادر_المنصة/01_المنهج_العماني/الصف_10/الفيزياء/الفصل_الأول/كتاب_الطالب/",
   contentFingerprint: "sha256-sample:abcdef",
   fileSizeBytes: 2048,
   mimeType: "application/pdf",
@@ -44,6 +45,7 @@ test("يحوّل سجل واثق إلى صف Supabase ويعيده دون فقد
   assert.equal(row.owner_id, "11111111-1111-1111-1111-111111111111");
   assert.equal(row.catalog_code, source.catalogCode);
   assert.equal(row.extraction_status, "لم يبدأ");
+  assert.equal(row.semester, "الفصل الأول");
   assert.deepEqual(rowToSource(row), { ...source, extractionStatus: "لم يبدأ" });
 });
 
@@ -53,6 +55,7 @@ test("لا يرسل extraction_status فارغًا للمصادر القديمة
   delete legacySource.extractionStatus;
   const row = sourceToRow(legacySource, "11111111-1111-1111-1111-111111111111");
   assert.equal(row.extraction_status, "لم يبدأ");
+  assert.equal(row.semester, "الفصل الأول");
   assert.notEqual(row.extraction_status, null);
 });
 
@@ -330,4 +333,13 @@ test("يحفظ نتيجة OCR الناجحة بإصدار Google Vision", async 
   assert.equal(body.extraction_status, "مكتمل");
   assert.match(body.extraction_version, /^google-cloud-vision-ocr-1-/);
   assert.match(body.extraction_message, /OCR/);
+});
+
+
+test("يرقّي المصدر القديم إلى فصل غير محدد بدل رفضه", () => {
+  const legacy = { ...source };
+  delete legacy.semester;
+  const row = sourceToRow(legacy, "11111111-1111-1111-1111-111111111111");
+  assert.equal(row.semester, "غير محدد");
+  assert.equal(rowToSource(row).semester, "غير محدد");
 });

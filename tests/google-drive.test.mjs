@@ -114,7 +114,7 @@ test("يرفع PDF على أجزاء ويحفظ التقدم ثم يمسح ال�
   const source = {
     id: "source-upload-1",
     catalogCode: "WTH-OM-G10-PHY-STU-2026-UPLOAD",
-    fingerprint: "file|كتاب الطالب|10|physics|2026|source.pdf",
+    fingerprint: "file|كتاب الطالب|10|physics|الفصل الأول|2026|source.pdf",
     authority: "منهج عُماني",
     title: "كتاب الطالب للفيزياء",
     kind: "كتاب الطالب",
@@ -122,11 +122,12 @@ test("يرفع PDF على أجزاء ويحفظ التقدم ثم يمسح ال�
     grade: 10,
     subjectId: "physics",
     version: "2026",
+    semester: "الفصل الأول",
     fileName: "source.pdf",
     rightsConfirmed: true,
     status: "جاهز للفهرسة",
     uploadState: "غير مرفوع",
-    drivePath: "واثق/01_مصادر_المنصة/01_المنهج_العماني/الصف_10/الفيزياء/كتاب_الطالب/",
+    drivePath: "واثق/01_مصادر_المنصة/01_المنهج_العماني/الصف_10/الفيزياء/الفصل_الأول/كتاب_الطالب/",
     createdAt: "2026-07-27T10:00:00.000Z",
     updatedAt: "2026-07-27T10:00:00.000Z",
   };
@@ -213,4 +214,45 @@ test("يرسل صفحة OCR إلى Edge Function مع معرف المصدر ور
   assert.equal(calls[0].init.headers["x-wathiq-page-number"], "2");
   assert.equal(calls[0].init.headers["x-wathiq-total-pages"], "8");
   assert.equal(calls[0].init.headers["Content-Type"], "image/jpeg");
+});
+
+
+test("يحدّث بيانات جلسة الرفع عند الاستكمال بدل تجاهل الفصل الجديد", async () => {
+  const memory = new Map();
+  const originalStorage = globalThis.localStorage;
+  globalThis.localStorage = {
+    getItem(key) { return memory.has(key) ? memory.get(key) : null; },
+    setItem(key, value) { memory.set(key, String(value)); },
+    removeItem(key) { memory.delete(key); },
+  };
+  const source = {
+    id: "source-resume-1", catalogCode: "WTH-OM-G10-PHY-STU-S1-2026-RESUME",
+    fingerprint: "file|كتاب الطالب|10|physics|الفصل الأول|2026|book.pdf", authority: "منهج عُماني",
+    title: "كتاب الفيزياء", kind: "كتاب الطالب", mode: "file", grade: 10, subjectId: "physics",
+    version: "2026", semester: "الفصل الأول", fileName: "book.pdf", rightsConfirmed: true,
+    status: "جاهز للفهرسة", uploadState: "قيد الرفع", drivePath: "old/",
+    createdAt: "2026-07-28T10:00:00.000Z", updatedAt: "2026-07-28T10:00:00.000Z",
+  };
+  memory.set("wathiq.phase0f2.pendingSourceUpload", JSON.stringify({
+    schemaVersion: 1, uploadId: "upload-resume", source, contentFingerprint: "sha256-sample:test",
+    fileName: "book.pdf", fileSizeBytes: 4, fileLastModified: 1, mimeType: "application/pdf",
+    bytesUploaded: 4, chunkSizeBytes: 4, drivePath: "old/", createdAt: "2026-07-28T10:00:00.000Z",
+  }));
+  const calls = [];
+  const completed = { ...source, semester: "الفصل الثاني", drivePath: "new/", uploadState: "مرفوع", extractionStatus: "لم يبدأ" };
+  const fetcher = async (url, init = {}) => {
+    calls.push({ url: String(url), init });
+    if (String(url).endsWith("/prepare-upload")) return Response.json({ uploadId: "upload-resume", bytesUploaded: 4, drivePath: "new/" });
+    if (String(url).includes("/upload-status")) return Response.json({ completed: true, bytesUploaded: 4, totalBytes: 4, source: completed });
+    throw new Error(`طلب غير متوقع: ${url}`);
+  };
+  try {
+    const service = new GoogleDriveService(config, centralStore, fetcher, 4);
+    const file = new File([new Uint8Array([1,2,3,4])], "book.pdf", { type: "application/pdf", lastModified: 1 });
+    const result = await service.uploadPdfSource({ ...source, semester: "الفصل الثاني", drivePath: "new/" }, file);
+    assert.equal(result.semester, "الفصل الثاني");
+    assert.ok(calls.some((call) => call.url.endsWith("/prepare-upload")));
+  } finally {
+    globalThis.localStorage = originalStorage;
+  }
 });

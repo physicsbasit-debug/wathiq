@@ -34,6 +34,7 @@ interface SourceRow {
   grade: number;
   subject_id: string;
   version: string;
+  semester: string;
   file_name: string | null;
   url: string | null;
   rights_confirmed: boolean;
@@ -138,6 +139,7 @@ export function sourceToRow(source: ManagedSource, ownerId: string): SourceRow {
     grade: source.grade,
     subject_id: source.subjectId,
     version: source.version,
+    semester: source.semester ?? "غير محدد",
     file_name: source.fileName ?? null,
     url: source.url ?? null,
     rights_confirmed: source.rightsConfirmed,
@@ -181,6 +183,7 @@ export function rowToSource(row: unknown): ManagedSource | null {
     grade: value.grade,
     subjectId: value.subject_id,
     version: value.version,
+    semester: value.semester,
     rightsConfirmed: value.rights_confirmed,
     status: value.status,
     drivePath: value.drive_path,

@@ -2,6 +2,7 @@ import type { ManagedSource, SourceImportResult, SourceMergeResult, SourceRegist
 import { authorityForKind, buildSourceFingerprint } from "./source-domain.js";
 
 const VALID_STATUSES = new Set(["جاهز للفهرسة", "مفهرس", "يحتاج مراجعة", "مؤرشف"]);
+const VALID_SEMESTERS = new Set(["الفصل الأول", "الفصل الثاني", "العام الكامل", "غير محدد"]);
 const VALID_KINDS = new Set(["كتاب الطالب", "دليل المعلم", "نواتج التعلم", "جدول المواصفات", "اختبار كامبريدج", "مصدر عالمي"]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -27,6 +28,7 @@ export function normalizeManagedSource(value: unknown): ManagedSource | null {
         grade: partial.grade,
         subjectId: partial.subjectId,
         version: partial.version,
+        semester: partial.semester ?? "غير محدد",
         fileName: partial.fileName ?? "",
         url: partial.url ?? "",
       });
@@ -71,6 +73,7 @@ export function normalizeManagedSource(value: unknown): ManagedSource | null {
     catalogCode,
     fingerprint,
     authority: authorityForKind(partial.kind),
+    semester: typeof value.semester === "string" && VALID_SEMESTERS.has(value.semester) ? value.semester as ManagedSource["semester"] : "غير محدد",
     rightsConfirmed: Boolean(value.rightsConfirmed),
     ...(Array.isArray(value.detectedHeadings) && value.detectedHeadings.some((item) => typeof item === "string")
       ? { detectedHeadings: value.detectedHeadings.filter((item): item is string => typeof item === "string") }

@@ -102,6 +102,7 @@ export interface LibraryExam {
 }
 
 export type SourceMode = "file" | "url";
+export type SourceSemester = "الفصل الأول" | "الفصل الثاني" | "العام الكامل" | "غير محدد";
 export type SourceKind =
   | "كتاب الطالب"
   | "دليل المعلم"
@@ -122,6 +123,7 @@ export interface SourceDraft {
   grade: number | null;
   subjectId: string;
   version: string;
+  semester: SourceSemester | "";
   fileName: string;
   url: string;
   rightsConfirmed: boolean;
@@ -138,6 +140,7 @@ export interface ManagedSource {
   grade: number;
   subjectId: string;
   version: string;
+  semester: SourceSemester;
   fileName?: string;
   url?: string;
   rightsConfirmed: boolean;
