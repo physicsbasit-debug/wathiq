@@ -43,7 +43,17 @@ test("يحوّل سجل واثق إلى صف Supabase ويعيده دون فقد
   const row = sourceToRow(source, "11111111-1111-1111-1111-111111111111");
   assert.equal(row.owner_id, "11111111-1111-1111-1111-111111111111");
   assert.equal(row.catalog_code, source.catalogCode);
-  assert.deepEqual(rowToSource(row), source);
+  assert.equal(row.extraction_status, "لم يبدأ");
+  assert.deepEqual(rowToSource(row), { ...source, extractionStatus: "لم يبدأ" });
+});
+
+
+test("لا يرسل extraction_status فارغًا للمصادر القديمة بعد ترقية Phase 0-G", () => {
+  const legacySource = { ...source };
+  delete legacySource.extractionStatus;
+  const row = sourceToRow(legacySource, "11111111-1111-1111-1111-111111111111");
+  assert.equal(row.extraction_status, "لم يبدأ");
+  assert.notEqual(row.extraction_status, null);
 });
 
 test("يسجل دخول المالك ويحفظ ويقرأ ويحدّث المصدر عبر Data API", async () => {
@@ -84,8 +94,9 @@ test("يسجل دخول المالك ويحفظ ويقرأ ويحدّث المص
   assert.equal(store.restoreSession()?.email, "owner@example.com");
 
   const saved = await store.upsertSources([source]);
-  assert.deepEqual(saved, [source]);
-  assert.deepEqual(await store.listSources(), [source]);
+  const expectedSource = { ...source, extractionStatus: "لم يبدأ" };
+  assert.deepEqual(saved, [expectedSource]);
+  assert.deepEqual(await store.listSources(), [expectedSource]);
   await store.updateStatus(source.id, "مفهرس", "2026-07-25T11:00:00.000Z");
 
   const dataCalls = calls.filter((call) => call.url.includes("/rest/v1/"));
