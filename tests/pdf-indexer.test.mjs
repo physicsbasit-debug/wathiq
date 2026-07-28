@@ -1,10 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  assessExtractedTextQuality,
   buildExtractionResult,
   detectDocumentLanguage,
   detectHeadingCandidates,
   extractPdfText,
+  shouldInvalidateLegacyExtraction,
   splitTextIntoChunks,
   textItemsToPageText,
 } from "../dist/assets/pdf-indexer.js";
@@ -96,4 +98,55 @@ test("يقرأ PDF عبر محرك وهمي ويرسل تقدم الصفحات",
   assert.equal(result.requiresOcr, false);
   assert.ok(progress.some((value) => value.pageNumber === 2));
   assert.equal(progress.at(-1).percent, 94);
+});
+
+
+const readableArabic = `
+الوحدة الأولى: المادة وخصائصها
+تتكون المادة من جسيمات صغيرة، ويمكن للطالب أن يفسر تغير حالة المادة عند التسخين أو التبريد.
+يوضح الشكل التالي حركة الجسيمات في الحالة الصلبة والسائلة والغازية.
+اشرح سبب زيادة سرعة الجسيمات عند ارتفاع درجة الحرارة، ثم قارن بين ترتيب الجسيمات في الحالات الثلاث.
+`.repeat(7);
+
+const garbledArabic = `
+استمارة زيارة إشرافية لمعلم مادة مجال المديرية العامة للإشراف التربوي
+توصيف مجالات استمارة الزيارة التشرفية لمعلم م ادة مجال التوصيف امجلال هشا ساليبي امني سية ابي ساسيم بتأثير درملبي ل ساسيمثال تاسايبع ز افكي مالبيد قيا بي ساجيممل ساليبي بي ب ي سابي يند ليبا ساسيمالتفت قوربي بيع زبيو عييق عابي املا تكايت ترم تعميبي تسل ليمند ثمت ع بحعريزو عف برز تقيزت لا سبب تسل سالمدسريز ايبيلملات نيزبي عيب ستقيبي تسل سال ليمند بي يملذ تسابيع ملينت ب الي هذا اتنيل عييبي تسل ساسايبيا ايريا عتل سه تسل ساعرسغتماذ قاستي بمليند ساسسا يمل سبيع لت عتنيل ساسايبيا ساسايبي قافي ت ساسايات بيبي س بيبي عييب ت قسا عييب ايبيل سه برل سابارملامد عف ته ايج بي عغ ت ع تحلمولو ساهد بد ساسم يعلمعي سقايا ملخيف سه ف حملعي لا تفح درس سابي ت قتحصمليا
+`.repeat(4);
+
+test("تقبل بوابة الجودة النص العربي المقروء", () => {
+  const quality = assessExtractedTextQuality(readableArabic);
+  assert.equal(quality.accepted, true);
+  assert.equal(quality.reason, "accepted");
+  assert.ok(quality.score >= 70);
+});
+
+test("ترفض بوابة الجودة طبقة النص العربية المشوهة", () => {
+  const quality = assessExtractedTextQuality(garbledArabic);
+  assert.equal(quality.accepted, false);
+  assert.equal(quality.reason, "garbled_arabic");
+  assert.ok(quality.score <= 60);
+  assert.equal(shouldInvalidateLegacyExtraction(garbledArabic), true);
+});
+
+test("لا تفهرس النص المشوه ولا تحفظ له معاينة أو عناوين", () => {
+  const result = buildExtractionResult([garbledArabic, garbledArabic]);
+  assert.equal(result.requiresOcr, true);
+  assert.equal(result.quality.reason, "garbled_arabic");
+  assert.equal(result.preview, "");
+  assert.deepEqual(result.detectedHeadings, []);
+  assert.deepEqual(result.chunks, []);
+});
+
+test("لا ترفض وثيقة سليمة بسبب صفحة واحدة رديئة", () => {
+  const result = buildExtractionResult([garbledArabic, readableArabic, readableArabic, readableArabic]);
+  assert.equal(result.requiresOcr, false);
+  assert.equal(result.quality.accepted, true);
+  assert.ok(result.chunks.length > 0);
+});
+
+test("ترفض وثيقة يغلب على صفحاتها النص المشوه حتى لو كان ملخصها العام مضللًا", () => {
+  const result = buildExtractionResult([readableArabic, garbledArabic, garbledArabic, garbledArabic]);
+  assert.equal(result.requiresOcr, true);
+  assert.equal(result.quality.reason, "garbled_arabic");
+  assert.ok(result.quality.score <= 50);
 });

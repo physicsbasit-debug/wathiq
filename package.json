@@ -1,9 +1,9 @@
 {
   "name": "wathiq",
-  "version": "0.0.10",
+  "version": "0.0.11",
   "private": true,
   "type": "module",
-  "description": "واثق: إصلاح الحفظ المركزي بعد إضافة حالة استخراج PDF في Phase 0-G Fix 1",
+  "description": "واثق: بوابة جودة عربية تمنع فهرسة طبقات النص المشوهة وتحولها إلى OCR",
   "scripts": {
     "build": "node scripts/build.mjs",
     "dev": "node scripts/serve.mjs",

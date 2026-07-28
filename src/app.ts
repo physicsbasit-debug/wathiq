@@ -15,7 +15,7 @@ import { createRegistryBackup, mergeSourceRegistry, parseRegistryBackup } from "
 import { CentralSourceStore } from "./central-source-store.js";
 import { getRuntimeConfig, isCentralStorageConfigured, isGoogleDriveConfigured } from "./runtime-config.js";
 import { GoogleDriveService, type GoogleDriveStatus, type PendingSourceUpload, type SourceUploadProgress } from "./google-drive.js";
-import { extractPdfText, type PdfExtractionProgress } from "./pdf-indexer.js";
+import { extractPdfText, shouldInvalidateLegacyExtraction, type PdfExtractionProgress } from "./pdf-indexer.js";
 import { resolveInitialView, viewFromHash, viewHash } from "./navigation.js";
 
 const appRoot = document.querySelector<HTMLDivElement>("#app");
@@ -1298,7 +1298,7 @@ async function extractAndIndexSource(sourceId: string): Promise<void> {
     const result = await extractPdfText(access, updateSourceIndexingProgress);
     state.sourceIndexingProgress = 96;
     state.sourceIndexingMessage = result.requiresOcr
-      ? "لم يظهر نص كافٍ؛ جارٍ تسجيل أن الملف يحتاج OCR…"
+      ? result.quality.message
       : `جارٍ حفظ ${result.chunks.length} مقطعًا في سجل الفهرسة…`;
     render();
     const saved = await centralSourceStore.saveSourceExtraction(sourceId, result);
@@ -1307,7 +1307,7 @@ async function extractAndIndexSource(sourceId: string): Promise<void> {
     saveSources(remoteSources);
     state.sourceIndexingProgress = 100;
     state.sourceIndexingMessage = saved.requiresOcr
-      ? "الملف مصور ويحتاج OCR قبل استخدامه مصدرًا نصيًا."
+      ? result.quality.message
       : `اكتملت الفهرسة: ${saved.pageCount} صفحة و${saved.chunkCount} مقطع.`;
     render();
     showToast(state.sourceIndexingMessage);
@@ -1475,7 +1475,8 @@ async function loadAndSyncCentralSources(): Promise<void> {
   try {
     const localSources = loadSources() ?? [];
     if (localSources.length) await centralSourceStore.upsertSources(localSources);
-    const remoteSources = await centralSourceStore.listSources();
+    let remoteSources = await centralSourceStore.listSources();
+    remoteSources = await repairLegacyLowQualityExtractions(remoteSources);
     state.sources = remoteSources;
     saveSources(remoteSources);
     state.sourceStorageStatus = "متصل";
@@ -1488,6 +1489,24 @@ async function loadAndSyncCentralSources(): Promise<void> {
   } catch (error) {
     markCentralStorageError(error);
   }
+}
+
+async function repairLegacyLowQualityExtractions(sources: ManagedSource[]): Promise<ManagedSource[]> {
+  if (!centralSourceStore) return sources;
+  const candidates = sources.filter((source) => (
+    source.mode === "file"
+    && source.extractionStatus === "مكتمل"
+    && Boolean(source.extractionPreview)
+    && !source.extractionVersion?.includes("arabic-quality-gate-1")
+    && shouldInvalidateLegacyExtraction(source.extractionPreview ?? "")
+  ));
+  if (!candidates.length) return sources;
+
+  const message = "اكتشف واثق أن النص المستخرج سابقًا مشوه وغير صالح للفهرسة؛ حُذفت المقاطع القديمة وحُوّل الملف إلى مسار OCR.";
+  for (const source of candidates) {
+    await centralSourceStore.invalidateLegacyExtraction(source.id, message);
+  }
+  return centralSourceStore.listSources();
 }
 
 async function persistSourcesCentrally(sources: ManagedSource[], successMessage: string): Promise<void> {

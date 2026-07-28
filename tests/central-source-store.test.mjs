@@ -169,6 +169,20 @@ test("يحفظ مقاطع الاستخراج ثم يحدّث ملخص المصد
     preview: "معاينة",
     detectedHeadings: ["الوحدة الأولى"],
     requiresOcr: false,
+    quality: {
+      accepted: true,
+      score: 91,
+      reason: "accepted",
+      message: "اجتاز النص العربي فحص الجودة الأولي.",
+      arabicLetterCount: 420,
+      wordCount: 90,
+      commonWordRatio: 0.22,
+      averageWordLength: 4.6,
+      longWordRatio: 0.01,
+      singleLetterWordRatio: 0.02,
+      topFiveLetterShare: 0.49,
+      qualityGateVersion: "arabic-quality-gate-1",
+    },
     chunks: [
       { chunkIndex: 0, pageFrom: 1, pageTo: 1, content: "نص الصفحة الأولى", characterCount: 16 },
       { chunkIndex: 1, pageFrom: 2, pageTo: 2, content: "نص الصفحة الثانية", characterCount: 17 },
@@ -183,4 +197,41 @@ test("يحفظ مقاطع الاستخراج ثم يحدّث ملخص المصد
   const summary = JSON.parse(dataCalls[2].init.body);
   assert.equal(summary.extraction_status, "مكتمل");
   assert.equal(summary.status, "مفهرس");
+});
+
+
+test("يلغي فهرسة قديمة مشوهة ويحذف مقاطعها قبل تحويلها إلى OCR", async () => {
+  memory.clear();
+  const ownerId = "11111111-1111-1111-1111-111111111111";
+  const calls = [];
+  const fetcher = async (url, init = {}) => {
+    calls.push({ url: String(url), init });
+    if (String(url).includes("/auth/v1/token?grant_type=password")) {
+      return Response.json({
+        access_token: "user-jwt",
+        refresh_token: "refresh-jwt",
+        expires_in: 3600,
+        user: { id: ownerId, email: "owner@example.com" },
+      });
+    }
+    return new Response(null, { status: 204 });
+  };
+  const store = new CentralSourceStore({
+    supabaseUrl: "https://project.supabase.co",
+    supabasePublishableKey: "sb_publishable_test",
+  }, fetcher);
+  await store.signIn("owner@example.com", "secret");
+  await store.invalidateLegacyExtraction("source-1", "طبقة نص مشوهة");
+  const dataCalls = calls.filter((call) => call.url.includes("/rest/v1/"));
+  assert.equal(dataCalls.length, 2);
+  assert.equal(dataCalls[0].init.method, "DELETE");
+  assert.match(dataCalls[0].url, /source_chunks/);
+  assert.equal(dataCalls[1].init.method, "PATCH");
+  const body = JSON.parse(dataCalls[1].init.body);
+  assert.equal(body.status, "يحتاج مراجعة");
+  assert.equal(body.extraction_status, "يحتاج OCR");
+  assert.equal(body.extracted_character_count, null);
+  assert.equal(body.extracted_language, null);
+  assert.equal(body.extraction_preview, null);
+  assert.deepEqual(body.detected_headings, []);
 });

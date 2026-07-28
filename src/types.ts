@@ -173,6 +173,23 @@ export interface SourceTextChunk {
   characterCount: number;
 }
 
+export type SourceExtractionQualityReason = "accepted" | "insufficient_text" | "garbled_arabic";
+
+export interface SourceExtractionQuality {
+  accepted: boolean;
+  score: number;
+  reason: SourceExtractionQualityReason;
+  message: string;
+  arabicLetterCount: number;
+  wordCount: number;
+  commonWordRatio: number;
+  averageWordLength: number;
+  longWordRatio: number;
+  singleLetterWordRatio: number;
+  topFiveLetterShare: number;
+  qualityGateVersion: string;
+}
+
 export interface SourceExtractionResult {
   pageCount: number;
   characterCount: number;
@@ -181,6 +198,7 @@ export interface SourceExtractionResult {
   preview: string;
   detectedHeadings: string[];
   requiresOcr: boolean;
+  quality: SourceExtractionQuality;
   chunks: SourceTextChunk[];
 }
 
