@@ -18,6 +18,6 @@ test("يستخدم المحرك بوابة عزل للمسودات القديم�
   assert.match(structure, /extractionMethod === "manual"/);
 });
 
-test("يرفع إصدار واثق إلى Fix 2", () => {
-  assert.equal(packageJson.version, "0.0.16");
+test("يحافظ إصدار واثق على Fix السابق وما بعده", () => {
+  assert.ok(Number(packageJson.version.split(".")[2]) >= 16);
 });

@@ -737,7 +737,7 @@ function renderSourceStructurePanel(source: ManagedSource): string {
     return `<section class="source-structure-card loading"><div><span class="eyebrow">هيكل الكتاب</span><h3>${state.structureBusy ? "جارٍ تحميل الهيكل…" : "جارٍ التحقق من الهيكل المحفوظ…"}</h3><p>${escapeHtml(state.structureMessage || "انتظر لحظة؛ لا توجد طقوس إضافية مطلوبة.")}</p></div></section>`;
   }
   if (!state.structureNodes.length) {
-    return `<section class="source-structure-card empty"><div><span class="eyebrow">Phase 0-H1 Fix 1</span><h3>لم يُعثر على هيكل موثوق بعد</h3><p>${escapeHtml(state.structureMessage || "سيبحث واثق عن صفحة محتويات واضحة، ولن يحوّل المعادلات والرموز إلى وحدات مرة أخرى.")}</p></div><div class="structure-empty-actions"><button class="primary-btn compact" data-action="extract-source-structure" data-source-id="${source.id}" ${state.structureBusy ? "disabled" : ""}>${state.structureBusy ? "جارٍ الاستخراج…" : "استخراج تلقائي موثوق"}</button>${renderManualTocControls(source)}<button class="ghost-btn compact" data-action="add-structure-unit" data-source-id="${source.id}" ${state.structureBusy ? "disabled" : ""}>إضافة وحدة يدويًا</button></div></section>`;
+    return `<section class="source-structure-card empty"><div><span class="eyebrow">Phase 0-H1 Fix 3</span><h3>لم يُعثر على هيكل موثوق بعد</h3><p>${escapeHtml(state.structureMessage || "سيبحث واثق عن فهرس عربي منظم، ويفهم ترقيم الوحدات والدروس حتى لو كان الفهرس في عمودين.")}</p></div><div class="structure-empty-actions"><button class="primary-btn compact" data-action="extract-source-structure" data-source-id="${source.id}" ${state.structureBusy ? "disabled" : ""}>${state.structureBusy ? "جارٍ الاستخراج…" : "استخراج تلقائي موثوق"}</button>${renderManualTocControls(source)}<button class="ghost-btn compact" data-action="add-structure-unit" data-source-id="${source.id}" ${state.structureBusy ? "disabled" : ""}>إضافة وحدة يدويًا</button></div></section>`;
   }
   const validation = validateSourceStructure(state.structureNodes);
   const approved = state.structureNodes.every((node) => node.reviewStatus === "معتمد");
@@ -1585,7 +1585,7 @@ async function extractAndSaveSourceStructure(sourceId: string, replaceExisting =
   state.structureSourceId = sourceId;
   state.structureLoaded = true;
   state.structureBusy = true;
-  state.structureMessage = useManualTocPages ? "جارٍ تحليل صفحات الفهرس المحددة…" : "جارٍ البحث عن فهرس موثوق وعناوين وحدات صريحة…";
+  state.structureMessage = useManualTocPages ? "جارٍ تحليل صفحات الفهرس المحددة…" : "جارٍ البحث عن فهرس موثوق متعدد الأعمدة وترقيم الوحدات والدروس…";
   render();
   try {
     const chunks = await centralSourceStore.listSourceChunks(sourceId);
