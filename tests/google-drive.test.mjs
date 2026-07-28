@@ -256,3 +256,24 @@ test("يحدّث بيانات جلسة الرفع عند الاستكمال بد
     globalThis.localStorage = originalStorage;
   }
 });
+
+test("يرسل صفحة الفهرس للتحليل الموضعي ويقرأ إحداثيات الكلمات", async () => {
+  const calls = [];
+  const fetcher = async (url, init = {}) => {
+    calls.push({ url: String(url), init });
+    return Response.json({
+      pageNumber: 12,
+      width: 1200,
+      height: 1700,
+      words: [{ text: "المحتويات", xMin: 800, yMin: 40, xMax: 1000, yMax: 80, confidence: 0.98 }],
+      provider: "google-cloud-vision-positional",
+      processedAt: "2026-07-28T10:00:00.000Z",
+    });
+  };
+  const service = new GoogleDriveService(config, centralStore, fetcher);
+  const layout = await service.ocrSourceLayoutPage("source-1", 12, 124, new Blob(["image"], { type: "image/jpeg" }));
+  assert.equal(layout.words[0].text, "المحتويات");
+  assert.equal(layout.width, 1200);
+  assert.match(calls[0].url, /\/ocr-layout-page$/);
+  assert.equal(calls[0].init.headers["x-wathiq-page-number"], "12");
+});

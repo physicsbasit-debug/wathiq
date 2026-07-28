@@ -1,6 +1,6 @@
 import type { CentralSourceStore } from "./central-source-store.js";
 import type { WathiqRuntimeConfig } from "./runtime-config.js";
-import type { ManagedSource, SourceOcrPage } from "./types.js";
+import type { ManagedSource, SourceOcrLayoutPage, SourceOcrLayoutWord, SourceOcrPage } from "./types.js";
 
 export type GoogleDriveConnectionState = "غير مهيأ" | "غير متصل" | "متصل" | "خطأ";
 
@@ -71,6 +71,9 @@ interface EdgePayload {
   confidence?: unknown;
   provider?: unknown;
   processedAt?: unknown;
+  width?: unknown;
+  height?: unknown;
+  words?: unknown;
 }
 
 type FetchLike = typeof fetch;
@@ -345,6 +348,61 @@ export class GoogleDriveService {
       content: payload.content,
       characterCount: payload.characterCount,
       confidence: typeof payload.confidence === "number" ? payload.confidence : null,
+      provider: payload.provider,
+      processedAt: payload.processedAt,
+    };
+  }
+
+
+  async ocrSourceLayoutPage(
+    sourceId: string,
+    pageNumber: number,
+    totalPages: number,
+    image: Blob,
+  ): Promise<SourceOcrLayoutPage> {
+    const payload = await this.request("/ocr-layout-page", {
+      method: "POST",
+      headers: {
+        "Content-Type": image.type || "image/jpeg",
+        "x-wathiq-source-id": sourceId,
+        "x-wathiq-page-number": String(pageNumber),
+        "x-wathiq-total-pages": String(totalPages),
+      },
+      body: image,
+    });
+    if (
+      typeof payload.pageNumber !== "number" ||
+      typeof payload.width !== "number" ||
+      typeof payload.height !== "number" ||
+      !Array.isArray(payload.words) ||
+      typeof payload.provider !== "string" ||
+      typeof payload.processedAt !== "string"
+    ) throw new Error("لم ترجع خدمة OCR الموضعي نتيجة الصفحة بصورة صحيحة.");
+    const words = payload.words.flatMap((raw): SourceOcrLayoutWord[] => {
+      if (typeof raw !== "object" || raw === null) return [];
+      const word = raw as Record<string, unknown>;
+      if (
+        typeof word.text !== "string" ||
+        typeof word.xMin !== "number" ||
+        typeof word.yMin !== "number" ||
+        typeof word.xMax !== "number" ||
+        typeof word.yMax !== "number"
+      ) return [];
+      return [{
+        text: word.text,
+        xMin: word.xMin,
+        yMin: word.yMin,
+        xMax: word.xMax,
+        yMax: word.yMax,
+        confidence: typeof word.confidence === "number" ? word.confidence : null,
+      }];
+    });
+    if (!words.length) throw new Error("لم ترجع خدمة OCR الموضعي كلمات قابلة للتحليل.");
+    return {
+      pageNumber: payload.pageNumber,
+      width: payload.width,
+      height: payload.height,
+      words,
       provider: payload.provider,
       processedAt: payload.processedAt,
     };

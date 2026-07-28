@@ -109,6 +109,7 @@ Deno.serve(async (req) => {
     if (route === "restore-source" && req.method === "POST") return await handleRestoreSource(req, user.id);
     if (route === "source-file" && req.method === "GET") return await handleSourceFile(req, url, user.id);
     if (route === "ocr-page" && req.method === "POST") return await handleOcrPage(req, user.id);
+    if (route === "ocr-layout-page" && req.method === "POST") return await handleOcrLayoutPage(req, user.id);
     return json(req, { error: "المسار المطلوب غير موجود." }, 404);
   } catch (error) {
     if (route === "callback") return redirectToApp("error", errorMessage(error));
@@ -201,6 +202,153 @@ async function handleOcrPage(req: Request, ownerId: string): Promise<Response> {
     provider: "google-cloud-vision",
     processedAt,
   });
+}
+
+
+interface VisionVertex { x?: number; y?: number }
+interface VisionSymbol { text?: string; confidence?: number }
+interface VisionWord {
+  symbols?: VisionSymbol[];
+  confidence?: number;
+  boundingBox?: { vertices?: VisionVertex[] };
+}
+interface VisionParagraph { words?: VisionWord[] }
+interface VisionBlock { paragraphs?: VisionParagraph[] }
+interface VisionPage { width?: number; height?: number; blocks?: VisionBlock[] }
+interface VisionAnnotationResult {
+  fullTextAnnotation?: { text?: string; pages?: VisionPage[] };
+  textAnnotations?: Array<{ description?: string }>;
+  error?: { message?: string; code?: number };
+}
+
+async function handleOcrLayoutPage(req: Request, ownerId: string): Promise<Response> {
+  if (!GOOGLE_CLOUD_VISION_API_KEY) {
+    throw httpError("خدمة OCR الموضعي غير مهيأة؛ أضف GOOGLE_CLOUD_VISION_API_KEY إلى أسرار Edge Functions.", 503);
+  }
+  const sourceId = requireText(req.headers.get("x-wathiq-source-id"), "معرف المصدر غير موجود.");
+  const pageNumber = requirePositiveInteger(req.headers.get("x-wathiq-page-number"), "رقم صفحة الفهرس غير صالح.");
+  const totalPages = requirePositiveInteger(req.headers.get("x-wathiq-total-pages"), "عدد صفحات المصدر غير صالح.");
+  if (pageNumber > totalPages || totalPages > 300) throw httpError("نطاق صفحة الفهرس غير صالح.", 400);
+
+  const { data: source, error: sourceError } = await admin.from("source_registry")
+    .select("id,title")
+    .eq("owner_id", ownerId)
+    .eq("id", sourceId)
+    .maybeSingle();
+  if (sourceError) throw new Error(`تعذر التحقق من مصدر الفهرس: ${sourceError.message}`);
+  if (!source) throw httpError("المصدر المطلوب غير موجود أو لا يخص هذا الحساب.", 404);
+
+  const { data: cached, error: cacheError } = await admin.from("source_ocr_pages")
+    .select("layout_json")
+    .eq("owner_id", ownerId)
+    .eq("source_id", sourceId)
+    .eq("page_number", pageNumber)
+    .maybeSingle();
+  if (cacheError) throw new Error(`تعذر فحص التحليل الموضعي المحفوظ: ${cacheError.message}`);
+  if (isVisionLayoutPayload(cached?.layout_json)) return json(req, cached.layout_json);
+
+  const contentType = (req.headers.get("content-type") ?? "").split(";")[0]?.trim();
+  if (contentType !== "image/jpeg" && contentType !== "image/png") throw httpError("تقبل خدمة تحليل الفهرس صور JPEG أو PNG فقط.", 415);
+  const bytes = new Uint8Array(await req.arrayBuffer());
+  if (!bytes.length) throw httpError("صورة صفحة الفهرس فارغة.", 400);
+  if (bytes.length > MAX_OCR_IMAGE_BYTES) throw httpError("صورة صفحة الفهرس تتجاوز 10 ميجابايت.", 413);
+
+  const visionResponse = await fetch(
+    `https://vision.googleapis.com/v1/images:annotate?key=${encodeURIComponent(GOOGLE_CLOUD_VISION_API_KEY)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        requests: [{
+          image: { content: bytesToBase64(bytes) },
+          features: [{ type: "DOCUMENT_TEXT_DETECTION" }],
+          imageContext: { languageHints: ["ar", "en"] },
+        }],
+      }),
+    },
+  );
+  const payload = await visionResponse.json() as {
+    responses?: VisionAnnotationResult[];
+    error?: { message?: string };
+  };
+  if (!visionResponse.ok) throw httpError(payload.error?.message ?? `تعذر الاتصال بخدمة Google Vision (${visionResponse.status}).`, visionResponse.status);
+  const result = payload.responses?.[0];
+  if (result?.error?.message) throw httpError(result.error.message, result.error.code ?? 502);
+  const page = result?.fullTextAnnotation?.pages?.[0];
+  const width = Number(page?.width ?? 0);
+  const height = Number(page?.height ?? 0);
+  if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) {
+    throw httpError("لم ترجع Google Vision أبعاد صفحة الفهرس.", 502);
+  }
+  const words = visionLayoutWords(page);
+  if (!words.length) throw httpError("لم تعثر Google Vision على كلمات قابلة للتحليل في صفحة الفهرس.", 422);
+  const processedAt = new Date().toISOString();
+  const layout = {
+    ok: true,
+    version: 1,
+    pageNumber,
+    width,
+    height,
+    words,
+    provider: "google-cloud-vision-positional",
+    processedAt,
+  };
+  const content = (result?.fullTextAnnotation?.text ?? result?.textAnnotations?.[0]?.description ?? "").trim();
+  const confidence = averageVisionConfidence(result?.fullTextAnnotation?.pages as unknown[] | undefined);
+  const { error: upsertError } = await admin.from("source_ocr_pages").upsert({
+    owner_id: ownerId,
+    source_id: sourceId,
+    page_number: pageNumber,
+    content,
+    character_count: content.length,
+    confidence,
+    provider: "google-cloud-vision",
+    processed_at: processedAt,
+    layout_json: layout,
+  }, { onConflict: "owner_id,source_id,page_number" });
+  if (upsertError) throw new Error(`تعذر حفظ التحليل الموضعي للصفحة ${pageNumber}: ${upsertError.message}`);
+  return json(req, layout);
+}
+
+function visionLayoutWords(page: VisionPage): Array<Record<string, unknown>> {
+  const output: Array<Record<string, unknown>> = [];
+  for (const block of page.blocks ?? []) {
+    for (const paragraph of block.paragraphs ?? []) {
+      for (const word of paragraph.words ?? []) {
+        const text = (word.symbols ?? []).map((symbol) => symbol.text ?? "").join("").trim();
+        const vertices = word.boundingBox?.vertices ?? [];
+        if (!text || vertices.length < 2) continue;
+        const xs = vertices.map((vertex) => Number(vertex.x ?? 0)).filter(Number.isFinite);
+        const ys = vertices.map((vertex) => Number(vertex.y ?? 0)).filter(Number.isFinite);
+        if (!xs.length || !ys.length) continue;
+        const xMin = Math.min(...xs);
+        const xMax = Math.max(...xs);
+        const yMin = Math.min(...ys);
+        const yMax = Math.max(...ys);
+        if (xMax <= xMin || yMax <= yMin) continue;
+        output.push({
+          text,
+          xMin,
+          yMin,
+          xMax,
+          yMax,
+          confidence: typeof word.confidence === "number" ? word.confidence : null,
+        });
+      }
+    }
+  }
+  return output;
+}
+
+function isVisionLayoutPayload(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return record.version === 1
+    && typeof record.pageNumber === "number"
+    && typeof record.width === "number"
+    && typeof record.height === "number"
+    && Array.isArray(record.words)
+    && record.words.length > 0;
 }
 
 async function handleStart(req: Request, ownerId: string): Promise<Response> {

@@ -8,7 +8,7 @@ import {
   validateExamSetup,
 } from "./domain.js";
 import { clearDraft, loadDraft, loadProfile, loadSources, saveDraft, saveProfile, saveSources } from "./storage.js";
-import type { ExamDraft, ManagedSource, PlanItem, QuestionCounts, SourceDraft, SourceStatus, SourceStructureNode, SourceStructureNodeType, ViewName, WizardStep } from "./types.js";
+import type { ExamDraft, ManagedSource, PlanItem, QuestionCounts, SourceDraft, SourceStatus, SourceExtractionResult, SourceStructureExtractionResult, SourceStructureNode, SourceStructureNodeType, ViewName, WizardStep } from "./types.js";
 import { escapeHtml, formatArabicDate, icon } from "./ui.js";
 import { buildSourceDrivePath, changeSourceStatus, createEmptySourceDraft, createManagedSource, findDuplicateContentSource, findDuplicateSource, sourceSubjectLabel, SOURCE_KINDS, SOURCE_SEMESTERS, validateSourceDraft } from "./source-domain.js";
 import { createRegistryBackup, mergeSourceRegistry, parseRegistryBackup } from "./source-registry.js";
@@ -17,6 +17,8 @@ import { getRuntimeConfig, isCentralStorageConfigured, isGoogleDriveConfigured }
 import { GoogleDriveService, type GoogleDriveStatus, type PendingSourceUpload, type SourceUploadProgress } from "./google-drive.js";
 import { extractPdfText, shouldInvalidateLegacyExtraction, type PdfExtractionProgress } from "./pdf-indexer.js";
 import { extractPdfWithArabicOcr } from "./ocr-indexer.js";
+import { extractPositionalTocLayouts } from "./toc-layout-ocr.js";
+import { detectTocPagesFromChunks, extractStructureFromPositionalToc } from "./positional-toc.js";
 import { resolveInitialView, viewFromHash, viewHash } from "./navigation.js";
 import { createManualStructureNode, extractSourceStructure, parsePageSelection, resequenceStructureNodes, shouldQuarantineLegacyStructureDraft, SOURCE_STRUCTURE_NODE_TYPES, validateSourceStructure } from "./source-structure.js";
 
@@ -737,7 +739,7 @@ function renderSourceStructurePanel(source: ManagedSource): string {
     return `<section class="source-structure-card loading"><div><span class="eyebrow">هيكل الكتاب</span><h3>${state.structureBusy ? "جارٍ تحميل الهيكل…" : "جارٍ التحقق من الهيكل المحفوظ…"}</h3><p>${escapeHtml(state.structureMessage || "انتظر لحظة؛ لا توجد طقوس إضافية مطلوبة.")}</p></div></section>`;
   }
   if (!state.structureNodes.length) {
-    return `<section class="source-structure-card empty"><div><span class="eyebrow">Phase 0-H1 Rebuild 1</span><h3>لم يُعثر على هيكل موثوق بعد</h3><p>${escapeHtml(state.structureMessage || "سيقبل واثق الهيكل فقط بعد اجتياز التحقق المرجعي: وحدات مكتملة، دروس مرتبطة، وأرقام صفحات منفصلة عن العناوين.")}</p></div><div class="structure-empty-actions"><button class="primary-btn compact" data-action="extract-source-structure" data-source-id="${source.id}" ${state.structureBusy ? "disabled" : ""}>${state.structureBusy ? "جارٍ الاستخراج…" : "استخراج تلقائي موثوق"}</button>${renderManualTocControls(source)}<button class="ghost-btn compact" data-action="add-structure-unit" data-source-id="${source.id}" ${state.structureBusy ? "disabled" : ""}>إضافة وحدة يدويًا</button></div></section>`;
+    return `<section class="source-structure-card empty"><div><span class="eyebrow">Phase 0-H1 Rebuild 2</span><h3>لم يُعثر على هيكل موثوق بعد</h3><p>${escapeHtml(state.structureMessage || "سيقبل واثق الهيكل فقط بعد اجتياز التحقق المرجعي: وحدات مكتملة، دروس مرتبطة، وأرقام صفحات منفصلة عن العناوين.")}</p></div><div class="structure-empty-actions"><button class="primary-btn compact" data-action="extract-source-structure" data-source-id="${source.id}" ${state.structureBusy ? "disabled" : ""}>${state.structureBusy ? "جارٍ الاستخراج…" : "تحليل الفهرس بصريًا"}</button>${renderManualTocControls(source)}<button class="ghost-btn compact" data-action="add-structure-unit" data-source-id="${source.id}" ${state.structureBusy ? "disabled" : ""}>إضافة وحدة يدويًا</button></div></section>`;
   }
   const validation = validateSourceStructure(state.structureNodes);
   const approved = state.structureNodes.every((node) => node.reviewStatus === "معتمد");
@@ -1434,7 +1436,7 @@ async function extractAndIndexSource(sourceId: string): Promise<void> {
 
   try {
     const access = await googleDriveService.getPdfSourceAccess(sourceId);
-    let result;
+    let result: SourceExtractionResult;
     if (useOcr) {
       if (!pendingOcr && (source.extractionStatus === "مكتمل" || source.extractionStatus === "فشل")) {
         await centralSourceStore.clearOcrPages(sourceId);
@@ -1585,7 +1587,7 @@ async function extractAndSaveSourceStructure(sourceId: string, replaceExisting =
   state.structureSourceId = sourceId;
   state.structureLoaded = true;
   state.structureBusy = true;
-  state.structureMessage = useManualTocPages ? "جارٍ تحليل صفحات الفهرس المحددة…" : "جارٍ استخراج فهرس موثوق متعدد الأعمدة والتحقق من اكتمال تسلسل الوحدات والدروس…";
+  state.structureMessage = useManualTocPages ? "جارٍ تحليل صفحات الفهرس المحددة…" : "جارٍ تحديد فهرس موثوق متعدد الأعمدة ثم تحليل إحداثيات كلماته بصريًا…";
   render();
   try {
     const chunks = await centralSourceStore.listSourceChunks(sourceId);
@@ -1595,12 +1597,36 @@ async function extractAndSaveSourceStructure(sourceId: string, replaceExisting =
     if (useManualTocPages && !manualPages.length) {
       throw new Error("اكتب صفحات الفهرس مثل: 4-5 أو 4، 5.");
     }
-    const result = extractSourceStructure(
-      sourceId,
-      chunks,
-      totalPages,
-      useManualTocPages ? { tocPages: manualPages, allowUnitHeadingFallback: false } : {},
-    );
+    const detectedPages = useManualTocPages ? manualPages : detectTocPagesFromChunks(chunks, totalPages);
+    let result: SourceStructureExtractionResult;
+    if (detectedPages.length && googleDriveService) {
+      state.structureMessage = `جارٍ قراءة مواضع الكلمات بصريًا في صفحات الفهرس ${detectedPages.join("، ")}…`;
+      render();
+      const access = await googleDriveService.getPdfSourceAccess(sourceId);
+      const layouts = await extractPositionalTocLayouts(
+        sourceId,
+        access,
+        detectedPages,
+        ({ sourceId: requestSourceId, pageNumber, totalPages: requestTotalPages, image }) => googleDriveService.ocrSourceLayoutPage(
+          requestSourceId,
+          pageNumber,
+          requestTotalPages,
+          image,
+        ),
+        (progress) => {
+          state.structureMessage = progress.message;
+          render();
+        },
+      );
+      result = extractStructureFromPositionalToc(sourceId, layouts, totalPages);
+    } else {
+      result = extractSourceStructure(
+        sourceId,
+        chunks,
+        totalPages,
+        useManualTocPages ? { tocPages: manualPages, allowUnitHeadingFallback: false } : {},
+      );
+    }
     if (!result.nodes.length) {
       if (replaceExisting || state.structureNodes.length) await centralSourceStore.replaceSourceStructure(sourceId, []);
       state.structureNodes = [];
