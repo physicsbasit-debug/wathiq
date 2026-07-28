@@ -178,6 +178,24 @@ export interface SourceOcrPage {
   processedAt: string;
 }
 
+export interface SourceOcrLayoutWord {
+  text: string;
+  xMin: number;
+  yMin: number;
+  xMax: number;
+  yMax: number;
+  confidence: number | null;
+}
+
+export interface SourceOcrLayoutPage {
+  pageNumber: number;
+  width: number;
+  height: number;
+  words: SourceOcrLayoutWord[];
+  provider: string;
+  processedAt: string;
+}
+
 export interface SourceTextChunk {
   chunkIndex: number;
   pageFrom: number;

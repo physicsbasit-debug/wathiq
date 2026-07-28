@@ -7,7 +7,7 @@ const structure = await readFile(new URL("../src/source-structure.ts", import.me
 const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 
 test("تعلن الواجهة دعم الفهرس متعدد الأعمدة", () => {
-  assert.match(app, /Phase 0-H1 (?:Fix 3|Rebuild 1)/);
+  assert.match(app, /Phase 0-H1 (?:Fix 3|Rebuild 1|Rebuild 2)/);
   assert.match(app, /فهرس موثوق متعدد الأعمدة/);
 });
 
@@ -19,5 +19,5 @@ test("يستخدم المحرك ترقيم الوحدات والدروس بدل 
 });
 
 test("يرفع إصدار واثق إلى Fix 3", () => {
-  assert.ok(["0.0.17", "0.0.18"].includes(packageJson.version));
+  assert.ok(["0.0.17", "0.0.18", "0.0.19"].includes(packageJson.version));
 });
