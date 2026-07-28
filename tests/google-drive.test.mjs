@@ -180,3 +180,13 @@ test("يرفع PDF على أجزاء ويحفظ التقدم ثم يمسح ال�
     globalThis.localStorage = originalStorage;
   }
 });
+
+test("يبني رابط تنزيل PDF الآمن بمحارف المصادقة اللازمة", async () => {
+  const service = new GoogleDriveService(config, centralStore, async () => {
+    throw new Error("لا يجب تنفيذ fetch عند بناء رابط الاستخراج.");
+  });
+  const access = await service.getPdfSourceAccess("source 1");
+  assert.equal(access.url, "https://project.supabase.co/functions/v1/google-drive-oauth/source-file?sourceId=source%201");
+  assert.equal(access.httpHeaders.Authorization, "Bearer owner-jwt");
+  assert.equal(access.httpHeaders.apikey, "sb_publishable_test");
+});

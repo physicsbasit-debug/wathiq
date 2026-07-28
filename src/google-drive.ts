@@ -20,6 +20,11 @@ export interface GoogleDriveStatus {
   updatedAt: string;
 }
 
+export interface PdfSourceAccess {
+  url: string;
+  httpHeaders: Record<string, string>;
+}
+
 export interface SourceUploadProgress {
   uploadedBytes: number;
   totalBytes: number;
@@ -300,6 +305,17 @@ export class GoogleDriveService {
       method: "POST",
       body: JSON.stringify({ sourceId }),
     })).source);
+  }
+
+  async getPdfSourceAccess(sourceId: string): Promise<PdfSourceAccess> {
+    const session = await this.centralStore.getActiveSession();
+    return {
+      url: `${this.endpoint}/source-file?sourceId=${encodeURIComponent(sourceId)}`,
+      httpHeaders: {
+        apikey: this.config.supabasePublishableKey,
+        Authorization: `Bearer ${session.accessToken}`,
+      },
+    };
   }
 
   private progress(uploadedBytes: number, totalBytes: number, message: string): SourceUploadProgress {

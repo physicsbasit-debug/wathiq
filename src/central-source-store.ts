@@ -1,4 +1,4 @@
-import type { ManagedSource, SourceStatus } from "./types.js";
+import type { ManagedSource, SourceExtractionResult, SourceExtractionStatus, SourceStatus, SourceTextChunk } from "./types.js";
 import { normalizeManagedSource } from "./source-registry.js";
 import type { WathiqRuntimeConfig } from "./runtime-config.js";
 
@@ -51,7 +51,25 @@ interface SourceRow {
   drive_md5_checksum: string | null;
   upload_state: string | null;
   uploaded_at: string | null;
+  extraction_status: string | null;
+  extraction_message: string | null;
+  extracted_page_count: number | null;
+  extracted_character_count: number | null;
+  extracted_language: string | null;
+  extraction_preview: string | null;
+  detected_headings: unknown;
+  extracted_at: string | null;
+  extraction_version: string | null;
 }
+
+export interface SourceExtractionSaveResult {
+  sourceId: string;
+  pageCount: number;
+  characterCount: number;
+  chunkCount: number;
+  requiresOcr: boolean;
+}
+
 
 type FetchLike = typeof fetch;
 
@@ -125,6 +143,15 @@ export function sourceToRow(source: ManagedSource, ownerId: string): SourceRow {
     drive_md5_checksum: source.driveMd5Checksum ?? null,
     upload_state: source.uploadState ?? null,
     uploaded_at: source.uploadedAt ?? null,
+    extraction_status: source.extractionStatus ?? null,
+    extraction_message: source.extractionMessage ?? null,
+    extracted_page_count: source.extractedPageCount ?? null,
+    extracted_character_count: source.extractedCharacterCount ?? null,
+    extracted_language: source.extractedLanguage ?? null,
+    extraction_preview: source.extractionPreview ?? null,
+    detected_headings: source.detectedHeadings ?? [],
+    extracted_at: source.extractedAt ?? null,
+    extraction_version: source.extractionVersion ?? null,
   };
 }
 
@@ -160,11 +187,23 @@ export function rowToSource(row: unknown): ManagedSource | null {
     ["drive_md5_checksum", "driveMd5Checksum"],
     ["upload_state", "uploadState"],
     ["uploaded_at", "uploadedAt"],
+    ["extraction_status", "extractionStatus"],
+    ["extraction_message", "extractionMessage"],
+    ["extracted_language", "extractedLanguage"],
+    ["extraction_preview", "extractionPreview"],
+    ["extracted_at", "extractedAt"],
+    ["extraction_version", "extractionVersion"],
   ];
   optionalStringFields.forEach(([rowKey, sourceKey]) => {
     if (typeof value[rowKey] === "string" && value[rowKey]) candidate[sourceKey] = value[rowKey];
   });
   if (typeof value.file_size_bytes === "number") candidate.fileSizeBytes = value.file_size_bytes;
+  if (typeof value.extracted_page_count === "number") candidate.extractedPageCount = value.extracted_page_count;
+  if (typeof value.extracted_character_count === "number") candidate.extractedCharacterCount = value.extracted_character_count;
+  if (Array.isArray(value.detected_headings)) {
+    const headings = value.detected_headings.filter((item): item is string => typeof item === "string");
+    if (headings.length) candidate.detectedHeadings = headings;
+  }
   return normalizeManagedSource(candidate);
 }
 
@@ -256,6 +295,102 @@ export class CentralSourceStore {
         body: JSON.stringify({ status, updated_at: updatedAt }),
       },
     );
+  }
+
+  async updateExtractionState(
+    sourceId: string,
+    extractionStatus: SourceExtractionStatus,
+    message: string,
+  ): Promise<void> {
+    const session = await this.requireSession();
+    const now = new Date().toISOString();
+    await this.dataRequest(
+      `/rest/v1/source_registry?owner_id=eq.${encodeURIComponent(session.userId)}&id=eq.${encodeURIComponent(sourceId)}`,
+      {
+        method: "PATCH",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({
+          extraction_status: extractionStatus,
+          extraction_message: message,
+          updated_at: now,
+          ...(extractionStatus === "جارٍ الاستخراج" ? { status: "جاهز للفهرسة" } : {}),
+          ...(extractionStatus === "فشل" || extractionStatus === "يحتاج OCR" ? { status: "يحتاج مراجعة" } : {}),
+        }),
+      },
+    );
+  }
+
+  async saveSourceExtraction(sourceId: string, result: SourceExtractionResult): Promise<SourceExtractionSaveResult> {
+    const session = await this.requireSession();
+    const ownerId = session.userId;
+    const encodedOwner = encodeURIComponent(ownerId);
+    const encodedSource = encodeURIComponent(sourceId);
+    const now = new Date().toISOString();
+
+    await this.dataRequest(
+      `/rest/v1/source_chunks?owner_id=eq.${encodedOwner}&source_id=eq.${encodedSource}`,
+      { method: "DELETE", headers: { Prefer: "return=minimal" } },
+    );
+
+    if (!result.requiresOcr) {
+      const rows = result.chunks.map((chunk) => this.chunkToRow(ownerId, sourceId, chunk));
+      const batchSize = 40;
+      for (let offset = 0; offset < rows.length; offset += batchSize) {
+        await this.dataRequest(
+          "/rest/v1/source_chunks",
+          {
+            method: "POST",
+            headers: { Prefer: "return=minimal" },
+            body: JSON.stringify(rows.slice(offset, offset + batchSize)),
+          },
+        );
+      }
+    }
+
+    const extractionStatus: SourceExtractionStatus = result.requiresOcr ? "يحتاج OCR" : "مكتمل";
+    const message = result.requiresOcr
+      ? "لم يعثر واثق على نص كافٍ داخل الملف؛ يبدو أن الصفحات مصورة وتحتاج OCR."
+      : `تم استخراج ${result.characterCount.toLocaleString("en-US")} حرف من ${result.pageCount} صفحة.`;
+    await this.dataRequest(
+      `/rest/v1/source_registry?owner_id=eq.${encodedOwner}&id=eq.${encodedSource}`,
+      {
+        method: "PATCH",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({
+          status: result.requiresOcr ? "يحتاج مراجعة" : "مفهرس",
+          extraction_status: extractionStatus,
+          extraction_message: message,
+          extracted_page_count: result.pageCount,
+          extracted_character_count: result.characterCount,
+          extracted_language: result.language,
+          extraction_preview: result.preview,
+          detected_headings: result.detectedHeadings,
+          extracted_at: now,
+          extraction_version: "pdfjs-4.10.38-wathiq-1",
+          updated_at: now,
+        }),
+      },
+    );
+
+    return {
+      sourceId,
+      pageCount: result.pageCount,
+      characterCount: result.characterCount,
+      chunkCount: result.chunks.length,
+      requiresOcr: result.requiresOcr,
+    };
+  }
+
+  private chunkToRow(ownerId: string, sourceId: string, chunk: SourceTextChunk): Record<string, unknown> {
+    return {
+      owner_id: ownerId,
+      source_id: sourceId,
+      chunk_index: chunk.chunkIndex,
+      page_from: chunk.pageFrom,
+      page_to: chunk.pageTo,
+      content: chunk.content,
+      character_count: chunk.characterCount,
+    };
   }
 
   private async dataRequest(path: string, init: RequestInit, allowRetry = true): Promise<unknown> {

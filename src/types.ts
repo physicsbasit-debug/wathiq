@@ -112,6 +112,7 @@ export type SourceKind =
 export type SourceStatus = "جاهز للفهرسة" | "مفهرس" | "يحتاج مراجعة" | "مؤرشف";
 export type SourceAuthority = "منهج عُماني" | "كامبريدج" | "مصدر عالمي";
 export type SourceUploadState = "غير مرفوع" | "قيد الرفع" | "مرفوع" | "فشل الرفع" | "مؤرشف";
+export type SourceExtractionStatus = "لم يبدأ" | "جارٍ الاستخراج" | "مكتمل" | "يحتاج OCR" | "فشل";
 
 export interface SourceDraft {
   mode: SourceMode;
@@ -153,7 +154,36 @@ export interface ManagedSource {
   driveMd5Checksum?: string;
   uploadState?: SourceUploadState;
   uploadedAt?: string;
+  extractionStatus?: SourceExtractionStatus;
+  extractionMessage?: string;
+  extractedPageCount?: number;
+  extractedCharacterCount?: number;
+  extractedLanguage?: string;
+  extractionPreview?: string;
+  detectedHeadings?: string[];
+  extractedAt?: string;
+  extractionVersion?: string;
 }
+
+export interface SourceTextChunk {
+  chunkIndex: number;
+  pageFrom: number;
+  pageTo: number;
+  content: string;
+  characterCount: number;
+}
+
+export interface SourceExtractionResult {
+  pageCount: number;
+  characterCount: number;
+  nonEmptyPageCount: number;
+  language: string;
+  preview: string;
+  detectedHeadings: string[];
+  requiresOcr: boolean;
+  chunks: SourceTextChunk[];
+}
+
 
 export interface SourceValidationIssue {
   field: keyof SourceDraft | "general";

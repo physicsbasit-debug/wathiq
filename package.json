@@ -1,9 +1,9 @@
 {
   "name": "wathiq",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "private": true,
   "type": "module",
-  "description": "واثق: إصلاح بقاء صفحة إدارة المحتوى بعد تحديث المتصفح في Phase 0-F2 Fix 1",
+  "description": "واثق: استخراج النص القابل للتحديد من PDF وفهرسته في Phase 0-G",
   "scripts": {
     "build": "node scripts/build.mjs",
     "dev": "node scripts/serve.mjs",

@@ -648,3 +648,51 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
   .pending-upload-card .storage-actions > * { width: 100%; justify-content: center; }
   .source-state-stack { justify-items: stretch; }
 }
+
+/* Phase 0-G: استخراج النص القابل للتحديد وفهرسته */
+.source-indexing-card {
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 22px;
+  padding: 20px 22px;
+  border-radius: 18px;
+  border: 1px solid #a9c7e5;
+  background: #f4f9ff;
+}
+
+.source-indexing-card h2 { margin: 5px 0 7px; color: var(--navy-deep); }
+.source-indexing-card p { margin: 0; color: var(--muted); line-height: 1.7; }
+.source-indexing-card > div { flex: 1 1 auto; }
+.source-indexing-card > strong { color: var(--navy); font-size: 20px; }
+.extraction-state { display: inline-flex; padding: 4px 8px; border-radius: 999px; font-size: 11px; font-weight: 800; }
+.extraction-state.extraction-done { color: #17673f; background: #e8f5ef; }
+.extraction-state.extraction-busy { color: #1d4f88; background: #e7f1fb; }
+.extraction-state.extraction-review { color: #8a4b18; background: #fff0df; }
+.extraction-state.extraction-idle { color: #5f6876; background: #eceff3; }
+.extraction-note,
+.extraction-preview,
+.detected-headings {
+  margin-top: 14px;
+  padding: 14px 15px;
+  border-radius: 13px;
+  border: 1px solid var(--border);
+  background: #f8fafc;
+}
+.extraction-note strong,
+.extraction-preview > span,
+.detected-headings > span { display: block; margin-bottom: 7px; color: var(--navy-deep); font-weight: 900; }
+.extraction-note p,
+.extraction-preview p { margin: 0; color: var(--muted); line-height: 1.85; white-space: pre-wrap; overflow-wrap: anywhere; }
+.extraction-note.status-ok { border-color: #a7d7ba; background: #f1fbf6; }
+.extraction-note.status-warn { border-color: #e5c187; background: #fff8ed; }
+.detected-headings > div { display: flex; flex-wrap: wrap; gap: 7px; }
+.detected-headings small { padding: 6px 9px; border-radius: 999px; background: #eaf1f8; color: #29435f; font-weight: 700; }
+.source-detail-actions { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; margin-top: 14px; }
+
+@media (max-width: 640px) {
+  .source-indexing-card { flex-direction: column; align-items: stretch; }
+  .source-indexing-card > strong { text-align: center; }
+  .source-detail-actions > * { width: 100%; justify-content: center; }
+}
