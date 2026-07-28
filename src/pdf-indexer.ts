@@ -322,6 +322,7 @@ export function buildExtractionResult(pageTexts: string[]): SourceExtractionResu
         }
       : overallQuality;
   return {
+    method: "pdf-text",
     pageCount,
     characterCount,
     nonEmptyPageCount,

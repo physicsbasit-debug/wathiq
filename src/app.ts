@@ -16,6 +16,7 @@ import { CentralSourceStore } from "./central-source-store.js";
 import { getRuntimeConfig, isCentralStorageConfigured, isGoogleDriveConfigured } from "./runtime-config.js";
 import { GoogleDriveService, type GoogleDriveStatus, type PendingSourceUpload, type SourceUploadProgress } from "./google-drive.js";
 import { extractPdfText, shouldInvalidateLegacyExtraction, type PdfExtractionProgress } from "./pdf-indexer.js";
+import { extractPdfWithArabicOcr } from "./ocr-indexer.js";
 import { resolveInitialView, viewFromHash, viewHash } from "./navigation.js";
 
 const appRoot = document.querySelector<HTMLDivElement>("#app");
@@ -239,7 +240,7 @@ function renderHome(): string {
   return `
     <section class="hero-panel">
       <div class="hero-copy">
-        <span class="eyebrow">نسخة المرحلة 0-G</span>
+        <span class="eyebrow">نسخة المرحلة 0-G Fix 2B</span>
         <h1>أنشئ اختبارك القصير بثقة.</h1>
         <p>أربع خطوات واضحة. المصادر والفحوص وجدول المواصفات تعمل في الخلفية، حيث تنتمي التفاصيل المزعجة.</p>
         <div class="hero-actions">
@@ -592,7 +593,7 @@ function renderAdmin(): string {
   const visibleSources = state.sources.filter((source) => state.sourceFilter === "الكل" || source.status === state.sourceFilter);
   const selectedSource = state.sources.find((source) => source.id === state.selectedSourceId);
   return `
-    <section class="page-heading"><div><span class="eyebrow">لوحة مالك المنصة</span><h1>إدارة المصادر</h1><p>رفع ملفات PDF، واستخراج النص القابل للتحديد، وحفظ مقاطع الفهرسة في Supabase دون OCR في هذه المرحلة.</p></div><span class="demo-badge">Phase 0-G · استخراج PDF</span></section>
+    <section class="page-heading"><div><span class="eyebrow">لوحة مالك المنصة</span><h1>إدارة المصادر</h1><p>رفع ملفات PDF، واستخراج النص القابل للتحديد، وتشغيل OCR عربي فعلي عند فشل طبقة النص، ثم حفظ مقاطع الفهرسة في Supabase.</p></div><span class="demo-badge">Phase 0-G Fix 2B · OCR عربي</span></section>
 
     ${renderSourceStoragePanel()}
     ${renderGoogleDrivePanel()}
@@ -624,7 +625,7 @@ function renderAdmin(): string {
 
     <section class="source-table-wrap">
       <div class="source-list-heading">
-        <div><h2>مكتبة المصادر</h2><p>بعد رفع PDF يمكنك استخراج نصه وفهرسته. الملفات المصورة تُوسم بوضوح بأنها تحتاج OCR بدل ادعاء قراءة ما لا يُقرأ.</p></div>
+        <div><h2>مكتبة المصادر</h2><p>بعد رفع PDF يحاول واثق طبقة النص أولًا، ثم يتيح OCR عربيًا فعليًا للملفات المصورة أو المشوهة مع استكمال الصفحات بعد الانقطاع.</p></div>
         <label class="search-field"><span>بحث</span><input id="source-search" placeholder="اسم المصدر أو المادة أو رقم الفهرسة"/></label>
       </div>
       <div class="source-filter-row">${(["الكل", "جاهز للفهرسة", "مفهرس", "يحتاج مراجعة", "مؤرشف"] as const).map((filter) => `<button class="filter-chip ${state.sourceFilter === filter ? "active" : ""}" data-source-filter="${filter}">${filter}</button>`).join("")}</div>
@@ -695,7 +696,7 @@ function renderSourceDetails(source: ManagedSource): string {
       ${source.extractionPreview ? `<div class="extraction-preview"><span>معاينة النص المستخرج</span><p>${escapeHtml(source.extractionPreview)}</p></div>` : ""}
       ${headings.length ? `<div class="detected-headings"><span>عناوين مرشحة وليست معتمدة بعد</span><div>${headings.slice(0, 12).map((heading) => `<small>${escapeHtml(heading)}</small>`).join("")}</div></div>` : ""}
       <div class="source-detail-actions">
-        ${source.mode === "file" && source.driveFileId && source.status !== "مؤرشف" ? `<button class="primary-btn compact" data-action="index-source" data-source-id="${source.id}" ${state.sourceIndexingId ? "disabled" : ""}>${source.extractionStatus === "مكتمل" ? "إعادة استخراج النص" : "استخراج النص وفهرسته"}</button>` : ""}
+        ${source.mode === "file" && source.driveFileId && source.status !== "مؤرشف" ? `<button class="primary-btn compact" data-action="index-source" data-source-id="${source.id}" ${state.sourceIndexingId ? "disabled" : ""}>${sourceExtractionActionLabel(source, state.sourceIndexingId === source.id)}</button>` : ""}
         ${source.driveWebViewLink ? `<a class="secondary-btn compact source-drive-link" href="${escapeHtml(source.driveWebViewLink)}" target="_blank" rel="noreferrer">فتح الملف في Google Drive</a>` : ""}
       </div>
     </section>
@@ -707,7 +708,7 @@ function renderSourceRow(source: ManagedSource): string {
   const sourceRef = source.mode === "file" ? source.fileName ?? "ملف PDF" : source.url ?? "رابط";
   const indexing = state.sourceIndexingId === source.id;
   const canExtract = source.mode === "file" && Boolean(source.driveFileId) && source.uploadState === "مرفوع";
-  const extractLabel = indexing ? "جارٍ الاستخراج…" : source.extractionStatus === "مكتمل" ? "إعادة الفهرسة" : "استخراج وفهرسة";
+  const extractLabel = sourceExtractionActionLabel(source, indexing);
   const actions = source.status === "مؤرشف"
     ? `<button class="text-btn" data-action="view-source" data-source-id="${source.id}">تفاصيل</button><button class="text-btn" data-action="restore-source" data-source-id="${source.id}">استعادة</button>`
     : `<button class="text-btn" data-action="view-source" data-source-id="${source.id}">تفاصيل</button>${canExtract ? `<button class="text-btn" data-action="index-source" data-source-id="${source.id}" ${state.sourceIndexingId ? "disabled" : ""}>${extractLabel}</button>` : ""}<button class="text-btn danger-text" data-action="archive-source" data-source-id="${source.id}" ${indexing ? "disabled" : ""}>أرشفة</button>`;
@@ -718,6 +719,16 @@ function renderSourceRow(source: ManagedSource): string {
     <div class="source-actions">${actions}</div>
     <code class="source-path">${escapeHtml(source.drivePath)}</code>
   </article>`;
+}
+
+function sourceExtractionActionLabel(source: ManagedSource, busy: boolean): string {
+  if (busy) return source.extractionVersion?.startsWith("google-cloud-vision") ? "جارٍ OCR…" : "جارٍ الاستخراج…";
+  if (source.extractionStatus === "يحتاج OCR") return "تشغيل OCR العربي";
+  if (source.extractionVersion?.startsWith("google-cloud-vision-ocr-pending")) return "استكمال OCR";
+  if (source.extractionVersion?.startsWith("google-cloud-vision")) return "إعادة OCR";
+  if (source.extractionStatus === "فشل") return "إعادة المحاولة";
+  if (source.extractionStatus === "مكتمل") return "إعادة الفهرسة";
+  return "استخراج وفهرسة";
 }
 
 function extractionStatusSlug(status: ManagedSource["extractionStatus"]): string {
@@ -1284,21 +1295,55 @@ async function extractAndIndexSource(sourceId: string): Promise<void> {
     return;
   }
 
+  const useOcr = source.extractionStatus === "يحتاج OCR"
+    || source.extractionStatus === "فشل"
+    || Boolean(source.extractionVersion?.startsWith("google-cloud-vision"));
+  const pendingOcr = source.extractionVersion?.startsWith("google-cloud-vision-ocr-pending") === true;
+
   state.sourceIndexingId = sourceId;
   state.sourceIndexingProgress = 1;
-  state.sourceIndexingMessage = "جارٍ تجهيز رابط PDF الآمن…";
+  state.sourceIndexingMessage = useOcr ? "جارٍ تجهيز OCR العربي…" : "جارٍ تجهيز رابط PDF الآمن…";
   state.sources = state.sources.map((item) => item.id === sourceId
     ? { ...item, extractionStatus: "جارٍ الاستخراج", extractionMessage: state.sourceIndexingMessage }
     : item);
   render();
 
   try {
-    await centralSourceStore.updateExtractionState(sourceId, "جارٍ الاستخراج", "جارٍ قراءة صفحات PDF واستخراج النص القابل للتحديد.");
     const access = await googleDriveService.getPdfSourceAccess(sourceId);
-    const result = await extractPdfText(access, updateSourceIndexingProgress);
+    let result;
+    if (useOcr) {
+      if (!pendingOcr && (source.extractionStatus === "مكتمل" || source.extractionStatus === "فشل")) {
+        await centralSourceStore.clearOcrPages(sourceId);
+      }
+      await centralSourceStore.updateExtractionState(
+        sourceId,
+        "جارٍ الاستخراج",
+        "جارٍ تشغيل OCR العربي عبر Google Cloud Vision مع حفظ كل صفحة للاستكمال بعد الانقطاع.",
+        "google-cloud-vision-ocr-pending-1",
+      );
+      const existingPages = await centralSourceStore.listOcrPages(sourceId);
+      result = await extractPdfWithArabicOcr(
+        sourceId,
+        access,
+        existingPages,
+        ({ sourceId: requestSourceId, pageNumber, totalPages, image }) => googleDriveService.ocrSourcePage(
+          requestSourceId,
+          pageNumber,
+          totalPages,
+          image,
+        ),
+        (progress) => updateSourceIndexingProgress(progress),
+      );
+    } else {
+      await centralSourceStore.updateExtractionState(sourceId, "جارٍ الاستخراج", "جارٍ قراءة صفحات PDF واستخراج النص القابل للتحديد.");
+      result = await extractPdfText(access, updateSourceIndexingProgress);
+    }
+
     state.sourceIndexingProgress = 96;
     state.sourceIndexingMessage = result.requiresOcr
-      ? result.quality.message
+      ? result.method === "google-vision-ocr"
+        ? "اكتمل OCR، لكن النص الناتج لم يجتز بوابة الجودة العربية."
+        : result.quality.message
       : `جارٍ حفظ ${result.chunks.length} مقطعًا في سجل الفهرسة…`;
     render();
     const saved = await centralSourceStore.saveSourceExtraction(sourceId, result);
@@ -1307,8 +1352,10 @@ async function extractAndIndexSource(sourceId: string): Promise<void> {
     saveSources(remoteSources);
     state.sourceIndexingProgress = 100;
     state.sourceIndexingMessage = saved.requiresOcr
-      ? result.quality.message
-      : `اكتملت الفهرسة: ${saved.pageCount} صفحة و${saved.chunkCount} مقطع.`;
+      ? result.method === "google-vision-ocr"
+        ? "لم يجتز نص OCR بوابة الجودة؛ راجع جودة الملف أو أعد المسح بدقة أعلى."
+        : result.quality.message
+      : `${result.method === "google-vision-ocr" ? "اكتمل OCR والفهرسة" : "اكتملت الفهرسة"}: ${saved.pageCount} صفحة و${saved.chunkCount} مقطع.`;
     render();
     showToast(state.sourceIndexingMessage);
   } catch (error) {

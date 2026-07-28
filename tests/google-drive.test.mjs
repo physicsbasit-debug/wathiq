@@ -190,3 +190,27 @@ test("يبني رابط تنزيل PDF الآمن بمحارف المصادقة 
   assert.equal(access.httpHeaders.Authorization, "Bearer owner-jwt");
   assert.equal(access.httpHeaders.apikey, "sb_publishable_test");
 });
+
+test("يرسل صفحة OCR إلى Edge Function مع معرف المصدر ورقم الصفحة", async () => {
+  const calls = [];
+  const fetcher = async (url, init = {}) => {
+    calls.push({ url: String(url), init });
+    return Response.json({
+      pageNumber: 2,
+      content: "الوحدة الأولى: المادة",
+      characterCount: 21,
+      confidence: 0.93,
+      provider: "google-cloud-vision",
+      processedAt: "2026-07-28T10:00:00.000Z",
+    });
+  };
+  const service = new GoogleDriveService(config, centralStore, fetcher);
+  const page = await service.ocrSourcePage("source-1", 2, 8, new Blob(["image"], { type: "image/jpeg" }));
+  assert.equal(page.pageNumber, 2);
+  assert.equal(page.confidence, 0.93);
+  assert.match(calls[0].url, /\/ocr-page$/);
+  assert.equal(calls[0].init.headers["x-wathiq-source-id"], "source-1");
+  assert.equal(calls[0].init.headers["x-wathiq-page-number"], "2");
+  assert.equal(calls[0].init.headers["x-wathiq-total-pages"], "8");
+  assert.equal(calls[0].init.headers["Content-Type"], "image/jpeg");
+});

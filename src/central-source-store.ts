@@ -1,4 +1,4 @@
-import type { ManagedSource, SourceExtractionResult, SourceExtractionStatus, SourceStatus, SourceTextChunk } from "./types.js";
+import type { ManagedSource, SourceExtractionResult, SourceExtractionStatus, SourceOcrPage, SourceStatus, SourceTextChunk } from "./types.js";
 import { normalizeManagedSource } from "./source-registry.js";
 import type { WathiqRuntimeConfig } from "./runtime-config.js";
 
@@ -60,6 +60,18 @@ interface SourceRow {
   detected_headings: unknown;
   extracted_at: string | null;
   extraction_version: string | null;
+}
+
+
+interface SourceOcrPageRow {
+  owner_id: string;
+  source_id: string;
+  page_number: number;
+  content: string;
+  character_count: number;
+  confidence: number | null;
+  provider: string;
+  processed_at: string;
 }
 
 export interface SourceExtractionSaveResult {
@@ -301,6 +313,7 @@ export class CentralSourceStore {
     sourceId: string,
     extractionStatus: SourceExtractionStatus,
     message: string,
+    extractionVersion?: string,
   ): Promise<void> {
     const session = await this.requireSession();
     const now = new Date().toISOString();
@@ -312,11 +325,48 @@ export class CentralSourceStore {
         body: JSON.stringify({
           extraction_status: extractionStatus,
           extraction_message: message,
+          ...(extractionVersion ? { extraction_version: extractionVersion } : {}),
           updated_at: now,
           ...(extractionStatus === "جارٍ الاستخراج" ? { status: "جاهز للفهرسة" } : {}),
           ...(extractionStatus === "فشل" || extractionStatus === "يحتاج OCR" ? { status: "يحتاج مراجعة" } : {}),
         }),
       },
+    );
+  }
+
+  async listOcrPages(sourceId: string): Promise<SourceOcrPage[]> {
+    const session = await this.requireSession();
+    const payload = await this.dataRequest(
+      `/rest/v1/source_ocr_pages?owner_id=eq.${encodeURIComponent(session.userId)}&source_id=eq.${encodeURIComponent(sourceId)}&select=*&order=page_number.asc`,
+      { method: "GET" },
+    );
+    if (!Array.isArray(payload)) throw new Error("تعذر قراءة صفحات OCR المحفوظة.");
+    return payload.flatMap((raw) => {
+      if (typeof raw !== "object" || raw === null) return [];
+      const row = raw as Partial<SourceOcrPageRow>;
+      if (
+        typeof row.page_number !== "number" ||
+        typeof row.content !== "string" ||
+        typeof row.character_count !== "number" ||
+        typeof row.provider !== "string" ||
+        typeof row.processed_at !== "string"
+      ) return [];
+      return [{
+        pageNumber: row.page_number,
+        content: row.content,
+        characterCount: row.character_count,
+        confidence: typeof row.confidence === "number" ? row.confidence : null,
+        provider: row.provider,
+        processedAt: row.processed_at,
+      } satisfies SourceOcrPage];
+    });
+  }
+
+  async clearOcrPages(sourceId: string): Promise<void> {
+    const session = await this.requireSession();
+    await this.dataRequest(
+      `/rest/v1/source_ocr_pages?owner_id=eq.${encodeURIComponent(session.userId)}&source_id=eq.${encodeURIComponent(sourceId)}`,
+      { method: "DELETE", headers: { Prefer: "return=minimal" } },
     );
   }
 
@@ -347,10 +397,15 @@ export class CentralSourceStore {
       }
     }
 
-    const extractionStatus: SourceExtractionStatus = result.requiresOcr ? "يحتاج OCR" : "مكتمل";
-    const message = result.requiresOcr
-      ? result.quality.message
-      : `تم استخراج ${result.characterCount.toLocaleString("en-US")} حرف من ${result.pageCount} صفحة، واجتاز النص بوابة الجودة بدرجة ${result.quality.score} من 100.`;
+    const failedOcr = result.method === "google-vision-ocr" && result.requiresOcr;
+    const extractionStatus: SourceExtractionStatus = result.requiresOcr
+      ? failedOcr ? "فشل" : "يحتاج OCR"
+      : "مكتمل";
+    const message = failedOcr
+      ? "اكتمل تشغيل OCR، لكن النص الناتج لم يجتز بوابة الجودة العربية ويحتاج مراجعة يدوية أو ملفًا أوضح."
+      : result.requiresOcr
+        ? result.quality.message
+        : `${result.method === "google-vision-ocr" ? "تم OCR واستخراج" : "تم استخراج"} ${result.characterCount.toLocaleString("en-US")} حرف من ${result.pageCount} صفحة، واجتاز النص بوابة الجودة بدرجة ${result.quality.score} من 100.`;
     await this.dataRequest(
       `/rest/v1/source_registry?owner_id=eq.${encodedOwner}&id=eq.${encodedSource}`,
       {
@@ -366,7 +421,9 @@ export class CentralSourceStore {
           extraction_preview: result.requiresOcr ? null : result.preview,
           detected_headings: result.requiresOcr ? [] : result.detectedHeadings,
           extracted_at: now,
-          extraction_version: `pdfjs-4.10.38-wathiq-2-${result.quality.qualityGateVersion}`,
+          extraction_version: result.method === "google-vision-ocr"
+            ? `google-cloud-vision-ocr-1-${result.quality.qualityGateVersion}`
+            : `pdfjs-4.10.38-wathiq-2-${result.quality.qualityGateVersion}`,
           updated_at: now,
         }),
       },

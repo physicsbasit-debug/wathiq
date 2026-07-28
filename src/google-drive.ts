@@ -1,6 +1,6 @@
 import type { CentralSourceStore } from "./central-source-store.js";
 import type { WathiqRuntimeConfig } from "./runtime-config.js";
-import type { ManagedSource } from "./types.js";
+import type { ManagedSource, SourceOcrPage } from "./types.js";
 
 export type GoogleDriveConnectionState = "غير مهيأ" | "غير متصل" | "متصل" | "خطأ";
 
@@ -65,6 +65,12 @@ interface EdgePayload {
   completed?: unknown;
   drivePath?: unknown;
   source?: unknown;
+  pageNumber?: unknown;
+  content?: unknown;
+  characterCount?: unknown;
+  confidence?: unknown;
+  provider?: unknown;
+  processedAt?: unknown;
 }
 
 type FetchLike = typeof fetch;
@@ -305,6 +311,39 @@ export class GoogleDriveService {
       method: "POST",
       body: JSON.stringify({ sourceId }),
     })).source);
+  }
+
+  async ocrSourcePage(
+    sourceId: string,
+    pageNumber: number,
+    totalPages: number,
+    image: Blob,
+  ): Promise<SourceOcrPage> {
+    const payload = await this.request("/ocr-page", {
+      method: "POST",
+      headers: {
+        "Content-Type": image.type || "image/jpeg",
+        "x-wathiq-source-id": sourceId,
+        "x-wathiq-page-number": String(pageNumber),
+        "x-wathiq-total-pages": String(totalPages),
+      },
+      body: image,
+    });
+    if (
+      typeof payload.pageNumber !== "number" ||
+      typeof payload.content !== "string" ||
+      typeof payload.characterCount !== "number" ||
+      typeof payload.provider !== "string" ||
+      typeof payload.processedAt !== "string"
+    ) throw new Error("لم ترجع خدمة OCR نتيجة الصفحة بصورة صحيحة.");
+    return {
+      pageNumber: payload.pageNumber,
+      content: payload.content,
+      characterCount: payload.characterCount,
+      confidence: typeof payload.confidence === "number" ? payload.confidence : null,
+      provider: payload.provider,
+      processedAt: payload.processedAt,
+    };
   }
 
   async getPdfSourceAccess(sourceId: string): Promise<PdfSourceAccess> {
