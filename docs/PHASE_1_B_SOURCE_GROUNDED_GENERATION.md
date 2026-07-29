@@ -10,7 +10,7 @@
 2. يبني `buildPlan` مفردات الخطة بلا أسئلة وهمية.
 3. يبني `buildQuestionGenerationRequest` طلبًا يحتوي فقط المراجع المستخدمة في الخطة.
 4. يرسل `QuestionGenerationService` الطلب إلى Supabase Edge Function بجلسة المالك.
-5. تستدعي الوظيفة OpenAI Responses API بمخطط JSON صارم.
+5. تستدعي الوظيفة Gemini Interactions API بمخطط JSON صارم.
 6. يجب أن تعود ثلاثة بدائل لكل مفردة.
 7. تتحقق الوظيفة من:
    - عدد البدائل.

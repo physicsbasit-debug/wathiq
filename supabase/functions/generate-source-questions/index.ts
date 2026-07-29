@@ -2,15 +2,15 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 
 const SUPABASE_URL = requiredEnv("SUPABASE_URL");
 const SUPABASE_SERVICE_ROLE_KEY = requiredEnv("SUPABASE_SERVICE_ROLE_KEY");
-const OPENAI_API_KEY = requiredEnv("OPENAI_API_KEY");
-const OPENAI_MODEL = Deno.env.get("OPENAI_MODEL")?.trim() || "gpt-5-mini";
+const GEMINI_API_KEY = requiredEnv("GEMINI_API_KEY");
+const GEMINI_MODEL = Deno.env.get("GEMINI_MODEL")?.trim() || "gemini-2.5-flash";
 const WATHIQ_APP_URL = requiredEnv("WATHIQ_APP_URL");
 const appOrigin = new URL(WATHIQ_APP_URL).origin;
 const MAX_ITEMS = 15;
 const MAX_REFERENCES = 6;
 const MAX_REFERENCE_CHARACTERS = 4_200;
 const MAX_TOTAL_REFERENCE_CHARACTERS = 24_000;
-const OPENAI_TIMEOUT_MS = 85_000;
+const GEMINI_TIMEOUT_MS = 85_000;
 
 const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
@@ -74,7 +74,7 @@ Deno.serve(async (req) => {
     const generated = await generateAndValidate(request);
     return json(req, {
       items: generated.items,
-      model: OPENAI_MODEL,
+      model: GEMINI_MODEL,
       generatedAt: new Date().toISOString(),
     });
   } catch (error) {
@@ -86,7 +86,7 @@ async function generateAndValidate(request: GenerationRequest): Promise<Generate
   let lastError: unknown = null;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     try {
-      const payload = await callOpenAi(request, attempt > 1);
+      const payload = await callGemini(request, attempt > 1);
       validateGeneratedPayload(payload, request);
       return payload;
     } catch (error) {
@@ -98,50 +98,40 @@ async function generateAndValidate(request: GenerationRequest): Promise<Generate
   throw lastError instanceof Error ? lastError : new Error("تعذر إنشاء أسئلة صالحة من المصدر.");
 }
 
-async function callOpenAi(request: GenerationRequest, repairAttempt: boolean): Promise<GeneratedPayload> {
+async function callGemini(request: GenerationRequest, repairAttempt: boolean): Promise<GeneratedPayload> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), OPENAI_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
   try {
-    const response = await fetch("https://api.openai.com/v1/responses", {
+    const response = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        "x-goog-api-key": GEMINI_API_KEY,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: OPENAI_MODEL,
+        model: GEMINI_MODEL,
+        input: buildUserPrompt(request, repairAttempt),
+        system_instruction: buildSystemInstructions(),
         store: false,
-        max_output_tokens: 20_000,
-        input: [
-          {
-            role: "system",
-            content: buildSystemInstructions(),
-          },
-          {
-            role: "user",
-            content: buildUserPrompt(request, repairAttempt),
-          },
-        ],
-        text: {
-          format: {
-            type: "json_schema",
-            name: "wathiq_source_grounded_questions",
-            strict: true,
-            schema: generationSchema(),
-          },
+        generation_config: {
+          max_output_tokens: 20_000,
+          temperature: 0.2,
+        },
+        response_format: {
+          type: "text",
+          mime_type: "application/json",
+          schema: generationSchema(),
         },
       }),
       signal: controller.signal,
     });
     const payload = await response.json() as unknown;
     if (!response.ok) {
-      const message = openAiError(payload, `تعذر الاتصال بمولد الأسئلة (${response.status}).`);
+      const message = geminiError(payload, `تعذر الاتصال بمولد الأسئلة (${response.status}).`);
       if (response.status >= 500 || response.status === 429) throw retryableError(message);
       throw httpError(message, 400);
     }
-    const refusal = findRefusal(payload);
-    if (refusal) throw httpError(`رفض مولد الأسئلة الطلب: ${refusal}`, 422);
-    const outputText = findOutputText(payload);
+    const outputText = findGeminiOutputText(payload);
     if (!outputText) throw retryableError("لم يُرجع مولد الأسئلة بيانات قابلة للقراءة.");
     try {
       return JSON.parse(outputText) as GeneratedPayload;
@@ -356,37 +346,25 @@ function normalizeForEvidence(value: string): string {
     .toLowerCase();
 }
 
-function findOutputText(payload: unknown): string {
+function findGeminiOutputText(payload: unknown): string {
   const record = asRecord(payload);
   if (!record) return "";
-  if (typeof record.output_text === "string") return record.output_text;
-  if (!Array.isArray(record.output)) return "";
-  for (const item of record.output) {
-    const itemRecord = asRecord(item);
-    if (!Array.isArray(itemRecord?.content)) continue;
-    for (const content of itemRecord.content) {
+  if (typeof record.output_text === "string" && record.output_text.trim()) return record.output_text;
+  if (!Array.isArray(record.steps)) return "";
+  for (const step of record.steps) {
+    const stepRecord = asRecord(step);
+    if (stepRecord?.type !== "model_output" || !Array.isArray(stepRecord.content)) continue;
+    for (const content of stepRecord.content) {
       const contentRecord = asRecord(content);
-      if (contentRecord?.type === "output_text" && typeof contentRecord.text === "string") return contentRecord.text;
+      if (contentRecord?.type === "text" && typeof contentRecord.text === "string" && contentRecord.text.trim()) {
+        return contentRecord.text;
+      }
     }
   }
   return "";
 }
 
-function findRefusal(payload: unknown): string {
-  const record = asRecord(payload);
-  if (!record || !Array.isArray(record.output)) return "";
-  for (const item of record.output) {
-    const itemRecord = asRecord(item);
-    if (!Array.isArray(itemRecord?.content)) continue;
-    for (const content of itemRecord.content) {
-      const contentRecord = asRecord(content);
-      if (contentRecord?.type === "refusal" && typeof contentRecord.refusal === "string") return contentRecord.refusal;
-    }
-  }
-  return "";
-}
-
-function openAiError(payload: unknown, fallback: string): string {
+function geminiError(payload: unknown, fallback: string): string {
   const record = asRecord(payload);
   const error = asRecord(record?.error);
   return typeof error?.message === "string" && error.message ? error.message : fallback;

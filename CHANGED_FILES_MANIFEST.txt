@@ -1,12 +1,11 @@
-واثق Phase 1-B — حزمة الملفات المعدلة فقط
+Wathiq Phase 1-B Fix 1 — Gemini provider
 
-تحتوي هذه الحزمة على ملفات المصدر والاختبارات والتوثيق اللازمة لتوليد أسئلة موثقة من صفحات المصادر.
-لا تحتوي SQL جديدًا، ولا تعدّل GitHub Pages workflow.
+Upload these files to the repository root, preserving folders.
+Branch: fix/phase-1b-gemini-provider
+Commit: fix: use Gemini for source-grounded question generation
 
-الفحص قبل التغليف:
-- npm run check: 163 passed, 0 failed
-- TypeScript للواجهة: PASS
-- TypeScript لملف Edge Function بتعريفات فحص محلية: PASS
-- اختبار خادم المعاينة والملفات المبنية: PASS
-
-بعد الرفع يجب نشر Edge Function وإضافة OPENAI_API_KEY وفق docs/PHASE_1_B_DEPLOYMENT.md.
+Important after merge:
+1) Add GEMINI_API_KEY to Supabase Edge Function secrets.
+2) Optional: GEMINI_MODEL=gemini-2.5-flash
+3) Redeploy generate-source-questions.
+4) Do not add OPENAI_API_KEY.
