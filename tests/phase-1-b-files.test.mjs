@@ -17,18 +17,22 @@ test("Phase 1-B يستبدل الصياغات الوهمية بخدمة تولي
   assert.match(generator, /ثلاثة بدائل لكل مفردة/);
 });
 
-test("Edge Function تستخدم Responses API ومخطط JSON صارم ومفتاحًا سريًا", () => {
-  assert.match(edge, /api\.openai\.com\/v1\/responses/);
-  assert.match(edge, /OPENAI_API_KEY/);
-  assert.match(edge, /text:\s*\{/);
-  assert.match(edge, /type:\s*"json_schema"/);
-  assert.match(edge, /strict:\s*true/);
+test("Edge Function تستخدم Gemini Interactions API ومخطط JSON ومفتاحًا سريًا", () => {
+  assert.match(edge, /generativelanguage\.googleapis\.com\/v1beta\/interactions/);
+  assert.match(edge, /GEMINI_API_KEY/);
+  assert.match(edge, /x-goog-api-key/);
+  assert.match(edge, /system_instruction/);
+  assert.match(edge, /response_format/);
+  assert.match(edge, /mime_type:\s*"application\/json"/);
+  assert.match(edge, /schema:\s*generationSchema\(\)/);
+  assert.match(edge, /store:\s*false/);
   assert.match(edge, /sourceSupport/);
   assert.match(edge, /admin\.auth\.getUser/);
+  assert.doesNotMatch(edge, /OPENAI_API_KEY|api\.openai\.com/);
 });
 
 test("تسجل Supabase الوظيفة الجديدة ويُرفع إصدار واثق", () => {
   assert.match(config, /\[functions\.generate-source-questions\]/);
   assert.match(config, /verify_jwt\s*=\s*false/);
-  assert.equal(pkg.version, "0.0.26");
+  assert.equal(pkg.version, "0.0.27");
 });

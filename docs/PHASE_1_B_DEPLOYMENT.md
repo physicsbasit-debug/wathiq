@@ -6,7 +6,7 @@
 
 لا يوجد SQL جديد في هذه المرحلة.
 
-## 2. إضافة مفتاح OpenAI إلى Supabase
+## 2. إضافة مفتاح Gemini إلى Supabase
 
 من لوحة Supabase:
 
@@ -15,13 +15,13 @@
 3. أضف:
 
 ```text
-OPENAI_API_KEY=ضع_المفتاح_هنا
+GEMINI_API_KEY=ضع_المفتاح_هنا
 ```
 
 اختياريًا:
 
 ```text
-OPENAI_MODEL=gpt-5-mini
+GEMINI_MODEL=gemini-2.5-flash
 ```
 
 لا تضع المفتاح في GitHub أو في متغيرات GitHub Pages أو داخل `runtime-config.js`.
@@ -54,7 +54,7 @@ supabase secrets set WATHIQ_APP_URL="https://physicsbasit-debug.github.io/wathiq
 ## تشخيص الأخطاء
 
 - **يلزم تسجيل دخول مالك المنصة:** الجلسة غير موجودة أو منتهية.
-- **متغير الخادم OPENAI_API_KEY غير مضبوط:** السر لم يُضف إلى Supabase.
+- **متغير الخادم GEMINI_API_KEY غير مضبوط:** السر لم يُضف إلى Supabase.
 - **404 للوظيفة:** لم تُنشر `generate-source-questions` في المشروع الصحيح.
 - **تعذر إثبات الاستناد إلى المصدر:** النموذج لم يُعد دليلًا حرفيًا صالحًا؛ ترفض الوظيفة النتيجة لحماية الجودة.
 - **429 أو تأخر:** حد أو ازدحام في خدمة النموذج؛ أعد المحاولة بعد قليل.
