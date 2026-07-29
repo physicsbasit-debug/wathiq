@@ -113,6 +113,7 @@ Deno.serve(async (req) => {
     if (route === "restore-source" && req.method === "POST") return await handleRestoreSource(req, user.id);
     if (route === "source-file" && req.method === "GET") return await handleSourceFile(req, url, user.id);
     if (route === "ocr-page" && req.method === "POST") return await handleOcrPage(req, user.id);
+    if (route === "ocr-layout-page" && req.method === "GET") return await handleOcrLayoutCache(req, url, user.id);
     if (route === "ocr-layout-page" && req.method === "POST") return await handleOcrLayoutPage(req, user.id);
     return json(req, { error: "المسار المطلوب غير موجود." }, 404);
   } catch (error) {
@@ -353,6 +354,40 @@ async function requestVisionLayout(bytes: Uint8Array, traceId: string): Promise<
   throw httpError(lastMessage, 504);
 }
 
+async function readCachedOcrLayout(
+  ownerId: string,
+  sourceId: string,
+  pageNumber: number,
+): Promise<Record<string, unknown> | null> {
+  const { data: cached, error: cacheError } = await admin.from("source_ocr_pages")
+    .select("layout_json")
+    .eq("owner_id", ownerId)
+    .eq("source_id", sourceId)
+    .eq("page_number", pageNumber)
+    .maybeSingle();
+  if (cacheError) throw new Error(`تعذر فحص التحليل الموضعي المحفوظ: ${cacheError.message}`);
+  return isVisionLayoutPayload(cached?.layout_json) ? cached.layout_json : null;
+}
+
+async function handleOcrLayoutCache(req: Request, url: URL, ownerId: string): Promise<Response> {
+  const traceId = crypto.randomUUID();
+  layoutLog(traceId, "cache_lookup_started");
+  const sourceId = requireText(url.searchParams.get("sourceId"), "معرف المصدر غير موجود.");
+  const pageNumber = requirePositiveInteger(url.searchParams.get("pageNumber"), "رقم صفحة الفهرس غير صالح.");
+  const cachedLayout = await readCachedOcrLayout(ownerId, sourceId, pageNumber);
+  if (!cachedLayout) {
+    layoutLog(traceId, "cache_miss", { sourceId, pageNumber });
+    return json(req, { ok: true, cacheHit: false, traceId });
+  }
+  layoutLog(traceId, "cache_hit", {
+    sourceId,
+    pageNumber,
+    words: Array.isArray(cachedLayout.words) ? cachedLayout.words.length : 0,
+    version: cachedLayout.version,
+  });
+  return json(req, { ...cachedLayout, cacheHit: true, traceId });
+}
+
 async function handleOcrLayoutPage(req: Request, ownerId: string): Promise<Response> {
   const traceId = crypto.randomUUID();
   layoutLog(traceId, "request_started");
@@ -372,29 +407,35 @@ async function handleOcrLayoutPage(req: Request, ownerId: string): Promise<Respo
   if (sourceError) throw new Error(`تعذر التحقق من مصدر الفهرس: ${sourceError.message}`);
   if (!source) throw httpError("المصدر المطلوب غير موجود أو لا يخص هذا الحساب.", 404);
 
-  const { data: cached, error: cacheError } = await admin.from("source_ocr_pages")
-    .select("layout_json")
-    .eq("owner_id", ownerId)
-    .eq("source_id", sourceId)
-    .eq("page_number", pageNumber)
-    .maybeSingle();
-  if (cacheError) throw new Error(`تعذر فحص التحليل الموضعي المحفوظ: ${cacheError.message}`);
-  if (isVisionLayoutPayload(cached?.layout_json)) {
-    layoutLog(traceId, "cache_hit", { sourceId, pageNumber });
-    return json(req, cached.layout_json);
+  const contentType = (req.headers.get("content-type") ?? "").split(";")[0]?.trim();
+  if (contentType !== "image/jpeg" && contentType !== "image/png") {
+    throw httpError("تقبل خدمة تحليل الفهرس صور JPEG أو PNG فقط.", 415);
   }
 
-  const contentType = (req.headers.get("content-type") ?? "").split(";")[0]?.trim();
-  if (contentType !== "image/jpeg" && contentType !== "image/png") throw httpError("تقبل خدمة تحليل الفهرس صور JPEG أو PNG فقط.", 415);
+  // يجب استهلاك جسم POST قبل أي استجابة مبكرة. وإلا قد يظل المتصفح
+  // ينتظر إنهاء رفع الصورة رغم أن الخادم وجد نسخة مخزنة بالفعل.
   const bytes = await readOcrImageBytes(req, traceId);
   if (!bytes.length) throw httpError("صورة صفحة الفهرس فارغة.", 400);
+
+  const cachedLayout = await readCachedOcrLayout(ownerId, sourceId, pageNumber);
+  if (cachedLayout) {
+    layoutLog(traceId, "post_cache_hit_after_body", {
+      sourceId,
+      pageNumber,
+      imageBytes: bytes.length,
+      words: Array.isArray(cachedLayout.words) ? cachedLayout.words.length : 0,
+      version: cachedLayout.version,
+    });
+    return json(req, { ...cachedLayout, cacheHit: true, traceId });
+  }
 
   const payload = await requestVisionLayout(bytes, traceId);
   const result = payload.responses?.[0];
   if (result?.error?.message) throw httpError(result.error.message, result.error.code ?? 502);
   const page = result?.fullTextAnnotation?.pages?.[0];
-  const width = Number(page?.width ?? 0);
-  const height = Number(page?.height ?? 0);
+  if (!page) throw httpError("لم ترجع Google Vision صفحة فهرس قابلة للتحليل.", 502);
+  const width = Number(page.width ?? 0);
+  const height = Number(page.height ?? 0);
   if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) {
     throw httpError("لم ترجع Google Vision أبعاد صفحة الفهرس.", 502);
   }
@@ -404,6 +445,7 @@ async function handleOcrLayoutPage(req: Request, ownerId: string): Promise<Respo
   const layout = {
     ok: true,
     version: 2,
+    cacheHit: false,
     traceId,
     pageNumber,
     width,
@@ -736,20 +778,30 @@ async function handleCancelUpload(req: Request, ownerId: string): Promise<Respon
 async function handleArchiveSource(req: Request, ownerId: string): Promise<Response> {
   const sourceId = requireText((await req.json() as Record<string, unknown>).sourceId, "معرف المصدر غير موجود.");
   const row = await getSourceRow(ownerId, sourceId);
-  if (!row.drive_file_id) throw httpError("هذا المصدر لا يحتوي ملفًا مرفوعًا في Drive.", 409);
+  if (typeof row.drive_file_id !== "string" || !row.drive_file_id.trim()) {
+    throw httpError("هذا المصدر لا يحتوي ملفًا مرفوعًا في Drive.", 409);
+  }
+  const driveFileId = row.drive_file_id.trim();
   const connection = await requireConnection(ownerId);
   const accessToken = await validAccessToken(connection);
   const archiveId = connection.folder_map?.archive;
   if (!archiveId) throw new Error("مجلد الأرشيف غير جاهز.");
-  const currentParent = row.drive_parent_folder_id || row.drive_original_parent_folder_id;
+  const currentParent = typeof row.drive_parent_folder_id === "string" && row.drive_parent_folder_id.trim()
+    ? row.drive_parent_folder_id.trim()
+    : typeof row.drive_original_parent_folder_id === "string" && row.drive_original_parent_folder_id.trim()
+      ? row.drive_original_parent_folder_id.trim()
+      : "";
   if (!currentParent) throw new Error("تعذر تحديد المجلد الحالي للملف.");
-  await moveDriveFile(accessToken, row.drive_file_id, currentParent, archiveId);
+  await moveDriveFile(accessToken, driveFileId, currentParent, archiveId);
   const now = new Date().toISOString();
+  const originalParentId = typeof row.drive_original_parent_folder_id === "string" && row.drive_original_parent_folder_id.trim()
+    ? row.drive_original_parent_folder_id.trim()
+    : currentParent;
   const updated = {
     status: "مؤرشف",
     upload_state: "مؤرشف",
     drive_parent_folder_id: archiveId,
-    drive_original_parent_folder_id: row.drive_original_parent_folder_id || currentParent,
+    drive_original_parent_folder_id: originalParentId,
     updated_at: now,
   };
   const { data, error } = await admin.from("source_registry").update(updated).eq("owner_id", ownerId).eq("id", sourceId).select("*").single();
@@ -760,18 +812,27 @@ async function handleArchiveSource(req: Request, ownerId: string): Promise<Respo
 async function handleRestoreSource(req: Request, ownerId: string): Promise<Response> {
   const sourceId = requireText((await req.json() as Record<string, unknown>).sourceId, "معرف المصدر غير موجود.");
   const row = await getSourceRow(ownerId, sourceId);
-  if (!row.drive_file_id || !row.drive_original_parent_folder_id) throw httpError("بيانات استعادة الملف غير مكتملة.", 409);
+  if (typeof row.drive_file_id !== "string" || !row.drive_file_id.trim()) {
+    throw httpError("بيانات استعادة الملف غير مكتملة.", 409);
+  }
+  if (typeof row.drive_original_parent_folder_id !== "string" || !row.drive_original_parent_folder_id.trim()) {
+    throw httpError("بيانات استعادة الملف غير مكتملة.", 409);
+  }
+  const driveFileId = row.drive_file_id.trim();
+  const originalParentId = row.drive_original_parent_folder_id.trim();
   const connection = await requireConnection(ownerId);
   const accessToken = await validAccessToken(connection);
-  const currentParent = row.drive_parent_folder_id || connection.folder_map?.archive;
+  const currentParent = typeof row.drive_parent_folder_id === "string" && row.drive_parent_folder_id.trim()
+    ? row.drive_parent_folder_id.trim()
+    : connection.folder_map?.archive;
   if (!currentParent) throw new Error("تعذر تحديد مجلد الأرشيف.");
-  await moveDriveFile(accessToken, row.drive_file_id, currentParent, row.drive_original_parent_folder_id);
+  await moveDriveFile(accessToken, driveFileId, currentParent, originalParentId);
   const now = new Date().toISOString();
   const restoredStatus = row.extraction_status === "مكتمل" ? "مفهرس" : row.extraction_status === "يحتاج OCR" || row.extraction_status === "فشل" ? "يحتاج مراجعة" : "جاهز للفهرسة";
   const { data, error } = await admin.from("source_registry").update({
     status: restoredStatus,
     upload_state: "مرفوع",
-    drive_parent_folder_id: row.drive_original_parent_folder_id,
+    drive_parent_folder_id: originalParentId,
     updated_at: now,
   }).eq("owner_id", ownerId).eq("id", sourceId).select("*").single();
   if (error) throw new Error(`تعذر استعادة المصدر: ${error.message}`);
@@ -1191,6 +1252,7 @@ function corsHeaders(req: Request): HeadersInit {
     "Access-Control-Allow-Origin": origin === appOrigin ? origin : appOrigin,
     "Access-Control-Allow-Headers": "authorization, apikey, content-type, range, x-wathiq-upload-id, x-wathiq-upload-start, x-wathiq-upload-end, x-wathiq-upload-total, x-wathiq-source-id, x-wathiq-page-number, x-wathiq-total-pages",
     "Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
+    "Cache-Control": "no-store",
     Vary: "Origin",
   };
 }

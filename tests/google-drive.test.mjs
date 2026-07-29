@@ -296,3 +296,48 @@ test("يوقف طلب OCR الموضعي إذا علقت Edge Function بدل إ
   );
   assert.equal(aborted, true);
 });
+
+
+test("يفحص كاش OCR الموضعي بطلب GET بلا صورة", async () => {
+  const calls = [];
+  const fetcher = async (url, init = {}) => {
+    calls.push({ url: String(url), init });
+    return Response.json({
+      ok: true,
+      cacheHit: true,
+      version: 2,
+      pageNumber: 12,
+      width: 1200,
+      height: 1700,
+      words: [{ text: "المحتويات", xMin: 800, yMin: 40, xMax: 1000, yMax: 80, confidence: 0.98 }],
+      provider: "google-cloud-vision-positional",
+      processedAt: "2026-07-29T10:00:00.000Z",
+    });
+  };
+  const service = new GoogleDriveService(config, centralStore, fetcher);
+  const cached = await service.getCachedSourceLayoutPage("source-cache", 12);
+  assert.equal(cached?.pageNumber, 12);
+  assert.equal(cached?.words[0]?.text, "المحتويات");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].init.method, "GET");
+  assert.equal(calls[0].init.body, undefined);
+  assert.match(calls[0].url, /\/ocr-layout-page\?/);
+  assert.match(calls[0].url, /sourceId=source-cache/);
+  assert.match(calls[0].url, /pageNumber=12/);
+});
+
+test("يعيد null عند غياب كاش OCR الموضعي دون إرسال صورة", async () => {
+  const fetcher = async (_url, init = {}) => {
+    assert.equal(init.method, "GET");
+    assert.equal(init.body, undefined);
+    return Response.json({ ok: true, cacheHit: false });
+  };
+  const service = new GoogleDriveService(config, centralStore, fetcher);
+  assert.equal(await service.getCachedSourceLayoutPage("source-miss", 12), null);
+});
+
+test("يتوافق مؤقتًا مع Edge Function القديمة إذا لم يكن مسار فحص الكاش منشورًا", async () => {
+  const fetcher = async () => Response.json({ error: "المسار المطلوب غير موجود." }, { status: 404 });
+  const service = new GoogleDriveService(config, centralStore, fetcher);
+  assert.equal(await service.getCachedSourceLayoutPage("source-old-edge", 12), null);
+});
