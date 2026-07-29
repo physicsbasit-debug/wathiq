@@ -721,9 +721,9 @@ export function shouldQuarantineLegacyStructureDraft(nodes: SourceStructureNode[
     || (nodes.length >= 15 && unitRatio >= 0.7);
 }
 
-export function validateSourceStructure(nodes: SourceStructureNode[]): SourceStructureValidation {
+export function validateSourceStructureDraft(nodes: SourceStructureNode[]): SourceStructureValidation {
   const issues: string[] = [];
-  if (!nodes.length) issues.push("لا يوجد هيكل لاعتماده.");
+  if (!nodes.length) issues.push("لا يوجد هيكل لحفظه.");
   if (!nodes.some((node) => node.nodeType === "وحدة")) issues.push("يجب أن يحتوي الهيكل على وحدة واحدة على الأقل.");
   const ids = new Set(nodes.map((node) => node.id));
   nodes.forEach((node) => {
@@ -740,12 +740,26 @@ export function validateSourceStructure(nodes: SourceStructureNode[]): SourceStr
     if (duplicateKeys.has(key)) issues.push(`العنوان مكرر داخل المستوى نفسه: ${node.title}.`);
     duplicateKeys.add(key);
   });
-  const automaticUnits = nodes
-    .filter((node) => node.nodeType === "وحدة" && node.extractionMethod.startsWith("toc-"))
+  return { valid: issues.length === 0, issues: [...new Set(issues)] };
+}
+
+function lessonCodeParts(value: string): [number, number] | null {
+  const normalized = normalizeArabicDigits(value);
+  const match = normalized.match(/^(\d{1,2})\s*[-–—‑ـ_/:：.،\\|]\s*(\d{1,2})(?:\s|$)/);
+  if (!match?.[1] || !match[2]) return null;
+  return [Number(match[1]), Number(match[2])];
+}
+
+export function validateSourceStructureForApproval(nodes: SourceStructureNode[]): SourceStructureValidation {
+  const issues = [...validateSourceStructureDraft(nodes).issues];
+  const roots = nodes.filter((node) => node.nodeType === "وحدة" && node.parentId === null)
+    .sort((left, right) => left.orderIndex - right.orderIndex);
+  const automaticUnits = roots
+    .filter((node) => node.extractionMethod.startsWith("toc-"))
     .map((node) => ({ node, ordinal: parseUnitOrdinal(node.title) }))
     .filter((item): item is { node: SourceStructureNode; ordinal: number } => item.ordinal !== null)
     .sort((left, right) => left.ordinal - right.ordinal);
-  if (automaticUnits.length >= 4) {
+  if (automaticUnits.length >= 2) {
     for (let index = 1; index < automaticUnits.length; index += 1) {
       const previous = automaticUnits[index - 1];
       const current = automaticUnits[index];
@@ -754,7 +768,46 @@ export function validateSourceStructure(nodes: SourceStructureNode[]): SourceStr
       }
     }
   }
+
+  const globalPages: number[] = [];
+  roots.forEach((root) => {
+    const children = nodes.filter((node) => node.parentId === root.id)
+      .sort((left, right) => left.orderIndex - right.orderIndex);
+    if (!children.length) issues.push(`الوحدة «${root.title}» بلا دروس أو عناصر تابعة.`);
+    children.forEach((child) => globalPages.push(child.pageStart));
+
+    const lessonChildren = children.filter((child) => child.nodeType === "درس");
+    const codes = lessonChildren.map((child) => lessonCodeParts(child.title));
+    const rootOrdinal = parseUnitOrdinal(root.title);
+    if (codes.some(Boolean)) {
+      const seenCodes = new Set<string>();
+      codes.forEach((code, index) => {
+        if (!code) {
+          issues.push(`درس في الوحدة «${root.title}» بلا رمز واضح.`);
+          return;
+        }
+        const expectedLesson = index + 1;
+        if (code[0] !== expectedLesson) issues.push(`تسلسل دروس الوحدة «${root.title}» ناقص عند الدرس ${expectedLesson}.`);
+        if (rootOrdinal !== null && code[1] !== rootOrdinal) issues.push(`رمز الدرس ${code[0]}-${code[1]} لا يطابق رقم الوحدة «${root.title}».`);
+        const key = `${code[0]}-${code[1]}`;
+        if (seenCodes.has(key)) issues.push(`رمز الدرس مكرر داخل الوحدة «${root.title}»: ${key}.`);
+        seenCodes.add(key);
+      });
+    }
+  });
+  for (let index = 1; index < globalPages.length; index += 1) {
+    const previous = globalPages[index - 1] ?? 0;
+    const current = globalPages[index] ?? 0;
+    if (current < previous) {
+      issues.push("أرقام صفحات الدروس ليست متصاعدة وفق ترتيب الهيكل.");
+      break;
+    }
+  }
   return { valid: issues.length === 0, issues: [...new Set(issues)] };
+}
+
+export function validateSourceStructure(nodes: SourceStructureNode[]): SourceStructureValidation {
+  return validateSourceStructureForApproval(nodes);
 }
 
 export function createManualStructureNode(

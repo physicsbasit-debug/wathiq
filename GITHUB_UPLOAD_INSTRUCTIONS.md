@@ -1,7 +1,9 @@
-# رفع Phase 0-H1 Rebuild 2 Fix 3
+# رفع Phase 0-H2 — Structured TOC Builder
 
-- الفرع: `fix/phase-0-h1-spatial-lesson-recovery`
-- رسالة commit: `fix: استرداد دروس الفهرس عند تشويه رموز OCR`
-- ارفع محتويات الحزمة فوق جذر المستودع مع الحفاظ على المجلدات.
+- أنشئ فرعًا من `main` باسم: `feat/phase-0-h2-structured-toc-builder`
+- ارفع محتويات حزمة **Changed Files Only** فوق جذر المستودع مع الحفاظ على المجلدات.
+- رسالة commit المقترحة: `feat: إضافة منشئ فهرس منظم قابل للمراجعة`
 - انتظر نجاح GitHub Actions قبل الدمج.
-- لا يوجد SQL، ولا Edge Function، ولا تعديل على `.github/workflows/pages.yml`.
+- لا يوجد SQL جديد.
+- لا يوجد تحديث Edge Function.
+- لا يوجد تعديل على `.github/workflows/pages.yml`.

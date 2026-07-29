@@ -6,15 +6,15 @@ const app = await readFile(new URL("../src/app.ts", import.meta.url), "utf8");
 const structure = await readFile(new URL("../src/source-structure.ts", import.meta.url), "utf8");
 const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 
-test("تعلن الواجهة إعادة البناء المرجعية", () => {
-  assert.match(app, /Phase 0-H1 Rebuild (?:1|2)/);
+test("تعلن الواجهة المرحلة الجديدة دون حذف التوافق السابق", () => {
+  assert.match(app, /Phase 0-H2/);
 });
 
-test("يعطل المحرك fallback تلقائيًا ويستخدم الإصدار المرجعي", () => {
+test("يبقى fallback القديم معطلًا افتراضيًا", () => {
   assert.match(structure, /toc-golden-4/);
   assert.match(structure, /allowUnitHeadingFallback === true/);
 });
 
-test("يرفع إصدار واثق إلى Rebuild 1", () => {
+test("يرفع إصدار واثق بعد Rebuild 1", () => {
   assert.ok(Number(packageJson.version.split(".").at(-1)) >= 18);
 });
