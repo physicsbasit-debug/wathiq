@@ -34,5 +34,5 @@ test("تضيف Edge Function مسار إحداثيات الكلمات وتخزن
 });
 
 test("يرفع إصدار واثق إلى Rebuild 2", () => {
-  assert.equal(packageJson.version, "0.0.20");
+  assert.ok(Number(packageJson.version.split(".").at(-1)) >= 20);
 });

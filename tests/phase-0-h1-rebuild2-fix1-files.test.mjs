@@ -40,5 +40,5 @@ test("يخفض حجم صورة الفهرس مع إبقاء دقة كافية", 
 });
 
 test("يرفع الإصدار إلى Fix 1", () => {
-  assert.equal(packageJson.version, "0.0.20");
+  assert.ok(Number(packageJson.version.split(".").at(-1)) >= 20);
 });

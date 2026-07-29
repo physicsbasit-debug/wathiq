@@ -739,7 +739,7 @@ function renderSourceStructurePanel(source: ManagedSource): string {
     return `<section class="source-structure-card loading"><div><span class="eyebrow">هيكل الكتاب</span><h3>${state.structureBusy ? "جارٍ تحميل الهيكل…" : "جارٍ التحقق من الهيكل المحفوظ…"}</h3><p>${escapeHtml(state.structureMessage || "انتظر لحظة؛ لا توجد طقوس إضافية مطلوبة.")}</p></div></section>`;
   }
   if (!state.structureNodes.length) {
-    return `<section class="source-structure-card empty"><div><span class="eyebrow">Phase 0-H1 Rebuild 2</span><h3>لم يُعثر على هيكل موثوق بعد</h3><p>${escapeHtml(state.structureMessage || "سيقبل واثق الهيكل فقط بعد اجتياز التحقق المرجعي: وحدات مكتملة، دروس مرتبطة، وأرقام صفحات منفصلة عن العناوين.")}</p></div><div class="structure-empty-actions"><button class="primary-btn compact" data-action="extract-source-structure" data-source-id="${source.id}" ${state.structureBusy ? "disabled" : ""}>${state.structureBusy ? "جارٍ الاستخراج…" : "تحليل الفهرس بصريًا"}</button>${renderManualTocControls(source)}<button class="ghost-btn compact" data-action="add-structure-unit" data-source-id="${source.id}" ${state.structureBusy ? "disabled" : ""}>إضافة وحدة يدويًا</button></div></section>`;
+    return `<section class="source-structure-card empty"><div><span class="eyebrow">Phase 0-H1 Rebuild 2 Fix 2</span><h3>لم يُعثر على هيكل موثوق بعد</h3><p>${escapeHtml(state.structureMessage || "سيقبل واثق الهيكل فقط بعد اجتياز التحقق المرجعي: وحدات مكتملة، دروس مرتبطة، وأرقام صفحات منفصلة عن العناوين.")}</p></div><div class="structure-empty-actions"><button class="primary-btn compact" data-action="extract-source-structure" data-source-id="${source.id}" ${state.structureBusy ? "disabled" : ""}>${state.structureBusy ? "جارٍ الاستخراج…" : "تحليل الفهرس بصريًا"}</button>${renderManualTocControls(source)}<button class="ghost-btn compact" data-action="add-structure-unit" data-source-id="${source.id}" ${state.structureBusy ? "disabled" : ""}>إضافة وحدة يدويًا</button></div></section>`;
   }
   const validation = validateSourceStructure(state.structureNodes);
   const approved = state.structureNodes.every((node) => node.reviewStatus === "معتمد");
@@ -1612,6 +1612,10 @@ async function extractAndSaveSourceStructure(sourceId: string, replaceExisting =
           pageNumber,
           requestTotalPages,
           image,
+        ),
+        ({ sourceId: requestSourceId, pageNumber }) => googleDriveService.getCachedSourceLayoutPage(
+          requestSourceId,
+          pageNumber,
         ),
         (progress) => {
           state.structureMessage = progress.message;

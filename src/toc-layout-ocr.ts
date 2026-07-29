@@ -59,7 +59,13 @@ export interface TocLayoutPageRequest {
   image: Blob;
 }
 
+export interface TocLayoutCacheRequest {
+  sourceId: string;
+  pageNumber: number;
+}
+
 export type TocLayoutPageSender = (request: TocLayoutPageRequest) => Promise<SourceOcrLayoutPage>;
+export type TocLayoutCacheReader = (request: TocLayoutCacheRequest) => Promise<SourceOcrLayoutPage | null>;
 type PdfJsLoader = () => Promise<PdfJsLike>;
 type PageRenderer = (page: PdfPageLike) => Promise<Blob>;
 
@@ -110,6 +116,7 @@ export async function extractPositionalTocLayouts(
   access: TocPdfAccess,
   selectedPages: number[],
   sendPage: TocLayoutPageSender,
+  readCachedPage?: TocLayoutCacheReader,
   onProgress?: (progress: TocLayoutProgress) => void,
   loadPdfJs: PdfJsLoader = defaultPdfJsLoader,
   renderPage: PageRenderer = renderPageToJpeg,
@@ -117,6 +124,35 @@ export async function extractPositionalTocLayouts(
   const uniquePages = [...new Set(selectedPages)].filter((page) => Number.isSafeInteger(page) && page > 0).sort((a, b) => a - b);
   if (!uniquePages.length) throw new Error("لم تُحدَّد صفحات فهرس صالحة للتحليل البصري.");
   if (uniquePages.length > 4) throw new Error("يمكن تحليل أربع صفحات فهرس كحد أقصى في العملية الواحدة.");
+
+  const cachedByPage = new Map<number, SourceOcrLayoutPage>();
+  if (readCachedPage) {
+    for (let index = 0; index < uniquePages.length; index += 1) {
+      const pageNumber = uniquePages[index];
+      if (!pageNumber) continue;
+      onProgress?.({
+        pageNumber,
+        totalSelected: uniquePages.length,
+        completed: cachedByPage.size,
+        message: `جارٍ فحص التحليل البصري المحفوظ لصفحة الفهرس ${pageNumber}…`,
+      });
+      const cached = await readCachedPage({ sourceId, pageNumber });
+      if (!cached) continue;
+      if (cached.pageNumber !== pageNumber) throw new Error("رقم صفحة التحليل البصري المحفوظ لا يطابق الصفحة المطلوبة.");
+      cachedByPage.set(pageNumber, cached);
+    }
+    if (cachedByPage.size === uniquePages.length) {
+      const cachedLayouts = uniquePages.map((pageNumber) => cachedByPage.get(pageNumber)).filter((layout): layout is SourceOcrLayoutPage => Boolean(layout));
+      const lastPage = uniquePages.at(-1) ?? 1;
+      onProgress?.({
+        pageNumber: lastPage,
+        totalSelected: uniquePages.length,
+        completed: uniquePages.length,
+        message: `استُخدم التحليل البصري المحفوظ لصفحات الفهرس دون إعادة تحميل PDF أو رفع الصور.`,
+      });
+      return cachedLayouts;
+    }
+  }
 
   const pdfjs = await loadPdfJs();
   const loadingTask = pdfjs.getDocument({
@@ -136,6 +172,18 @@ export async function extractPositionalTocLayouts(
     for (let index = 0; index < uniquePages.length; index += 1) {
       const pageNumber = uniquePages[index];
       if (!pageNumber) continue;
+      const cached = cachedByPage.get(pageNumber);
+      if (cached) {
+        layouts.push(cached);
+        onProgress?.({
+          pageNumber,
+          totalSelected: uniquePages.length,
+          completed: index + 1,
+          message: `استُخدم التحليل البصري المحفوظ لصفحة الفهرس ${pageNumber}.`,
+        });
+        continue;
+      }
+
       onProgress?.({
         pageNumber,
         totalSelected: uniquePages.length,
@@ -143,10 +191,13 @@ export async function extractPositionalTocLayouts(
         message: `جارٍ تحليل مواضع النص في صفحة الفهرس ${pageNumber}…`,
       });
       const page = await pdf.getPage(pageNumber);
-      const image = await renderPage(page);
-      const layout = await sendPage({ sourceId, pageNumber, totalPages: pdf.numPages, image });
-      layouts.push(layout);
-      page.cleanup?.();
+      try {
+        const image = await renderPage(page);
+        const layout = await sendPage({ sourceId, pageNumber, totalPages: pdf.numPages, image });
+        layouts.push(layout);
+      } finally {
+        page.cleanup?.();
+      }
       onProgress?.({
         pageNumber,
         totalSelected: uniquePages.length,

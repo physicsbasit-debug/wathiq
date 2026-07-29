@@ -74,6 +74,9 @@ interface EdgePayload {
   width?: unknown;
   height?: unknown;
   words?: unknown;
+  cacheHit?: unknown;
+  traceId?: unknown;
+  version?: unknown;
 }
 
 type FetchLike = typeof fetch;
@@ -82,6 +85,7 @@ const PENDING_UPLOAD_KEY = "wathiq.phase0f2.pendingSourceUpload";
 export const SOURCE_UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024;
 export const MAX_SOURCE_PDF_BYTES = 500 * 1024 * 1024;
 export const LAYOUT_OCR_REQUEST_TIMEOUT_MS = 110_000;
+export const LAYOUT_OCR_CACHE_TIMEOUT_MS = 20_000;
 
 function payloadMessage(payload: unknown, fallback: string): string {
   if (typeof payload !== "object" || payload === null) return fallback;
@@ -111,6 +115,49 @@ function parseStatus(payload: EdgePayload): GoogleDriveStatus {
     folders: parseFolders(payload.folders),
     connectedAt: typeof payload.connectedAt === "string" ? payload.connectedAt : "",
     updatedAt: typeof payload.updatedAt === "string" ? payload.updatedAt : "",
+  };
+}
+
+function parseSourceOcrLayoutPayload(
+  payload: EdgePayload,
+  invalidMessage = "لم ترجع خدمة OCR الموضعي نتيجة الصفحة بصورة صحيحة.",
+): SourceOcrLayoutPage {
+  if (
+    typeof payload.pageNumber !== "number" ||
+    typeof payload.width !== "number" ||
+    typeof payload.height !== "number" ||
+    !Array.isArray(payload.words) ||
+    typeof payload.provider !== "string" ||
+    typeof payload.processedAt !== "string"
+  ) throw new Error(invalidMessage);
+
+  const words = payload.words.flatMap((raw): SourceOcrLayoutWord[] => {
+    if (typeof raw !== "object" || raw === null) return [];
+    const word = raw as Record<string, unknown>;
+    if (
+      typeof word.text !== "string" ||
+      typeof word.xMin !== "number" ||
+      typeof word.yMin !== "number" ||
+      typeof word.xMax !== "number" ||
+      typeof word.yMax !== "number"
+    ) return [];
+    return [{
+      text: word.text,
+      xMin: word.xMin,
+      yMin: word.yMin,
+      xMax: word.xMax,
+      yMax: word.yMax,
+      confidence: typeof word.confidence === "number" ? word.confidence : null,
+    }];
+  });
+  if (!words.length) throw new Error("لم ترجع خدمة OCR الموضعي كلمات قابلة للتحليل.");
+  return {
+    pageNumber: payload.pageNumber,
+    width: payload.width,
+    height: payload.height,
+    words,
+    provider: payload.provider,
+    processedAt: payload.processedAt,
   };
 }
 
@@ -356,6 +403,30 @@ export class GoogleDriveService {
   }
 
 
+  async getCachedSourceLayoutPage(
+    sourceId: string,
+    pageNumber: number,
+  ): Promise<SourceOcrLayoutPage | null> {
+    const query = new URLSearchParams({
+      sourceId,
+      pageNumber: String(pageNumber),
+    });
+    try {
+      const payload = await this.request(
+        `/ocr-layout-page?${query.toString()}`,
+        { method: "GET" },
+        LAYOUT_OCR_CACHE_TIMEOUT_MS,
+        "تأخر فحص التحليل البصري المحفوظ. أعد المحاولة.",
+      );
+      if (payload.cacheHit !== true) return null;
+      return parseSourceOcrLayoutPayload(payload, "التحليل البصري المحفوظ غير صالح.");
+    } catch (error) {
+      // توافق مؤقت أثناء نشر الواجهة قبل تحديث Edge Function القديمة.
+      if (error instanceof Error && error.message.includes("المسار المطلوب غير موجود")) return null;
+      throw error;
+    }
+  }
+
   async ocrSourceLayoutPage(
     sourceId: string,
     pageNumber: number,
@@ -372,42 +443,7 @@ export class GoogleDriveService {
       },
       body: image,
     }, this.layoutOcrTimeoutMs, "توقفت خدمة التحليل البصري عن الاستجابة. أعد المحاولة؛ لن تبقى الصفحة معلقة.");
-    if (
-      typeof payload.pageNumber !== "number" ||
-      typeof payload.width !== "number" ||
-      typeof payload.height !== "number" ||
-      !Array.isArray(payload.words) ||
-      typeof payload.provider !== "string" ||
-      typeof payload.processedAt !== "string"
-    ) throw new Error("لم ترجع خدمة OCR الموضعي نتيجة الصفحة بصورة صحيحة.");
-    const words = payload.words.flatMap((raw): SourceOcrLayoutWord[] => {
-      if (typeof raw !== "object" || raw === null) return [];
-      const word = raw as Record<string, unknown>;
-      if (
-        typeof word.text !== "string" ||
-        typeof word.xMin !== "number" ||
-        typeof word.yMin !== "number" ||
-        typeof word.xMax !== "number" ||
-        typeof word.yMax !== "number"
-      ) return [];
-      return [{
-        text: word.text,
-        xMin: word.xMin,
-        yMin: word.yMin,
-        xMax: word.xMax,
-        yMax: word.yMax,
-        confidence: typeof word.confidence === "number" ? word.confidence : null,
-      }];
-    });
-    if (!words.length) throw new Error("لم ترجع خدمة OCR الموضعي كلمات قابلة للتحليل.");
-    return {
-      pageNumber: payload.pageNumber,
-      width: payload.width,
-      height: payload.height,
-      words,
-      provider: payload.provider,
-      processedAt: payload.processedAt,
-    };
+    return parseSourceOcrLayoutPayload(payload);
   }
 
   async getPdfSourceAccess(sourceId: string): Promise<PdfSourceAccess> {
