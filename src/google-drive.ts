@@ -81,6 +81,7 @@ const browserFetch: FetchLike = (input, init) => globalThis.fetch(input, init);
 const PENDING_UPLOAD_KEY = "wathiq.phase0f2.pendingSourceUpload";
 export const SOURCE_UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024;
 export const MAX_SOURCE_PDF_BYTES = 500 * 1024 * 1024;
+export const LAYOUT_OCR_REQUEST_TIMEOUT_MS = 110_000;
 
 function payloadMessage(payload: unknown, fallback: string): string {
   if (typeof payload !== "object" || payload === null) return fallback;
@@ -185,6 +186,7 @@ export class GoogleDriveService {
     private readonly centralStore: CentralSourceStore,
     private readonly fetcher: FetchLike = browserFetch,
     private readonly chunkSizeBytes = SOURCE_UPLOAD_CHUNK_BYTES,
+    private readonly layoutOcrTimeoutMs = LAYOUT_OCR_REQUEST_TIMEOUT_MS,
   ) {
     this.endpoint = `${config.supabaseUrl}/functions/v1/google-drive-oauth`;
   }
@@ -369,7 +371,7 @@ export class GoogleDriveService {
         "x-wathiq-total-pages": String(totalPages),
       },
       body: image,
-    });
+    }, this.layoutOcrTimeoutMs, "توقفت خدمة التحليل البصري عن الاستجابة. أعد المحاولة؛ لن تبقى الصفحة معلقة.");
     if (
       typeof payload.pageNumber !== "number" ||
       typeof payload.width !== "number" ||
@@ -443,28 +445,43 @@ export class GoogleDriveService {
     });
   }
 
-  private async request(path: string, init: RequestInit): Promise<EdgePayload> {
+  private async request(
+    path: string,
+    init: RequestInit,
+    timeoutMs?: number,
+    timeoutMessage = "انتهت مهلة الاتصال بالخدمة.",
+  ): Promise<EdgePayload> {
     const session = await this.centralStore.getActiveSession();
-    const response = await this.fetcher(`${this.endpoint}${path}`, {
-      ...init,
-      headers: {
-        apikey: this.config.supabasePublishableKey,
-        Authorization: `Bearer ${session.accessToken}`,
-        ...(init.headers ?? {}),
-      },
-    });
-    let payload: EdgePayload = {};
-    const text = await response.text();
-    if (text) {
-      try {
-        payload = JSON.parse(text) as EdgePayload;
-      } catch {
-        throw new Error("استجابة خدمة Google Drive غير صالحة.");
+    const controller = timeoutMs ? new AbortController() : null;
+    const timeoutId = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+    try {
+      const response = await this.fetcher(`${this.endpoint}${path}`, {
+        ...init,
+        ...(controller ? { signal: controller.signal } : {}),
+        headers: {
+          apikey: this.config.supabasePublishableKey,
+          Authorization: `Bearer ${session.accessToken}`,
+          ...(init.headers ?? {}),
+        },
+      });
+      let payload: EdgePayload = {};
+      const text = await response.text();
+      if (text) {
+        try {
+          payload = JSON.parse(text) as EdgePayload;
+        } catch {
+          throw new Error("استجابة خدمة Google Drive غير صالحة.");
+        }
       }
+      if (!response.ok) {
+        throw new Error(payloadMessage(payload, `تعذر الاتصال بخدمة Google Drive (${response.status}).`));
+      }
+      return payload;
+    } catch (error) {
+      if (controller?.signal.aborted) throw new Error(timeoutMessage);
+      throw error;
+    } finally {
+      if (timeoutId !== null) clearTimeout(timeoutId);
     }
-    if (!response.ok) {
-      throw new Error(payloadMessage(payload, `تعذر الاتصال بخدمة Google Drive (${response.status}).`));
-    }
-    return payload;
   }
 }

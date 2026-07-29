@@ -12,6 +12,10 @@ const FOLDER_MIME = "application/vnd.google-apps.folder";
 const PDF_MIME = "application/pdf";
 const MAX_SOURCE_PDF_BYTES = 500 * 1024 * 1024;
 const MAX_OCR_IMAGE_BYTES = 10 * 1024 * 1024;
+const OCR_BODY_READ_TIMEOUT_MS = 20_000;
+const VISION_REQUEST_TIMEOUT_MS = 40_000;
+const VISION_REQUEST_ATTEMPTS = 2;
+const VISION_RETRY_DELAY_MS = 500;
 const appOrigin = new URL(WATHIQ_APP_URL).origin;
 
 const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
@@ -220,8 +224,138 @@ interface VisionAnnotationResult {
   textAnnotations?: Array<{ description?: string }>;
   error?: { message?: string; code?: number };
 }
+interface VisionApiPayload {
+  responses?: VisionAnnotationResult[];
+  error?: { message?: string };
+}
+
+function layoutLog(traceId: string, stage: string, details: Record<string, unknown> = {}): void {
+  console.log(JSON.stringify({ event: "wathiq_ocr_layout", traceId, stage, ...details }));
+}
+
+function isRetryableVisionStatus(status: number): boolean {
+  return status === 408 || status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
+}
+
+async function delay(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string, status = 408): Promise<T> {
+  let timeoutId: number | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_resolve, reject) => {
+        timeoutId = setTimeout(() => reject(httpError(message, status)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+  }
+}
+
+async function readOcrImageBytes(req: Request, traceId: string): Promise<Uint8Array> {
+  if (!req.body) return new Uint8Array();
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  const deadline = Date.now() + OCR_BODY_READ_TIMEOUT_MS;
+  try {
+    while (true) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw httpError("انتهت مهلة رفع صورة صفحة الفهرس.", 408);
+      const result = await withTimeout(reader.read(), remaining, "انتهت مهلة رفع صورة صفحة الفهرس.");
+      if (result.done) break;
+      if (!result.value?.byteLength) continue;
+      total += result.value.byteLength;
+      if (total > MAX_OCR_IMAGE_BYTES) throw httpError("صورة صفحة الفهرس تتجاوز 10 ميجابايت.", 413);
+      chunks.push(result.value);
+    }
+  } catch (error) {
+    layoutLog(traceId, "request_body_failed", { totalBytes: total, error: errorMessage(error) });
+    await reader.cancel().catch(() => undefined);
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  layoutLog(traceId, "request_body_read", { imageBytes: total });
+  return bytes;
+}
+
+async function requestVisionLayout(bytes: Uint8Array, traceId: string): Promise<VisionApiPayload> {
+  const requestBody = JSON.stringify({
+    requests: [{
+      image: { content: bytesToBase64(bytes) },
+      features: [{ type: "DOCUMENT_TEXT_DETECTION" }],
+      imageContext: { languageHints: ["ar", "en"] },
+    }],
+  });
+  let lastMessage = "تعذر الاتصال بخدمة Google Vision.";
+  for (let attempt = 1; attempt <= VISION_REQUEST_ATTEMPTS; attempt += 1) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), VISION_REQUEST_TIMEOUT_MS);
+    try {
+      layoutLog(traceId, "vision_request_started", { attempt, requestBytes: requestBody.length });
+      const response = await fetch(
+        `https://vision.googleapis.com/v1/images:annotate?key=${encodeURIComponent(GOOGLE_CLOUD_VISION_API_KEY)}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: requestBody,
+          signal: controller.signal,
+        },
+      );
+      const responseText = await response.text();
+      let payload: VisionApiPayload = {};
+      try {
+        payload = responseText ? JSON.parse(responseText) as VisionApiPayload : {};
+      } catch {
+        throw httpError("رجعت Google Vision استجابة غير صالحة.", 502);
+      }
+      if (response.ok) {
+        layoutLog(traceId, "vision_request_completed", { attempt, status: response.status });
+        return payload;
+      }
+      lastMessage = payload.error?.message ?? `تعذر الاتصال بخدمة Google Vision (${response.status}).`;
+      layoutLog(traceId, "vision_request_rejected", { attempt, status: response.status, error: lastMessage });
+      if (attempt < VISION_REQUEST_ATTEMPTS && isRetryableVisionStatus(response.status)) {
+        await delay(VISION_RETRY_DELAY_MS);
+        continue;
+      }
+      throw httpError(lastMessage, response.status);
+    } catch (error) {
+      if (controller.signal.aborted || isAbortError(error)) {
+        lastMessage = `انتهت مهلة Google Vision بعد ${VISION_REQUEST_TIMEOUT_MS / 1000} ثانية.`;
+        layoutLog(traceId, "vision_request_timeout", { attempt });
+        if (attempt < VISION_REQUEST_ATTEMPTS) {
+          await delay(VISION_RETRY_DELAY_MS);
+          continue;
+        }
+        throw httpError(`${lastMessage} أعد المحاولة؛ أوقف واثق التعليق تلقائيًا.`, 504);
+      }
+      layoutLog(traceId, "vision_request_failed", { attempt, error: errorMessage(error) });
+      throw error;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+  throw httpError(lastMessage, 504);
+}
 
 async function handleOcrLayoutPage(req: Request, ownerId: string): Promise<Response> {
+  const traceId = crypto.randomUUID();
+  layoutLog(traceId, "request_started");
   if (!GOOGLE_CLOUD_VISION_API_KEY) {
     throw httpError("خدمة OCR الموضعي غير مهيأة؛ أضف GOOGLE_CLOUD_VISION_API_KEY إلى أسرار Edge Functions.", 503);
   }
@@ -245,33 +379,17 @@ async function handleOcrLayoutPage(req: Request, ownerId: string): Promise<Respo
     .eq("page_number", pageNumber)
     .maybeSingle();
   if (cacheError) throw new Error(`تعذر فحص التحليل الموضعي المحفوظ: ${cacheError.message}`);
-  if (isVisionLayoutPayload(cached?.layout_json)) return json(req, cached.layout_json);
+  if (isVisionLayoutPayload(cached?.layout_json)) {
+    layoutLog(traceId, "cache_hit", { sourceId, pageNumber });
+    return json(req, cached.layout_json);
+  }
 
   const contentType = (req.headers.get("content-type") ?? "").split(";")[0]?.trim();
   if (contentType !== "image/jpeg" && contentType !== "image/png") throw httpError("تقبل خدمة تحليل الفهرس صور JPEG أو PNG فقط.", 415);
-  const bytes = new Uint8Array(await req.arrayBuffer());
+  const bytes = await readOcrImageBytes(req, traceId);
   if (!bytes.length) throw httpError("صورة صفحة الفهرس فارغة.", 400);
-  if (bytes.length > MAX_OCR_IMAGE_BYTES) throw httpError("صورة صفحة الفهرس تتجاوز 10 ميجابايت.", 413);
 
-  const visionResponse = await fetch(
-    `https://vision.googleapis.com/v1/images:annotate?key=${encodeURIComponent(GOOGLE_CLOUD_VISION_API_KEY)}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        requests: [{
-          image: { content: bytesToBase64(bytes) },
-          features: [{ type: "DOCUMENT_TEXT_DETECTION" }],
-          imageContext: { languageHints: ["ar", "en"] },
-        }],
-      }),
-    },
-  );
-  const payload = await visionResponse.json() as {
-    responses?: VisionAnnotationResult[];
-    error?: { message?: string };
-  };
-  if (!visionResponse.ok) throw httpError(payload.error?.message ?? `تعذر الاتصال بخدمة Google Vision (${visionResponse.status}).`, visionResponse.status);
+  const payload = await requestVisionLayout(bytes, traceId);
   const result = payload.responses?.[0];
   if (result?.error?.message) throw httpError(result.error.message, result.error.code ?? 502);
   const page = result?.fullTextAnnotation?.pages?.[0];
@@ -285,7 +403,8 @@ async function handleOcrLayoutPage(req: Request, ownerId: string): Promise<Respo
   const processedAt = new Date().toISOString();
   const layout = {
     ok: true,
-    version: 1,
+    version: 2,
+    traceId,
     pageNumber,
     width,
     height,
@@ -307,6 +426,7 @@ async function handleOcrLayoutPage(req: Request, ownerId: string): Promise<Respo
     layout_json: layout,
   }, { onConflict: "owner_id,source_id,page_number" });
   if (upsertError) throw new Error(`تعذر حفظ التحليل الموضعي للصفحة ${pageNumber}: ${upsertError.message}`);
+  layoutLog(traceId, "layout_saved", { sourceId, pageNumber, words: words.length });
   return json(req, layout);
 }
 
@@ -343,7 +463,7 @@ function visionLayoutWords(page: VisionPage): Array<Record<string, unknown>> {
 function isVisionLayoutPayload(value: unknown): value is Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
-  return record.version === 1
+  return (record.version === 1 || record.version === 2)
     && typeof record.pageNumber === "number"
     && typeof record.width === "number"
     && typeof record.height === "number"

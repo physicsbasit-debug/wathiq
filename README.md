@@ -30,3 +30,7 @@
 - Edge Function syntax transpile: PASS
 
 ملف `pages.yml` لم يتغير.
+
+## Phase 0-H1 Rebuild 2 Fix 1
+
+يعالج تعليق `ocr-layout-page` عند وصول Supabase إلى `WallClockTime` عبر مهلات صريحة، إعادة محاولة واحدة، إلغاء الطلب من المتصفح، تسجيل مراحل التنفيذ، وتقليل حجم صورة الفهرس. نتيجة الاختبارات الحالية: **126/126 PASS**.
