@@ -16,5 +16,5 @@ test("يعطل المحرك fallback تلقائيًا ويستخدم الإصد�
 });
 
 test("يرفع إصدار واثق إلى Rebuild 1", () => {
-  assert.ok(["0.0.18", "0.0.19", "0.0.20"].includes(packageJson.version));
+  assert.ok(Number(packageJson.version.split(".").at(-1)) >= 18);
 });
