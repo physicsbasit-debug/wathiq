@@ -42,6 +42,7 @@ export interface ExamSourceReference {
   pageFrom: number;
   pageTo: number;
   excerpt: string;
+  context?: string;
   score: number;
 }
 
@@ -66,6 +67,9 @@ export interface ExamDraft {
   counts: QuestionCounts;
   plan: PlanItem[];
   selectedProposalByPlanItem: Record<string, string>;
+  generationVersion: string;
+  generationModel: string;
+  generatedAt: string;
   currentStep: WizardStep;
   updatedAt: string;
   status: "مسودة" | "جاهز للمراجعة" | "معتمد";
@@ -87,9 +91,11 @@ export interface PlanItem {
 export interface QuestionProposal {
   id: string;
   text: string;
+  options?: string[];
   answer: string;
   rationale?: string;
-  visualKind?: "رسم تخطيطي" | "جدول" | "رسم بياني";
+  sourceSupport?: string;
+  needsReview?: boolean;
 }
 
 export interface ValidationIssue {

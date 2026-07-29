@@ -1,9 +1,9 @@
 {
   "name": "wathiq",
-  "version": "0.0.25",
+  "version": "0.0.26",
   "private": true,
   "type": "module",
-  "description": "واثق: إدارة المصادر وفهرستها حسب الصفحات والمقاطع وإنشاء اختبار قصير من موضوع واضح",
+  "description": "واثق: إدارة المصادر وفهرستها حسب الصفحات والمقاطع وتوليد أسئلة اختبار قصيرة موثقة مع إجابات وأدلة نصية",
   "scripts": {
     "build": "node scripts/build.mjs",
     "dev": "node scripts/serve.mjs",

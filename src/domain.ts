@@ -46,6 +46,9 @@ export function createEmptyDraft(now = new Date()): ExamDraft {
     counts: { mcq: 4, short: 4, long: 2 },
     plan: [],
     selectedProposalByPlanItem: {},
+    generationVersion: "",
+    generationModel: "",
+    generatedAt: "",
     currentStep: 1,
     updatedAt: now.toISOString(),
     status: "مسودة",
@@ -76,6 +79,9 @@ export function validateExamSetup(draft: ExamDraft): SpecValidation {
   const totalQuestions = draft.counts.mcq + draft.counts.short + draft.counts.long;
   if (totalQuestions === 0) {
     issues.push({ field: "counts", message: "أضف سؤالًا واحدًا على الأقل." });
+  }
+  if (totalQuestions > 15) {
+    issues.push({ field: "counts", message: "الاختبار القصير يدعم حتى 15 سؤالًا في عملية توليد واحدة للحفاظ على جودة الأسئلة." });
   }
 
   if (computedMarks !== draft.totalMarks) {
@@ -137,12 +143,8 @@ export function buildPlan(draft: ExamDraft): PlanItem[] {
     const reference = draft.sourceReferences[index % draft.sourceReferences.length];
     if (!reference) throw new Error("تعذر ربط مفردة الخطة بمصدر مفهرس.");
     const cognitiveLevel = levels[index % levels.length] ?? "معرفة";
-    const itemId = `plan-${index + 1}`;
-    const pageLabel = reference.pageFrom === reference.pageTo
-      ? `ص ${reference.pageFrom}`
-      : `ص ${reference.pageFrom}-${reference.pageTo}`;
     return {
-      id: itemId,
+      id: `plan-${index + 1}`,
       lessonId: `topic-${index + 1}`,
       lessonLabel: topic,
       outcomeId: `topic-outcome-${index + 1}`,
@@ -151,67 +153,16 @@ export function buildPlan(draft: ExamDraft): PlanItem[] {
       questionType: entry.type,
       marks: entry.marks,
       sourceReferenceId: reference.id,
-      proposals: generateProposals(
-        itemId,
-        entry.type,
-        cognitiveLevel,
-        `${topic} اعتمادًا على ${reference.sourceTitle} (${pageLabel})`,
-        index,
-      ),
+      proposals: [],
     };
   });
-}
-
-export function generateProposals(
-  planItemId: string,
-  type: QuestionType,
-  level: CognitiveLevel,
-  outcomeLabel: string,
-  seed: number,
-): QuestionProposal[] {
-  const contexts = ["مختبر المدرسة", "موقف حياتي", "بيانات تجربة علمية"];
-  return contexts.map((context, index) => {
-    const suffix = `${seed + 1}-${index + 1}`;
-    const base = proposalText(type, level, context, outcomeLabel, index);
-    const proposal: QuestionProposal = {
-      id: `${planItemId}-proposal-${index + 1}`,
-      text: base,
-      answer: proposalAnswer(type, level, index),
-    };
-    if (type === "اختيار من متعدد") {
-      proposal.rationale = "لأن الاختيار يطابق العلاقة العلمية الواردة في المعطيات.";
-    }
-    if (index === 2) proposal.visualKind = "رسم بياني";
-    if (index === 1) proposal.visualKind = "جدول";
-    return proposal;
-  });
-}
-
-function proposalText(
-  type: QuestionType,
-  level: CognitiveLevel,
-  context: string,
-  outcomeLabel: string,
-  variant: number,
-): string {
-  const compactOutcome = outcomeLabel.replace(/\.$/, "");
-  if (type === "اختيار من متعدد") {
-    return `بالرجوع إلى ${compactOutcome}، أي العبارات الآتية أدق علميًا في سياق ${context}؟ [صياغة ${variant + 1}]`;
-  }
-  if (type === "إجابة قصيرة") {
-    return `بالرجوع إلى ${compactOutcome}، ${level === "استدلال" ? "استدل" : "اكتب"} إجابة قصيرة توضّح الفكرة الأساسية في ${context}. [صياغة ${variant + 1}]`;
-  }
-  return `بالرجوع إلى ${compactOutcome}، حلّل معطيات ${context} وقدّم تفسيرًا علميًا مدعومًا بدليل مناسب. [صياغة ${variant + 1}]`;
-}
-
-function proposalAnswer(type: QuestionType, level: CognitiveLevel, variant: number): string {
-  if (type === "اختيار من متعدد") return `الخيار الصحيح: (${String.fromCharCode(65 + variant)})`;
-  if (type === "إجابة قصيرة") return `إجابة نموذجية قصيرة متوافقة مع مستوى ${level}.`;
-  return "توزع الدرجات على الفكرة العلمية، والتفسير، والدليل، ودقة المصطلحات.";
 }
 
 export function isPlanComplete(draft: ExamDraft): boolean {
-  return draft.plan.length > 0 && draft.plan.every((item) => Boolean(draft.selectedProposalByPlanItem[item.id]));
+  return draft.plan.length > 0 && draft.plan.every((item) => {
+    const selectedId = draft.selectedProposalByPlanItem[item.id];
+    return Boolean(selectedId && item.proposals.some((proposal) => proposal.id === selectedId));
+  });
 }
 
 export function selectedProposal(draft: ExamDraft, item: PlanItem): QuestionProposal | undefined {

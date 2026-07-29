@@ -31,7 +31,18 @@ function normalizeSourceReferences(value: unknown): ExamSourceReference[] {
       typeof item.excerpt !== "string" ||
       typeof item.score !== "number"
     ) return [];
-    return [item as ExamSourceReference];
+    const reference: ExamSourceReference = {
+      id: item.id,
+      sourceId: item.sourceId,
+      sourceTitle: item.sourceTitle,
+      sourceKind: item.sourceKind,
+      pageFrom: item.pageFrom,
+      pageTo: item.pageTo,
+      excerpt: item.excerpt,
+      score: item.score,
+    };
+    if (typeof item.context === "string" && item.context.trim()) reference.context = item.context;
+    return [reference];
   });
 }
 
@@ -58,11 +69,24 @@ export function normalizeExamDraft(value: unknown): ExamDraft | null {
     selectedProposalByPlanItem: typeof candidate.selectedProposalByPlanItem === "object" && candidate.selectedProposalByPlanItem !== null
       ? candidate.selectedProposalByPlanItem as Record<string, string>
       : {},
+    generationVersion: typeof candidate.generationVersion === "string" ? candidate.generationVersion : "",
+    generationModel: typeof candidate.generationModel === "string" ? candidate.generationModel : "",
+    generatedAt: typeof candidate.generatedAt === "string" ? candidate.generatedAt : "",
   };
   if (!draft.topic.trim() || draft.sourceReferences.length === 0) {
     draft.currentStep = 1;
     draft.plan = [];
     draft.selectedProposalByPlanItem = {};
+    draft.generationVersion = "";
+    draft.generationModel = "";
+    draft.generatedAt = "";
+  } else if (draft.currentStep >= 3 && draft.generationVersion !== "source-grounded-ai-1") {
+    draft.currentStep = 2;
+    draft.plan = [];
+    draft.selectedProposalByPlanItem = {};
+    draft.generationVersion = "";
+    draft.generationModel = "";
+    draft.generatedAt = "";
   }
   return draft;
 }

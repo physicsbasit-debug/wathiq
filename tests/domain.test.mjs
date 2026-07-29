@@ -58,7 +58,7 @@ test("يقبل إعدادًا كاملًا مرتبطًا بمصدر مفهرس"
 test("يبني خطة بعدد المفردات المطلوب ويربطها بمرجع المصدر", () => {
   const plan = buildPlan(completeDraft());
   assert.equal(plan.length, 10);
-  assert.ok(plan.every((item) => item.proposals.length === 3));
+  assert.ok(plan.every((item) => item.proposals.length === 0));
   assert.ok(plan.every((item) => item.sourceReferenceId === "source-1:0"));
 });
 
@@ -66,7 +66,10 @@ test("لا تعد الخطة مكتملة قبل اختيار صياغة لكل 
   const draft = completeDraft();
   draft.plan = buildPlan(draft);
   assert.equal(isPlanComplete(draft), false);
-  for (const item of draft.plan) draft.selectedProposalByPlanItem[item.id] = item.proposals[0].id;
+  for (const item of draft.plan) {
+    item.proposals = [{ id: `${item.id}-p1`, text: "سؤال موثق", answer: "إجابة" }];
+    draft.selectedProposalByPlanItem[item.id] = item.proposals[0].id;
+  }
   assert.equal(isPlanComplete(draft), true);
 });
 

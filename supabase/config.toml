@@ -1,2 +1,5 @@
 [functions.google-drive-oauth]
 verify_jwt = false
+
+[functions.generate-source-questions]
+verify_jwt = false

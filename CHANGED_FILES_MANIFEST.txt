@@ -1,0 +1,12 @@
+واثق Phase 1-B — حزمة الملفات المعدلة فقط
+
+تحتوي هذه الحزمة على ملفات المصدر والاختبارات والتوثيق اللازمة لتوليد أسئلة موثقة من صفحات المصادر.
+لا تحتوي SQL جديدًا، ولا تعدّل GitHub Pages workflow.
+
+الفحص قبل التغليف:
+- npm run check: 163 passed, 0 failed
+- TypeScript للواجهة: PASS
+- TypeScript لملف Edge Function بتعريفات فحص محلية: PASS
+- اختبار خادم المعاينة والملفات المبنية: PASS
+
+بعد الرفع يجب نشر Edge Function وإضافة OPENAI_API_KEY وفق docs/PHASE_1_B_DEPLOYMENT.md.
