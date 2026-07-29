@@ -1,7 +1,9 @@
-# رفع Phase 0-H3 عبر GitHub
+# Phase 1-A — تعليمات الرفع
 
-- الفرع: `refactor/phase-0-h3-page-first-indexing`
-- ارفع محتويات حزمة Changed Files Only فوق الفرع.
-- رسالة الالتزام: `refactor: إلغاء تحليل الفهرس البصري واعتماد فهرسة الصفحات`
+- الفرع: `feat/phase-1-a-simple-source-brief`
+- رسالة الحفظ: `feat: ربط موضوع الاختبار بصفحات المصادر المفهرسة`
+- ارفع محتويات الحزمة إلى جذر المستودع مع الاستبدال.
 - انتظر الفحص الأخضر قبل الدمج.
-- لا يوجد SQL أو Edge Function أو `pages.yml`.
+- لا يوجد SQL جديد.
+- لا يوجد تحديث Edge Function.
+- لم يتغير `.github/workflows/pages.yml`.

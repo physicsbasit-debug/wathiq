@@ -31,6 +31,6 @@ test("H3 يعتمد جاهزية المصدر على استخراج الصفحا
 
 test("H3 لا يغيّر SQL أو Edge Function أو pages.yml", async () => {
   const packageJson = JSON.parse(await read("package.json"));
-  assert.equal(packageJson.version, "0.0.24");
+  assert.ok(Number(packageJson.version.split(".").at(-1)) >= 24);
   assert.match(packageJson.description, /فهرستها حسب الصفحات والمقاطع/);
 });

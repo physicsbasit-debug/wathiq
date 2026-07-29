@@ -800,3 +800,131 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
   .source-readiness-metrics { grid-template-columns: 1fr; }
   .source-readiness-badge { justify-self: start; }
 }
+
+/* Phase 1-A: simple source-grounded brief */
+.source-match-card,
+.compact-source-summary {
+  border: 1px solid var(--border, #dbe4ef);
+  border-radius: 18px;
+  background: #f8fbff;
+  padding: 1rem 1.1rem;
+  margin: 1rem 0 1.25rem;
+}
+
+.source-match-card.ready {
+  border-color: #b8ddc7;
+  background: #f4fbf6;
+}
+
+.source-match-card > div:first-child {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.source-match-label,
+.compact-source-summary span:first-child {
+  color: #94701d;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.source-match-card h3 {
+  margin: 0;
+  color: #173b70;
+  font-size: 1rem;
+}
+
+.source-match-card p {
+  margin: 0;
+  color: #5d6f86;
+  line-height: 1.75;
+}
+
+.source-reference-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 0.7rem;
+  margin-top: 0.85rem;
+}
+
+.source-reference-item {
+  background: #fff;
+  border: 1px solid #dfe7f0;
+  border-radius: 14px;
+  padding: 0.8rem;
+  min-width: 0;
+}
+
+.source-reference-item > div {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin-bottom: 0.45rem;
+}
+
+.source-reference-item strong {
+  color: #14386b;
+  font-size: 0.88rem;
+}
+
+.source-reference-item span {
+  color: #7b8899;
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.source-reference-item p {
+  color: #596b80;
+  font-size: 0.82rem;
+  line-height: 1.65;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.compact-source-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 0;
+}
+
+.compact-source-summary > div:first-child {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.compact-source-summary strong {
+  color: #173b70;
+}
+
+.compact-source-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  justify-content: flex-end;
+}
+
+.compact-source-chips span {
+  background: #fff;
+  border: 1px solid #dce6f0;
+  border-radius: 999px;
+  color: #53657c;
+  font-size: 0.76rem;
+  padding: 0.38rem 0.65rem;
+}
+
+@media (max-width: 720px) {
+  .compact-source-summary,
+  .source-reference-item > div {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .compact-source-chips {
+    justify-content: flex-start;
+  }
+}
