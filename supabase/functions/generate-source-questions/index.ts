@@ -1,0 +1,480 @@
+import { createClient } from "npm:@supabase/supabase-js@2";
+
+const SUPABASE_URL = requiredEnv("SUPABASE_URL");
+const SUPABASE_SERVICE_ROLE_KEY = requiredEnv("SUPABASE_SERVICE_ROLE_KEY");
+const OPENAI_API_KEY = requiredEnv("OPENAI_API_KEY");
+const OPENAI_MODEL = Deno.env.get("OPENAI_MODEL")?.trim() || "gpt-5-mini";
+const WATHIQ_APP_URL = requiredEnv("WATHIQ_APP_URL");
+const appOrigin = new URL(WATHIQ_APP_URL).origin;
+const MAX_ITEMS = 15;
+const MAX_REFERENCES = 6;
+const MAX_REFERENCE_CHARACTERS = 4_200;
+const MAX_TOTAL_REFERENCE_CHARACTERS = 24_000;
+const OPENAI_TIMEOUT_MS = 85_000;
+
+const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+  auth: { persistSession: false, autoRefreshToken: false },
+});
+
+type QuestionType = "اختيار من متعدد" | "إجابة قصيرة" | "إجابة طويلة";
+type CognitiveLevel = "معرفة" | "تطبيق" | "استدلال";
+type Difficulty = "سهل" | "متوسط" | "متقدم";
+
+interface GenerationReference {
+  id: string;
+  sourceTitle: string;
+  sourceKind: string;
+  pageFrom: number;
+  pageTo: number;
+  content: string;
+}
+
+interface GenerationItem {
+  planItemId: string;
+  questionType: QuestionType;
+  cognitiveLevel: CognitiveLevel;
+  marks: number;
+  sourceReferenceId: string;
+}
+
+interface GenerationRequest {
+  topic: string;
+  grade: number;
+  subject: string;
+  difficulty: Difficulty;
+  references: GenerationReference[];
+  items: GenerationItem[];
+}
+
+interface GeneratedAlternative {
+  text: string;
+  options: string[];
+  answer: string;
+  rationale: string;
+  sourceSupport: string;
+  needsReview: boolean;
+}
+
+interface GeneratedItem {
+  planItemId: string;
+  alternatives: GeneratedAlternative[];
+}
+
+interface GeneratedPayload {
+  items: GeneratedItem[];
+}
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders(req) });
+  if (req.method !== "POST") return json(req, { error: "هذه الخدمة تقبل POST فقط." }, 405);
+
+  try {
+    await requireUser(req);
+    const request = parseGenerationRequest(await req.json());
+    const generated = await generateAndValidate(request);
+    return json(req, {
+      items: generated.items,
+      model: OPENAI_MODEL,
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    return json(req, { error: errorMessage(error) }, errorStatus(error));
+  }
+});
+
+async function generateAndValidate(request: GenerationRequest): Promise<GeneratedPayload> {
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      const payload = await callOpenAi(request, attempt > 1);
+      validateGeneratedPayload(payload, request);
+      return payload;
+    } catch (error) {
+      lastError = error;
+      if (attempt === 2 || !isRetryableGenerationError(error)) break;
+      await delay(700);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("تعذر إنشاء أسئلة صالحة من المصدر.");
+}
+
+async function callOpenAi(request: GenerationRequest, repairAttempt: boolean): Promise<GeneratedPayload> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), OPENAI_TIMEOUT_MS);
+  try {
+    const response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: OPENAI_MODEL,
+        store: false,
+        max_output_tokens: 20_000,
+        input: [
+          {
+            role: "system",
+            content: buildSystemInstructions(),
+          },
+          {
+            role: "user",
+            content: buildUserPrompt(request, repairAttempt),
+          },
+        ],
+        text: {
+          format: {
+            type: "json_schema",
+            name: "wathiq_source_grounded_questions",
+            strict: true,
+            schema: generationSchema(),
+          },
+        },
+      }),
+      signal: controller.signal,
+    });
+    const payload = await response.json() as unknown;
+    if (!response.ok) {
+      const message = openAiError(payload, `تعذر الاتصال بمولد الأسئلة (${response.status}).`);
+      if (response.status >= 500 || response.status === 429) throw retryableError(message);
+      throw httpError(message, 400);
+    }
+    const refusal = findRefusal(payload);
+    if (refusal) throw httpError(`رفض مولد الأسئلة الطلب: ${refusal}`, 422);
+    const outputText = findOutputText(payload);
+    if (!outputText) throw retryableError("لم يُرجع مولد الأسئلة بيانات قابلة للقراءة.");
+    try {
+      return JSON.parse(outputText) as GeneratedPayload;
+    } catch {
+      throw retryableError("أعاد مولد الأسئلة JSON غير صالح.");
+    }
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw retryableError("تأخر مولد الأسئلة أكثر من المدة المسموحة.");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function buildSystemInstructions(): string {
+  return [
+    "أنت محرر اختبارات علوم مدرسية باللغة العربية لسلطنة عُمان.",
+    "مهمتك إنشاء أسئلة من النصوص المرجعية المرفقة فقط، دون إضافة معلومة علمية من الذاكرة أو الإنترنت.",
+    "أنشئ ثلاثة بدائل مختلفة لكل مفردة خطة مع الحفاظ على نوع السؤال والمستوى المعرفي والدرجة.",
+    "للاختيار من متعدد: أربعة بدائل مختلفة، وإجابة صحيحة واحدة فقط، ويجب أن تكون قيمة answer مطابقة حرفيًا لأحد options.",
+    "للإجابة القصيرة والطويلة: اجعل options مصفوفة فارغة، واكتب إجابة نموذجية قابلة للتصحيح.",
+    "اجعل sourceSupport عبارة قصيرة منسوخة حرفيًا من نص المرجع وتدعم السؤال والإجابة.",
+    "لا تسأل عن أرقام صفحات أو حقوق نشر أو مقدمة الكتاب إلا إذا كان الموضوع المطلوب عنها صراحة.",
+    "إذا كان النص المرجعي ضعيفًا لمفردة معينة، أنشئ سؤالًا بسيطًا على حقيقة صريحة واضبط needsReview=true. لا تخترع.",
+    "الصياغة مناسبة للصف الدراسي، عربية واضحة، ولا تستخدم عبارات مثل: بالرجوع إلى النص أو وفقًا للمصدر داخل نص السؤال.",
+    "لا تضع شروحًا خارج مخطط JSON المطلوب.",
+  ].join("\n");
+}
+
+function buildUserPrompt(request: GenerationRequest, repairAttempt: boolean): string {
+  const references = request.references.map((reference) => ({
+    id: reference.id,
+    sourceTitle: reference.sourceTitle,
+    sourceKind: reference.sourceKind,
+    pages: reference.pageFrom === reference.pageTo ? `${reference.pageFrom}` : `${reference.pageFrom}-${reference.pageTo}`,
+    content: reference.content,
+  }));
+  return JSON.stringify({
+    task: repairAttempt
+      ? "أعد التوليد بدقة أكبر. التزم بعدد البدائل وبالاستناد الحرفي إلى كل مرجع."
+      : "أنشئ بدائل الأسئلة الموثقة من المراجع.",
+    exam: {
+      topic: request.topic,
+      grade: request.grade,
+      subject: request.subject,
+      difficulty: request.difficulty,
+    },
+    references,
+    planItems: request.items,
+  });
+}
+
+function generationSchema(): Record<string, unknown> {
+  return {
+    type: "object",
+    properties: {
+      items: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            planItemId: { type: "string" },
+            alternatives: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  text: { type: "string" },
+                  options: { type: "array", items: { type: "string" } },
+                  answer: { type: "string" },
+                  rationale: { type: "string" },
+                  sourceSupport: { type: "string" },
+                  needsReview: { type: "boolean" },
+                },
+                required: ["text", "options", "answer", "rationale", "sourceSupport", "needsReview"],
+                additionalProperties: false,
+              },
+            },
+          },
+          required: ["planItemId", "alternatives"],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ["items"],
+    additionalProperties: false,
+  };
+}
+
+function parseGenerationRequest(value: unknown): GenerationRequest {
+  const record = requireRecord(value, "طلب إنشاء الأسئلة غير صالح.");
+  const topic = requireText(record.topic, "موضوع الاختبار غير موجود.", 180);
+  const subject = requireText(record.subject, "اسم المادة غير موجود.", 120);
+  const grade = requireInteger(record.grade, "الصف الدراسي غير صالح.", 1, 12);
+  const difficulty = requireEnum(record.difficulty, ["سهل", "متوسط", "متقدم"] as const, "مستوى الصعوبة غير صالح.");
+  if (!Array.isArray(record.references) || record.references.length < 1 || record.references.length > MAX_REFERENCES) {
+    throw httpError(`يجب إرسال مرجع واحد إلى ${MAX_REFERENCES} مراجع.`, 400);
+  }
+  if (!Array.isArray(record.items) || record.items.length < 1 || record.items.length > MAX_ITEMS) {
+    throw httpError(`يجب إرسال مفردة واحدة إلى ${MAX_ITEMS} مفردة.`, 400);
+  }
+
+  let totalReferenceCharacters = 0;
+  const references = record.references.map((entry) => {
+    const item = requireRecord(entry, "أحد المراجع غير صالح.");
+    const content = requireText(item.content, "نص أحد المراجع فارغ.", MAX_REFERENCE_CHARACTERS);
+    totalReferenceCharacters += content.length;
+    return {
+      id: requireText(item.id, "معرف المرجع غير موجود.", 220),
+      sourceTitle: requireText(item.sourceTitle, "عنوان المرجع غير موجود.", 220),
+      sourceKind: requireText(item.sourceKind, "نوع المرجع غير موجود.", 100),
+      pageFrom: requireInteger(item.pageFrom, "بداية صفحات المرجع غير صالحة.", 1, 10_000),
+      pageTo: requireInteger(item.pageTo, "نهاية صفحات المرجع غير صالحة.", 1, 10_000),
+      content,
+    } satisfies GenerationReference;
+  });
+  if (totalReferenceCharacters > MAX_TOTAL_REFERENCE_CHARACTERS) {
+    throw httpError("مجموع نصوص المراجع أكبر من الحد المسموح لعملية توليد واحدة.", 413);
+  }
+  const referenceIds = new Set(references.map((reference) => reference.id));
+  if (referenceIds.size !== references.length) throw httpError("توجد مراجع مكررة في الطلب.", 400);
+  references.forEach((reference) => {
+    if (reference.pageTo < reference.pageFrom) throw httpError("نطاق صفحات أحد المراجع غير صالح.", 400);
+  });
+
+  const items = record.items.map((entry) => {
+    const item = requireRecord(entry, "إحدى مفردات الخطة غير صالحة.");
+    const sourceReferenceId = requireText(item.sourceReferenceId, "مرجع إحدى المفردات غير موجود.", 220);
+    if (!referenceIds.has(sourceReferenceId)) throw httpError("إحدى مفردات الخطة تشير إلى مرجع غير مرسل.", 400);
+    return {
+      planItemId: requireText(item.planItemId, "معرف مفردة الخطة غير موجود.", 120),
+      questionType: requireEnum(item.questionType, ["اختيار من متعدد", "إجابة قصيرة", "إجابة طويلة"] as const, "نوع السؤال غير صالح."),
+      cognitiveLevel: requireEnum(item.cognitiveLevel, ["معرفة", "تطبيق", "استدلال"] as const, "المستوى المعرفي غير صالح."),
+      marks: requireInteger(item.marks, "درجة السؤال غير صالحة.", 1, 20),
+      sourceReferenceId,
+    } satisfies GenerationItem;
+  });
+  if (new Set(items.map((item) => item.planItemId)).size !== items.length) {
+    throw httpError("توجد مفردات خطة مكررة في الطلب.", 400);
+  }
+  return { topic, grade, subject, difficulty, references, items };
+}
+
+function validateGeneratedPayload(payload: GeneratedPayload, request: GenerationRequest): void {
+  if (!payload || !Array.isArray(payload.items)) throw retryableError("بنية الأسئلة المولدة غير صالحة.");
+  const requestedById = new Map(request.items.map((item) => [item.planItemId, item]));
+  const referencesById = new Map(request.references.map((reference) => [reference.id, reference]));
+  const seen = new Set<string>();
+
+  for (const generatedItem of payload.items) {
+    if (!generatedItem || typeof generatedItem.planItemId !== "string" || seen.has(generatedItem.planItemId)) {
+      throw retryableError("مولد الأسئلة أعاد مفردة مجهولة أو مكررة.");
+    }
+    const requested = requestedById.get(generatedItem.planItemId);
+    if (!requested || !Array.isArray(generatedItem.alternatives) || generatedItem.alternatives.length !== 3) {
+      throw retryableError("مولد الأسئلة لم يلتزم بثلاثة بدائل لكل مفردة.");
+    }
+    const reference = referencesById.get(requested.sourceReferenceId);
+    if (!reference) throw retryableError("تعذر التحقق من مرجع السؤال المولد.");
+    seen.add(generatedItem.planItemId);
+
+    for (const alternative of generatedItem.alternatives) {
+      validateAlternative(alternative, requested.questionType, reference);
+    }
+  }
+  if (seen.size !== requestedById.size) throw retryableError("مولد الأسئلة لم يُعد جميع مفردات الخطة.");
+}
+
+function validateAlternative(alternative: GeneratedAlternative, questionType: QuestionType, reference: GenerationReference): void {
+  if (!alternative || typeof alternative !== "object") throw retryableError("أحد بدائل الأسئلة غير صالح.");
+  for (const field of ["text", "answer", "rationale", "sourceSupport"] as const) {
+    if (typeof alternative[field] !== "string" || !alternative[field].trim()) {
+      throw retryableError("أحد بدائل الأسئلة يحتوي حقلًا نصيًا فارغًا.");
+    }
+  }
+  if (!Array.isArray(alternative.options) || typeof alternative.needsReview !== "boolean") {
+    throw retryableError("أحد بدائل الأسئلة لا يطابق البنية المطلوبة.");
+  }
+  if (questionType === "اختيار من متعدد") {
+    const options = alternative.options.map((option) => typeof option === "string" ? option.trim() : "");
+    if (options.some((option) => !option) || options.length !== 4 || new Set(options).size !== 4) {
+      throw retryableError("سؤال اختيار من متعدد لا يحتوي أربعة بدائل مختلفة.");
+    }
+    if (!options.includes(alternative.answer.trim())) {
+      throw retryableError("إجابة سؤال اختيار من متعدد لا تطابق أحد البدائل.");
+    }
+  } else if (alternative.options.length !== 0) {
+    throw retryableError("سؤال غير موضوعي يحتوي بدائل اختيار من متعدد.");
+  }
+  const normalizedSupport = normalizeForEvidence(alternative.sourceSupport);
+  const normalizedReference = normalizeForEvidence(reference.content);
+  if (normalizedSupport.length < 12 || !normalizedReference.includes(normalizedSupport)) {
+    throw retryableError("تعذر إثبات استناد أحد الأسئلة إلى نص المرجع حرفيًا.");
+  }
+}
+
+function normalizeForEvidence(value: string): string {
+  return value
+    .normalize("NFKC")
+    .replace(/[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]/g, "")
+    .replace(/ـ/g, "")
+    .replace(/[أإآٱ]/g, "ا")
+    .replace(/ى/g, "ي")
+    .replace(/ؤ/g, "و")
+    .replace(/ئ/g, "ي")
+    .replace(/ة/g, "ه")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function findOutputText(payload: unknown): string {
+  const record = asRecord(payload);
+  if (!record) return "";
+  if (typeof record.output_text === "string") return record.output_text;
+  if (!Array.isArray(record.output)) return "";
+  for (const item of record.output) {
+    const itemRecord = asRecord(item);
+    if (!Array.isArray(itemRecord?.content)) continue;
+    for (const content of itemRecord.content) {
+      const contentRecord = asRecord(content);
+      if (contentRecord?.type === "output_text" && typeof contentRecord.text === "string") return contentRecord.text;
+    }
+  }
+  return "";
+}
+
+function findRefusal(payload: unknown): string {
+  const record = asRecord(payload);
+  if (!record || !Array.isArray(record.output)) return "";
+  for (const item of record.output) {
+    const itemRecord = asRecord(item);
+    if (!Array.isArray(itemRecord?.content)) continue;
+    for (const content of itemRecord.content) {
+      const contentRecord = asRecord(content);
+      if (contentRecord?.type === "refusal" && typeof contentRecord.refusal === "string") return contentRecord.refusal;
+    }
+  }
+  return "";
+}
+
+function openAiError(payload: unknown, fallback: string): string {
+  const record = asRecord(payload);
+  const error = asRecord(record?.error);
+  return typeof error?.message === "string" && error.message ? error.message : fallback;
+}
+
+async function requireUser(req: Request): Promise<void> {
+  const authorization = req.headers.get("Authorization") ?? "";
+  if (!authorization.startsWith("Bearer ")) throw httpError("يلزم تسجيل دخول مالك المنصة.", 401);
+  const token = authorization.slice("Bearer ".length);
+  const { data, error } = await admin.auth.getUser(token);
+  if (error || !data.user) throw httpError("جلسة مالك المنصة غير صالحة أو منتهية.", 401);
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function requireRecord(value: unknown, message: string): Record<string, unknown> {
+  const record = asRecord(value);
+  if (!record) throw httpError(message, 400);
+  return record;
+}
+
+function requireText(value: unknown, message: string, maxLength: number): string {
+  if (typeof value !== "string" || !value.trim()) throw httpError(message, 400);
+  const text = value.trim();
+  if (text.length > maxLength) throw httpError(`${message} تجاوز الحد المسموح.`, 400);
+  return text;
+}
+
+function requireInteger(value: unknown, message: string, minimum: number, maximum: number): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    throw httpError(message, 400);
+  }
+  return value;
+}
+
+function requireEnum<const T extends readonly string[]>(value: unknown, allowed: T, message: string): T[number] {
+  if (typeof value !== "string" || !allowed.includes(value as T[number])) throw httpError(message, 400);
+  return value as T[number];
+}
+
+function corsHeaders(req: Request): HeadersInit {
+  const origin = req.headers.get("Origin");
+  return {
+    "Access-Control-Allow-Origin": origin === appOrigin ? origin : appOrigin,
+    "Access-Control-Allow-Headers": "authorization, apikey, content-type",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Cache-Control": "no-store",
+    Vary: "Origin",
+  };
+}
+
+function json(req: Request, payload: unknown, status = 200): Response {
+  return Response.json(payload, { status, headers: corsHeaders(req) });
+}
+
+function requiredEnv(name: string): string {
+  const value = Deno.env.get(name)?.trim();
+  if (!value) throw new Error(`متغير الخادم ${name} غير مضبوط.`);
+  return value;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "حدث خطأ غير متوقع في مولد الأسئلة.";
+}
+
+function httpError(message: string, status: number): Error & { status: number; retryable?: boolean } {
+  return Object.assign(new Error(message), { status });
+}
+
+function retryableError(message: string): Error & { status: number; retryable: boolean } {
+  return Object.assign(new Error(message), { status: 502, retryable: true });
+}
+
+function errorStatus(error: unknown): number {
+  if (typeof error === "object" && error !== null && "status" in error && typeof (error as { status?: unknown }).status === "number") {
+    return (error as { status: number }).status;
+  }
+  return 500;
+}
+
+function isRetryableGenerationError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "retryable" in error && (error as { retryable?: unknown }).retryable === true;
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}

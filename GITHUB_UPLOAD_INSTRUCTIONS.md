@@ -1,9 +1,10 @@
-# Phase 1-A — تعليمات الرفع
+# Phase 1-B — تعليمات الرفع
 
-- الفرع: `feat/phase-1-a-simple-source-brief`
-- رسالة الحفظ: `feat: ربط موضوع الاختبار بصفحات المصادر المفهرسة`
-- ارفع محتويات الحزمة إلى جذر المستودع مع الاستبدال.
-- انتظر الفحص الأخضر قبل الدمج.
+- الفرع المقترح: `feat/phase-1-b-source-grounded-generation`
+- رسالة الحفظ: `feat: توليد أسئلة موثقة من صفحات المصدر`
+- ارفع محتويات حزمة الملفات المعدلة إلى جذر المستودع مع الاستبدال.
+- انتظر فحص GitHub Actions الأخضر ثم ادمج إلى `main`.
 - لا يوجد SQL جديد.
-- لا يوجد تحديث Edge Function.
-- لم يتغير `.github/workflows/pages.yml`.
+- توجد Edge Function جديدة يجب نشرها بعد الدمج: `generate-source-questions`.
+- أضف سر Supabase باسم `OPENAI_API_KEY` قبل اختبار التوليد.
+- لم يتغير workflow الخاص بـ GitHub Pages.

@@ -112,6 +112,7 @@ export function rankSourceChunks(query: string, candidates: SourceChunkCandidate
       pageFrom: entry.candidate.chunk.pageFrom,
       pageTo: entry.candidate.chunk.pageTo,
       excerpt: excerptAroundMatch(entry.candidate.chunk.content, tokens),
+      context: entry.candidate.chunk.content,
       score: Math.round(entry.score * 10) / 10,
     });
     if (references.length >= limit) break;

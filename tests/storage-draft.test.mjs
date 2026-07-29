@@ -20,3 +20,31 @@ test("يعيد المسودة القديمة إلى خطوة المحتوى بد
   assert.deepEqual(draft.sourceReferences, []);
   assert.deepEqual(draft.plan, []);
 });
+
+
+test("يعيد مسودة Phase 1-A ذات الصياغات التجريبية إلى الإعداد قبل التوليد الحقيقي", () => {
+  const draft = normalizeExamDraft({
+    id: "phase-1-a",
+    grade: 10,
+    subjectId: "physics",
+    topic: "الشحنة الكهربائية",
+    sourceReferences: [{
+      id: "source-1:0",
+      sourceId: "source-1",
+      sourceTitle: "كتاب الطالب",
+      sourceKind: "كتاب الطالب",
+      pageFrom: 17,
+      pageTo: 17,
+      excerpt: "الشحنة الكهربائية خاصية فيزيائية.",
+      score: 80,
+    }],
+    currentStep: 3,
+    plan: [{ id: "legacy-plan", proposals: [{ id: "legacy-proposal" }] }],
+    selectedProposalByPlanItem: { "legacy-plan": "legacy-proposal" },
+  });
+  assert.ok(draft);
+  assert.equal(draft.currentStep, 2);
+  assert.deepEqual(draft.plan, []);
+  assert.deepEqual(draft.selectedProposalByPlanItem, {});
+  assert.equal(draft.generationVersion, "");
+});

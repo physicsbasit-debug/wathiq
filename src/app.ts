@@ -2,7 +2,6 @@ import { MOCK_LIBRARY, MOCK_SOURCES, SUBJECTS } from "./data.js";
 import {
   buildPlan,
   createEmptyDraft,
-  generateProposals,
   isPlanComplete,
   selectedProposal,
   validateExamSetup,
@@ -19,6 +18,12 @@ import { extractPdfText, shouldInvalidateLegacyExtraction, type PdfExtractionPro
 import { extractPdfWithArabicOcr } from "./ocr-indexer.js";
 import { resolveInitialView, viewFromHash, viewHash } from "./navigation.js";
 import { rankSourceChunks, type SourceChunkCandidate } from "./source-retrieval.js";
+import {
+  applyGeneratedQuestions,
+  buildQuestionGenerationRequest,
+  QuestionGenerationService,
+  SOURCE_GENERATION_VERSION,
+} from "./question-generation.js";
 
 const appRoot = document.querySelector<HTMLDivElement>("#app");
 if (!appRoot) throw new Error("تعذر العثور على جذر التطبيق.");
@@ -57,6 +62,8 @@ interface AppState {
   sourceIndexingMessage: string;
   sourceRetrievalBusy: boolean;
   sourceRetrievalMessage: string;
+  questionGenerationBusy: boolean;
+  questionGenerationMessage: string;
 }
 
 
@@ -66,6 +73,9 @@ const centralSourceStore = isCentralStorageConfigured(runtimeConfig)
   : null;
 const googleDriveService = centralSourceStore && isGoogleDriveConfigured(runtimeConfig)
   ? new GoogleDriveService(runtimeConfig, centralSourceStore)
+  : null;
+const questionGenerationService = centralSourceStore
+  ? new QuestionGenerationService(runtimeConfig, () => centralSourceStore.getActiveSession())
   : null;
 
 const savedDraft = loadDraft();
@@ -113,6 +123,8 @@ const state: AppState = {
   sourceIndexingMessage: "",
   sourceRetrievalBusy: false,
   sourceRetrievalMessage: "",
+  questionGenerationBusy: false,
+  questionGenerationMessage: "",
 };
 
 let saveTimer: number | undefined;
@@ -184,6 +196,21 @@ function setStep(step: WizardStep): void {
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
+function invalidateGeneratedQuestions(): void {
+  state.draft.plan = [];
+  state.draft.selectedProposalByPlanItem = {};
+  state.draft.generationVersion = "";
+  state.draft.generationModel = "";
+  state.draft.generatedAt = "";
+  state.questionGenerationMessage = "";
+}
+
+function invalidateSourceAndGeneratedQuestions(): void {
+  state.draft.sourceReferences = [];
+  state.sourceRetrievalMessage = "";
+  invalidateGeneratedQuestions();
+}
+
 function render(): void {
   app.innerHTML = `
     ${renderHeader()}
@@ -245,7 +272,7 @@ function renderHome(): string {
   return `
     <section class="hero-panel">
       <div class="hero-copy">
-        <span class="eyebrow">Phase 1-A · مسار بسيط مرتبط بالمصادر</span>
+        <span class="eyebrow">Phase 1-B · توليد أسئلة موثقة من المصدر</span>
         <h1>أنشئ اختبارك القصير بثقة.</h1>
         <p>أربع خطوات واضحة. المصادر والفحوص وجدول المواصفات تعمل في الخلفية، حيث تنتمي التفاصيل المزعجة.</p>
         <div class="hero-actions">
@@ -256,9 +283,9 @@ function renderHome(): string {
       <div class="confidence-card" aria-label="ملخص الخدمة">
         <div class="confidence-score">واثق</div>
         <ul>
-          <li>${icon("check")} خطة منضبطة قبل التوليد</li>
-          <li>${icon("check")} ثلاثة بدائل متكافئة لكل مفردة</li>
-          <li>${icon("check")} Word وPDF ونموذج إجابة</li>
+          <li>${icon("check")} استرجاع المقاطع مع أرقام الصفحات</li>
+          <li>${icon("check")} ثلاثة بدائل موثقة لكل مفردة</li>
+          <li>${icon("check")} إجابة نموذجية ودليل من نص المصدر</li>
         </ul>
       </div>
     </section>
@@ -404,6 +431,7 @@ function renderSetupStep(): string {
     </div>
 
     ${renderCompliance(validation)}
+    ${state.questionGenerationMessage ? `<div class="generation-status ${state.questionGenerationBusy ? "busy" : "notice"}">${state.questionGenerationBusy ? icon("spark") : "!"}<div><strong>${state.questionGenerationBusy ? "مولد الأسئلة يعمل" : "حالة توليد الأسئلة"}</strong><p>${escapeHtml(state.questionGenerationMessage)}</p></div></div>` : ""}
     ${renderWizardFooter(2, validation.valid)}
   `;
 }
@@ -424,16 +452,20 @@ function renderCompliance(validation: ReturnType<typeof validateExamSetup>): str
 }
 
 function renderPlanStep(): string {
-  if (state.draft.plan.length === 0) {
-    state.draft.plan = buildPlan(state.draft);
-    scheduleSave();
-  }
   const selectedCount = Object.keys(state.draft.selectedProposalByPlanItem).length;
+  const generationLabel = state.draft.generationModel
+    ? `تم التوليد عبر ${state.draft.generationModel} في ${formatArabicDate(state.draft.generatedAt.slice(0, 10))}.`
+    : "تم إنشاء الأسئلة من المقاطع المرتبطة بالموضوع.";
   return `
-    <div class="section-intro inline"><div><h2>اختر صياغة مبدئية لكل مفردة</h2><p>هذه معاينة بنيوية مرتبطة بصفحات المصدر. التوليد العلمي الفعلي سيحل محل الصياغات التجريبية في المرحلة التالية.</p></div><span class="progress-pill">${selectedCount} من ${state.draft.plan.length}</span></div>
+    <div class="section-intro inline"><div><h2>اختر سؤالًا واحدًا لكل مفردة</h2><p>${escapeHtml(state.questionGenerationMessage || generationLabel)} راجع الصياغة والإجابة ودليل المصدر قبل الاختيار.</p></div><span class="progress-pill">${selectedCount} من ${state.draft.plan.length}</span></div>
     <div class="plan-stack">${state.draft.plan.map((item, index) => renderPlanItem(item, index)).join("")}</div>
     ${renderWizardFooter(3, isPlanComplete(state.draft))}
   `;
+}
+
+function renderProposalOptions(options: string[] | undefined): string {
+  if (!options?.length) return "";
+  return `<ol class="proposal-options">${options.map((option) => `<li>${escapeHtml(option)}</li>`).join("")}</ol>`;
 }
 
 function renderPlanItem(item: PlanItem, index: number): string {
@@ -444,28 +476,52 @@ function renderPlanItem(item: PlanItem, index: number): string {
     : "مرجع غير محدد";
   return `<article class="plan-card">
     <header><div class="question-number">${index + 1}</div><div><h3>${item.questionType}</h3><p>${escapeHtml(item.lessonLabel)} · ${escapeHtml(sourceLabel)}</p></div><div class="plan-tags"><span>${item.cognitiveLevel}</span><span>${item.marks} ${item.marks === 1 ? "درجة" : "درجات"}</span></div></header>
-    <div class="proposal-grid">${item.proposals.map((proposal, proposalIndex) => `<label class="proposal-card ${chosen === proposal.id ? "selected" : ""}"><input type="radio" name="proposal-${item.id}" data-plan-id="${item.id}" value="${proposal.id}" ${chosen === proposal.id ? "checked" : ""}/><div class="proposal-top"><span>الصياغة ${proposalIndex + 1}</span>${proposal.visualKind ? `<b>${proposal.visualKind}</b>` : ""}</div><p>${escapeHtml(proposal.text)}</p><span class="choose-label">${chosen === proposal.id ? `${icon("check")} تم الاختيار` : "اختر هذه الصياغة"}</span></label>`).join("")}</div>
-    <footer><button class="text-btn" data-regenerate="${item.id}">${icon("spark")} تجديد الصياغات لهذه المفردة</button></footer>
+    <div class="proposal-grid">${item.proposals.map((proposal, proposalIndex) => `<label class="proposal-card ${chosen === proposal.id ? "selected" : ""}"><input type="radio" name="proposal-${item.id}" data-plan-id="${item.id}" value="${proposal.id}" ${chosen === proposal.id ? "checked" : ""}/><div class="proposal-top"><span>البديل ${proposalIndex + 1}</span>${proposal.needsReview ? `<b class="review-needed-badge">يحتاج تدقيقًا أدق</b>` : ""}</div><p>${escapeHtml(proposal.text)}</p>${renderProposalOptions(proposal.options)}<details class="proposal-evidence"><summary>الإجابة ودليل المصدر</summary><p class="proposal-answer"><strong>الإجابة:</strong> ${escapeHtml(proposal.answer)}</p>${proposal.rationale ? `<p><strong>سبب الإجابة:</strong> ${escapeHtml(proposal.rationale)}</p>` : ""}${proposal.sourceSupport ? `<blockquote>${escapeHtml(proposal.sourceSupport)}</blockquote>` : ""}</details><span class="choose-label">${chosen === proposal.id ? `${icon("check")} تم الاختيار` : "اختر هذا السؤال"}</span></label>`).join("")}</div>
+    <footer><button class="text-btn" data-regenerate="${item.id}" ${state.questionGenerationBusy ? "disabled" : ""}>${icon("spark")} توليد ثلاثة بدائل جديدة لهذه المفردة</button></footer>
   </article>`;
+}
+
+function renderPaperQuestion(item: PlanItem, proposal: NonNullable<ReturnType<typeof selectedProposal>>, index: number): string {
+  const reference = state.draft.sourceReferences.find((entry) => entry.id === item.sourceReferenceId);
+  const pages = reference
+    ? reference.pageFrom === reference.pageTo ? `ص ${reference.pageFrom}` : `ص ${reference.pageFrom}-${reference.pageTo}`
+    : "مرجع غير محدد";
+  const responseArea = proposal.options?.length
+    ? `<ol class="paper-options">${proposal.options.map((option) => `<li><span></span>${escapeHtml(option)}</li>`).join("")}</ol>`
+    : `<div class="answer-lines">${Array.from({ length: item.questionType === "إجابة طويلة" ? 4 : 2 }, () => "<span></span>").join("")}</div>`;
+  return `<article><div class="paper-question-title"><b>${index + 1})</b><span>${escapeHtml(proposal.text)}</span><strong>[${item.marks}]</strong></div>${responseArea}<p class="question-source-note">مرجع إعداد السؤال: ${escapeHtml(reference?.sourceTitle ?? "المصدر")} · ${pages}</p></article>`;
+}
+
+function renderAnswerKey(selected: Array<{ item: PlanItem; proposal: NonNullable<ReturnType<typeof selectedProposal>> }>): string {
+  return `<details class="answer-key"><summary>نموذج الإجابة وأدلة المصدر</summary>${selected.map(({ item, proposal }, index) => {
+    const reference = state.draft.sourceReferences.find((entry) => entry.id === item.sourceReferenceId);
+    const pages = reference ? (reference.pageFrom === reference.pageTo ? `ص ${reference.pageFrom}` : `ص ${reference.pageFrom}-${reference.pageTo}`) : "مرجع غير محدد";
+    return `<article><strong>${index + 1}) ${escapeHtml(proposal.answer)}</strong>${proposal.rationale ? `<p>${escapeHtml(proposal.rationale)}</p>` : ""}<small>${escapeHtml(reference?.sourceTitle ?? "المصدر")} · ${pages}</small>${proposal.sourceSupport ? `<blockquote>${escapeHtml(proposal.sourceSupport)}</blockquote>` : ""}</article>`;
+  }).join("")}</details>`;
 }
 
 function renderReviewStep(): string {
   const subject = SUBJECTS.find((item) => item.id === state.draft.subjectId)?.label ?? "المادة";
-  const selected = state.draft.plan.map((item) => ({ item, proposal: selectedProposal(state.draft, item) })).filter((entry) => entry.proposal);
+  const selected = state.draft.plan.flatMap((item) => {
+    const proposal = selectedProposal(state.draft, item);
+    return proposal ? [{ item, proposal }] : [];
+  });
+  const groundedGeneration = state.draft.generationVersion === SOURCE_GENERATION_VERSION;
   return `
     <div class="review-layout">
       <section class="paper-preview">
         <header class="paper-header"><div class="ministry-mark">شعار<br/>الخنجر</div><div><strong>سلطنة عُمان</strong><span>وزارة التعليم</span><span>${escapeHtml(state.draft.directorate)}</span><span>${escapeHtml(state.draft.school)}</span></div></header>
         <div class="paper-title"><h2>${escapeHtml(state.draft.title)}</h2><p>${subject} · الصف ${state.draft.grade} · الفصل الدراسي ${escapeHtml(state.draft.semester)} · ${escapeHtml(state.draft.academicYear)}</p></div>
         <div class="student-row"><span>اسم الطالب: ____________________</span><span>التاريخ: ${formatArabicDate(state.draft.examDate)}</span><span>الزمن: ${state.draft.durationMinutes} دقيقة</span></div>
-        <div class="paper-questions">${selected.map(({ item, proposal }, index) => `<article><div class="paper-question-title"><b>${index + 1})</b><span>${escapeHtml(proposal?.text ?? "")}</span><strong>[${item.marks}]</strong></div>${proposal?.visualKind ? `<div class="visual-placeholder"><span>${proposal.visualKind}</span><div class="mini-chart"><i></i><i></i><i></i><i></i></div></div>` : ""}<div class="answer-lines">${Array.from({ length: item.questionType === "إجابة طويلة" ? 4 : 2 }, () => "<span></span>").join("")}</div></article>`).join("")}</div>
+        <div class="paper-questions">${selected.map(({ item, proposal }, index) => renderPaperQuestion(item, proposal, index)).join("")}</div>
         <footer class="paper-footer">- 1 -</footer>
       </section>
       <aside class="review-panel">
-        <div class="final-check"><h3>حالة المسودة</h3>${checkRow("ارتباط الموضوع بالمصدر", state.draft.sourceReferences.length > 0)}${checkRow("مجموع الدرجات", true)}${checkRow("اختيار مفردات الخطة", isPlanComplete(state.draft))}${checkRow("التوليد العلمي الفعلي", false)}</div>
+        <div class="final-check"><h3>حالة المسودة</h3>${checkRow("ارتباط الموضوع بالمصدر", state.draft.sourceReferences.length > 0)}${checkRow("مجموع الدرجات", true)}${checkRow("اختيار مفردات الخطة", isPlanComplete(state.draft))}${checkRow("توليد الأسئلة من المصدر", groundedGeneration)}</div>
         <div class="review-summary"><span>الدرجة</span><strong>${state.draft.totalMarks}</strong><span>الأسئلة</span><strong>${state.draft.plan.length}</strong><span>الصعوبة</span><strong>${state.draft.difficulty}</strong></div>
+        ${renderAnswerKey(selected)}
         <button class="primary-btn full" data-action="save-now">${icon("save")} حفظ المسودة</button>
-        <p class="muted-note">هذه المرحلة تثبت اختيار الموضوع واسترجاع صفحاته. لا يُدّعى اعتماد علمي أو تصدير نهائي قبل تشغيل مولد الأسئلة الحقيقي.</p>
+        <p class="muted-note">الأسئلة مولدة من نصوص المصدر مع مرجع صفحة ودليل نصي، لكنها تبقى مسودة تحتاج مراجعة المعلم قبل الاستخدام. التصدير النهائي لم يُفعّل بعد.</p>
       </aside>
     </div>
     ${renderWizardFooter(4, true)}
@@ -478,8 +534,14 @@ function checkRow(label: string, okay: boolean): string {
 
 function renderWizardFooter(step: WizardStep, canContinue = true): string {
   const retrieving = step === 1 && state.sourceRetrievalBusy;
-  const nextLabel = retrieving ? "جارٍ مطابقة المصادر…" : `التالي ${icon("arrow")}`;
-  return `<footer class="wizard-footer">${step > 1 ? `<button class="secondary-btn" data-action="previous-step">السابق</button>` : `<button class="secondary-btn" data-nav="home">إلغاء</button>`}<div>${step < 4 ? `<button class="primary-btn" data-action="next-step" ${canContinue && !retrieving ? "" : "disabled"}>${nextLabel}</button>` : `<button class="secondary-btn" data-nav="library">الذهاب إلى اختباراتي</button>`}</div></footer>`;
+  const generating = step === 2 && state.questionGenerationBusy;
+  const nextLabel = retrieving
+    ? "جارٍ مطابقة المصادر…"
+    : generating
+      ? "جارٍ إنشاء الأسئلة من المصدر…"
+      : `التالي ${icon("arrow")}`;
+  const busy = retrieving || generating;
+  return `<footer class="wizard-footer">${step > 1 ? `<button class="secondary-btn" data-action="previous-step" ${busy ? "disabled" : ""}>السابق</button>` : `<button class="secondary-btn" data-nav="home">إلغاء</button>`}<div>${step < 4 ? `<button class="primary-btn" data-action="next-step" ${canContinue && !busy ? "" : "disabled"}>${nextLabel}</button>` : `<button class="secondary-btn" data-nav="library">الذهاب إلى اختباراتي</button>`}</div></footer>`;
 }
 
 function renderLibrary(): string {
@@ -828,6 +890,9 @@ function handleAction(action: string, element: HTMLElement): void {
   if (action === "new-exam") {
     const profile = loadProfile();
     state.draft = createEmptyDraft();
+    state.questionGenerationBusy = false;
+    state.questionGenerationMessage = "";
+    state.sourceRetrievalMessage = "";
     if (profile) {
       state.draft.school = profile.school;
       state.draft.directorate = profile.directorate;
@@ -849,6 +914,9 @@ function handleAction(action: string, element: HTMLElement): void {
   if (action === "delete-draft") {
     clearDraft();
     state.draft = createEmptyDraft();
+    state.questionGenerationBusy = false;
+    state.questionGenerationMessage = "";
+    state.sourceRetrievalMessage = "";
     showToast("تم حذف المسودة المحلية.");
     return;
   }
@@ -971,11 +1039,99 @@ async function nextStep(): Promise<void> {
     if (!validation.valid) return showToast("اضبط البيانات المشار إليها قبل المتابعة.");
     state.draft.plan = buildPlan(state.draft);
     state.draft.selectedProposalByPlanItem = {};
+    const generated = await generateQuestionsForPlan(state.draft.plan);
+    if (!generated) return;
     return setStep(3);
   }
   if (step === 3) {
     if (!isPlanComplete(state.draft)) return showToast("اختر سؤالًا واحدًا لكل مفردة.");
     return setStep(4);
+  }
+}
+
+async function generateQuestionsForPlan(plan: PlanItem[]): Promise<boolean> {
+  if (!questionGenerationService || !centralSourceStore?.currentSession || state.sourceStorageStatus !== "متصل") {
+    invalidateGeneratedQuestions();
+    state.questionGenerationMessage = "يلزم تسجيل دخول مالك المنصة وتشغيل خدمة توليد الأسئلة قبل المتابعة.";
+    render();
+    showToast(state.questionGenerationMessage);
+    return false;
+  }
+  if (state.draft.grade === null) {
+    showToast("الصف الدراسي غير محدد.");
+    return false;
+  }
+  const subject = SUBJECTS.find((item) => item.id === state.draft.subjectId)?.label ?? state.draft.subjectId;
+  state.questionGenerationBusy = true;
+  state.questionGenerationMessage = `جارٍ إنشاء ${plan.length} سؤالًا من صفحات المصدر مع ثلاثة بدائل لكل سؤال…`;
+  render();
+  try {
+    const request = buildQuestionGenerationRequest(
+      state.draft.topic,
+      state.draft.grade,
+      subject,
+      state.draft.difficulty,
+      state.draft.sourceReferences,
+      plan,
+    );
+    const response = await questionGenerationService.generate(request);
+    state.draft.plan = applyGeneratedQuestions(plan, response);
+    state.draft.selectedProposalByPlanItem = {};
+    state.draft.generationVersion = SOURCE_GENERATION_VERSION;
+    state.draft.generationModel = response.model;
+    state.draft.generatedAt = response.generatedAt;
+    state.questionGenerationBusy = false;
+    state.questionGenerationMessage = `تم إنشاء ${state.draft.plan.length} سؤالًا موثقًا؛ اختر البديل الأنسب لكل مفردة.`;
+    scheduleSave();
+    return true;
+  } catch (error) {
+    state.questionGenerationBusy = false;
+    const message = error instanceof Error ? error.message : "تعذر إنشاء الأسئلة من المصدر.";
+    invalidateGeneratedQuestions();
+    state.questionGenerationMessage = message;
+    render();
+    showToast(message);
+    return false;
+  }
+}
+
+async function regeneratePlanItem(item: PlanItem): Promise<void> {
+  if (state.questionGenerationBusy) return;
+  if (!questionGenerationService || state.draft.grade === null) {
+    showToast("خدمة توليد الأسئلة غير جاهزة.");
+    return;
+  }
+  const subject = SUBJECTS.find((entry) => entry.id === state.draft.subjectId)?.label ?? state.draft.subjectId;
+  state.questionGenerationBusy = true;
+  state.questionGenerationMessage = `جارٍ توليد بدائل جديدة للسؤال ${state.draft.plan.indexOf(item) + 1}…`;
+  render();
+  try {
+    const request = buildQuestionGenerationRequest(
+      state.draft.topic,
+      state.draft.grade,
+      subject,
+      state.draft.difficulty,
+      state.draft.sourceReferences,
+      [item],
+    );
+    const response = await questionGenerationService.generate(request);
+    const [replacement] = applyGeneratedQuestions([item], response);
+    if (!replacement) throw new Error("تعذر ربط البدائل الجديدة بمفردة الخطة.");
+    state.draft.plan = state.draft.plan.map((entry) => entry.id === item.id ? replacement : entry);
+    delete state.draft.selectedProposalByPlanItem[item.id];
+    state.draft.generationVersion = SOURCE_GENERATION_VERSION;
+    state.draft.generationModel = response.model;
+    state.draft.generatedAt = response.generatedAt;
+    state.questionGenerationBusy = false;
+    state.questionGenerationMessage = "تم توليد ثلاثة بدائل جديدة لهذه المفردة.";
+    scheduleSave();
+    render();
+    showToast(state.questionGenerationMessage);
+  } catch (error) {
+    state.questionGenerationBusy = false;
+    state.questionGenerationMessage = error instanceof Error ? error.message : "تعذر تجديد بدائل السؤال.";
+    render();
+    showToast(state.questionGenerationMessage);
   }
 }
 
@@ -1000,6 +1156,7 @@ async function prepareSourceContext(): Promise<boolean> {
     return false;
   }
 
+  invalidateGeneratedQuestions();
   state.sourceRetrievalBusy = true;
   state.sourceRetrievalMessage = "جارٍ مطابقة الموضوع مع صفحات المصادر…";
   render();
@@ -1039,8 +1196,7 @@ function bindContentStep(): void {
     state.draft.grade = gradeSelect.value ? Number(gradeSelect.value) : null;
     state.draft.subjectId = "";
     state.draft.topic = "";
-    state.draft.sourceReferences = [];
-    state.sourceRetrievalMessage = "";
+    invalidateSourceAndGeneratedQuestions();
     scheduleSave();
     render();
   });
@@ -1048,16 +1204,14 @@ function bindContentStep(): void {
   const subjectSelect = document.querySelector<HTMLSelectElement>("#subject-select");
   subjectSelect?.addEventListener("change", () => {
     state.draft.subjectId = subjectSelect.value;
-    state.draft.sourceReferences = [];
-    state.sourceRetrievalMessage = "";
+    invalidateSourceAndGeneratedQuestions();
     scheduleSave();
     render();
   });
 
   document.querySelector<HTMLInputElement>("#topic-input")?.addEventListener("input", (event) => {
     state.draft.topic = (event.target as HTMLInputElement).value;
-    state.draft.sourceReferences = [];
-    state.sourceRetrievalMessage = "";
+    invalidateSourceAndGeneratedQuestions();
     scheduleSave();
   });
 }
@@ -1090,6 +1244,7 @@ function bindSetupStep(): void {
 
   document.querySelector<HTMLInputElement>("#marks-input")?.addEventListener("change", (event) => {
     state.draft.totalMarks = Number((event.target as HTMLInputElement).value);
+    invalidateGeneratedQuestions();
     scheduleSave();
     render();
   });
@@ -1097,6 +1252,7 @@ function bindSetupStep(): void {
   document.querySelectorAll<HTMLElement>("[data-difficulty]").forEach((button) => {
     button.addEventListener("click", () => {
       state.draft.difficulty = button.dataset.difficulty as ExamDraft["difficulty"];
+      invalidateGeneratedQuestions();
       scheduleSave();
       render();
     });
@@ -1107,6 +1263,7 @@ function bindSetupStep(): void {
       const key = button.dataset.countKey as keyof QuestionCounts;
       const change = Number(button.dataset.countChange);
       state.draft.counts[key] = Math.max(0, state.draft.counts[key] + change);
+      invalidateGeneratedQuestions();
       scheduleSave();
       render();
     });
@@ -1116,6 +1273,7 @@ function bindSetupStep(): void {
     input.addEventListener("change", () => {
       const key = input.dataset.countInput as keyof QuestionCounts;
       state.draft.counts[key] = Math.max(0, Number(input.value));
+      invalidateGeneratedQuestions();
       scheduleSave();
       render();
     });
@@ -1126,6 +1284,7 @@ function applySuggestedCounts(): void {
   const suggestion = validateExamSetup(state.draft).suggestedCounts;
   if (!suggestion) return;
   state.draft.counts = suggestion;
+  invalidateGeneratedQuestions();
   scheduleSave();
   render();
 }
@@ -1146,12 +1305,7 @@ function bindPlanStep(): void {
       const planId = button.dataset.regenerate;
       const item = state.draft.plan.find((entry) => entry.id === planId);
       if (!item) return;
-      const seed = Date.now() % 1000;
-      item.proposals = generateProposals(item.id, item.questionType, item.cognitiveLevel, item.outcomeLabel, seed);
-      delete state.draft.selectedProposalByPlanItem[item.id];
-      scheduleSave();
-      render();
-      showToast("تم تجديد المقترحات لهذه المفردة فقط.");
+      void regeneratePlanItem(item);
     });
   });
 }

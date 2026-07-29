@@ -23,7 +23,7 @@ test("Phase 1-A retrieves indexed chunks before continuing", () => {
 
 test("Phase 1-A does not claim final scientific approval", () => {
   assert.doesNotMatch(app, /اعتماد النموذج أ/);
-  assert.match(app, /لا يُدّعى اعتماد علمي/);
+  assert.match(app, /تحتاج مراجعة المعلم قبل الاستخدام/);
   assert.match(domain, /sourceReferenceId/);
-  assert.equal(pkg.version, "0.0.25");
+  assert.equal(pkg.version, "0.0.26");
 });
