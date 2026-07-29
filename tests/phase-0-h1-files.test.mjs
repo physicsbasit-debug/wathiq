@@ -12,15 +12,16 @@ test("يضيف SQL جدول هيكل المصدر مع RLS", async () => {
   assert.match(sql, /parent_id/);
 });
 
-test("تربط الواجهة استخراج الهيكل ومراجعته واعتماده", async () => {
+test("تربط الواجهة منشئ الفهرس ومراجعته واعتماده", async () => {
   const app = await read("src/app.ts");
-  assert.match(app, /استخراج هيكل الكتاب/);
+  assert.match(app, /منشئ الفهرس المنظم/);
   assert.match(app, /approve-source-structure/);
+  assert.match(app, /approve-toc-draft/);
   assert.match(app, /replaceSourceStructure/);
   assert.match(app, /listSourceChunks/);
 });
 
-test("لا يتغير pages.yml في Phase 0-H1", async () => {
+test("لا يتغير pages.yml في Phase 0-H2", async () => {
   const pages = await read(".github/workflows/pages.yml");
   assert.doesNotMatch(pages, /SOURCE_STRUCTURE/);
 });

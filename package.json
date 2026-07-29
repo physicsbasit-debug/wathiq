@@ -1,9 +1,9 @@
 {
   "name": "wathiq",
-  "version": "0.0.22",
+  "version": "0.0.23",
   "private": true,
   "type": "module",
-  "description": "واثق: استرداد الدروس مكانيًا عند تشويه رموز الفهرس في OCR",
+  "description": "واثق: منشئ فهرس منظم لمراجعة صفوف OCR قبل حفظ هيكل الكتاب واعتماده",
   "scripts": {
     "build": "node scripts/build.mjs",
     "dev": "node scripts/serve.mjs",

@@ -6,13 +6,13 @@ const app = await readFile(new URL("../src/app.ts", import.meta.url), "utf8");
 const structure = await readFile(new URL("../src/source-structure.ts", import.meta.url), "utf8");
 const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 
-test("تنظف الواجهة المسودة القديمة المشوهة من السجل المركزي عند التحميل", () => {
+test("لا تحذف الواجهة المسودة القديمة المشوهة تلقائيًا في H2", () => {
   assert.match(app, /shouldQuarantineLegacyStructureDraft/);
-  assert.match(app, /replaceSourceStructure\(sourceId, \[\]\)/);
-  assert.match(app, /حذف واثق مسودة قديمة مشوهة تلقائيًا/);
+  assert.match(app, /لم يحذفها واثق/);
+  assert.doesNotMatch(app, /حذف واثق مسودة قديمة مشوهة تلقائيًا/);
 });
 
-test("يستخدم المحرك بوابة عزل للمسودات القديمة فقط", () => {
+test("يحتفظ المحرك ببوابة التعرف على المسودات القديمة", () => {
   assert.match(structure, /shouldQuarantineLegacyStructureDraft/);
   assert.match(structure, /reviewStatus === "معتمد"/);
   assert.match(structure, /extractionMethod === "manual"/);
