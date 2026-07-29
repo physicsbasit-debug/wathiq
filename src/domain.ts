@@ -1,4 +1,3 @@
-import { SUBJECTS } from "./data.js";
 import type {
   CognitiveLevel,
   Difficulty,
@@ -33,6 +32,8 @@ export function createEmptyDraft(now = new Date()): ExamDraft {
     unitId: "",
     lessonIds: [],
     outcomeIds: [],
+    topic: "",
+    sourceReferences: [],
     title: "",
     examDate: "",
     school: "مدرسة الباسط للتعليم الأساسي",
@@ -65,9 +66,8 @@ export function validateExamSetup(draft: ExamDraft): SpecValidation {
 
   if (draft.grade === null) issues.push({ field: "grade", message: "اختر الصف الدراسي." });
   if (!draft.subjectId) issues.push({ field: "subject", message: "اختر المادة." });
-  if (!draft.unitId) issues.push({ field: "unit", message: "اختر الوحدة." });
-  if (draft.lessonIds.length === 0) issues.push({ field: "lessons", message: "اختر درسًا واحدًا على الأقل." });
-  if (draft.outcomeIds.length === 0) issues.push({ field: "outcomes", message: "اختر ناتج تعلم واحدًا على الأقل." });
+  if (!draft.topic.trim()) issues.push({ field: "topic", message: "اكتب موضوع الاختبار أو اسم الدرس." });
+  if (draft.sourceReferences.length === 0) issues.push({ field: "sources", message: "لم يرتبط الاختبار بأي صفحة من المصادر المفهرسة." });
   if (!draft.title.trim()) issues.push({ field: "title", message: "أدخل عنوان الاختبار." });
   if (!draft.examDate) issues.push({ field: "date", message: "اختر تاريخ الاختبار." });
   if (draft.durationMinutes < 10) issues.push({ field: "duration", message: "الزمن يجب ألا يقل عن 10 دقائق." });
@@ -129,33 +129,35 @@ function questionEntries(counts: QuestionCounts): Array<{ type: QuestionType; ma
 }
 
 export function buildPlan(draft: ExamDraft): PlanItem[] {
-  const subject = SUBJECTS.find((item) => item.id === draft.subjectId);
-  const unit = subject?.units.find((item) => item.id === draft.unitId);
-  const lessons = unit?.lessons.filter((lesson) => draft.lessonIds.includes(lesson.id)) ?? [];
-  const availableOutcomes = lessons.flatMap((lesson) =>
-    lesson.outcomes
-      .filter((outcome) => draft.outcomeIds.includes(outcome.id))
-      .map((outcome) => ({ lesson, outcome })),
-  );
-
-  if (availableOutcomes.length === 0) return [];
-
+  const topic = draft.topic.trim();
+  if (!topic) throw new Error("تعذر بناء الخطة دون موضوع واضح.");
+  if (!draft.sourceReferences.length) throw new Error("تعذر بناء الخطة دون مقاطع مصدر مرتبطة.");
   const levels = cognitiveCycle(draft.difficulty);
   return questionEntries(draft.counts).map((entry, index) => {
-    const mapped = availableOutcomes[index % availableOutcomes.length];
-    if (!mapped) throw new Error("تعذر ربط مفردة الخطة بناتج تعلم.");
+    const reference = draft.sourceReferences[index % draft.sourceReferences.length];
+    if (!reference) throw new Error("تعذر ربط مفردة الخطة بمصدر مفهرس.");
     const cognitiveLevel = levels[index % levels.length] ?? "معرفة";
     const itemId = `plan-${index + 1}`;
+    const pageLabel = reference.pageFrom === reference.pageTo
+      ? `ص ${reference.pageFrom}`
+      : `ص ${reference.pageFrom}-${reference.pageTo}`;
     return {
       id: itemId,
-      lessonId: mapped.lesson.id,
-      lessonLabel: mapped.lesson.label,
-      outcomeId: mapped.outcome.id,
-      outcomeLabel: mapped.outcome.label,
+      lessonId: `topic-${index + 1}`,
+      lessonLabel: topic,
+      outcomeId: `topic-outcome-${index + 1}`,
+      outcomeLabel: `قياس فهم ${topic}`,
       cognitiveLevel,
       questionType: entry.type,
       marks: entry.marks,
-      proposals: generateProposals(itemId, entry.type, cognitiveLevel, mapped.outcome.label, index),
+      sourceReferenceId: reference.id,
+      proposals: generateProposals(
+        itemId,
+        entry.type,
+        cognitiveLevel,
+        `${topic} اعتمادًا على ${reference.sourceTitle} (${pageLabel})`,
+        index,
+      ),
     };
   });
 }
@@ -194,12 +196,12 @@ function proposalText(
 ): string {
   const compactOutcome = outcomeLabel.replace(/\.$/, "");
   if (type === "اختيار من متعدد") {
-    return `في ${context}، أي الخيارات الآتية يوضح بصورة أدق كيف ${compactOutcome}؟ [صياغة ${variant + 1}]`;
+    return `بالرجوع إلى ${compactOutcome}، أي العبارات الآتية أدق علميًا في سياق ${context}؟ [صياغة ${variant + 1}]`;
   }
   if (type === "إجابة قصيرة") {
-    return `${level === "استدلال" ? "استدل" : "اذكر"} من ${context} إجابة قصيرة توضح كيف ${compactOutcome}. [صياغة ${variant + 1}]`;
+    return `بالرجوع إلى ${compactOutcome}، ${level === "استدلال" ? "استدل" : "اكتب"} إجابة قصيرة توضّح الفكرة الأساسية في ${context}. [صياغة ${variant + 1}]`;
   }
-  return `حلّل معطيات ${context}، ثم فسّر بتسلسل علمي كيف ${compactOutcome}، وادعم إجابتك بدليل مناسب. [صياغة ${variant + 1}]`;
+  return `بالرجوع إلى ${compactOutcome}، حلّل معطيات ${context} وقدّم تفسيرًا علميًا مدعومًا بدليل مناسب. [صياغة ${variant + 1}]`;
 }
 
 function proposalAnswer(type: QuestionType, level: CognitiveLevel, variant: number): string {

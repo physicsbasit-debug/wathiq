@@ -14,9 +14,19 @@ function completeDraft() {
   const draft = createEmptyDraft(new Date("2026-09-01T08:00:00Z"));
   draft.grade = 10;
   draft.subjectId = "physics";
-  draft.unitId = "physics-u1";
-  draft.lessonIds = ["physics-u1-l1"];
-  draft.outcomeIds = ["p1-o1", "p1-o2", "p1-o3"];
+  draft.topic = "الشحنة الكهربائية";
+  draft.sourceReferences = [
+    {
+      id: "source-1:0",
+      sourceId: "source-1",
+      sourceTitle: "كتاب الطالب للفيزياء",
+      sourceKind: "كتاب الطالب",
+      pageFrom: 15,
+      pageTo: 15,
+      excerpt: "تنتج الشحنة الكهربائية عن انتقال الإلكترونات بين الأجسام.",
+      score: 80,
+    },
+  ];
   draft.title = "اختبار تجريبي";
   draft.examDate = "2026-09-15";
   return draft;
@@ -39,19 +49,20 @@ test("يرفض إعدادًا ناقصًا", () => {
   assert.ok(validation.issues.length >= 5);
 });
 
-test("يقبل إعدادًا كاملًا متوازن الدرجات", () => {
+test("يقبل إعدادًا كاملًا مرتبطًا بمصدر مفهرس", () => {
   const validation = validateExamSetup(completeDraft());
   assert.equal(validation.valid, true);
   assert.equal(validation.computedMarks, 20);
 });
 
-test("يبني خطة بعدد المفردات المطلوب وثلاثة مقترحات لكل مفردة", () => {
+test("يبني خطة بعدد المفردات المطلوب ويربطها بمرجع المصدر", () => {
   const plan = buildPlan(completeDraft());
   assert.equal(plan.length, 10);
   assert.ok(plan.every((item) => item.proposals.length === 3));
+  assert.ok(plan.every((item) => item.sourceReferenceId === "source-1:0"));
 });
 
-test("لا تعد الخطة مكتملة قبل اختيار سؤال لكل مفردة", () => {
+test("لا تعد الخطة مكتملة قبل اختيار صياغة لكل مفردة", () => {
   const draft = completeDraft();
   draft.plan = buildPlan(draft);
   assert.equal(isPlanComplete(draft), false);

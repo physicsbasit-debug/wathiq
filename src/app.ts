@@ -18,6 +18,7 @@ import { GoogleDriveService, type GoogleDriveStatus, type PendingSourceUpload, t
 import { extractPdfText, shouldInvalidateLegacyExtraction, type PdfExtractionProgress } from "./pdf-indexer.js";
 import { extractPdfWithArabicOcr } from "./ocr-indexer.js";
 import { resolveInitialView, viewFromHash, viewHash } from "./navigation.js";
+import { rankSourceChunks, type SourceChunkCandidate } from "./source-retrieval.js";
 
 const appRoot = document.querySelector<HTMLDivElement>("#app");
 if (!appRoot) throw new Error("تعذر العثور على جذر التطبيق.");
@@ -54,6 +55,8 @@ interface AppState {
   sourceIndexingId: string;
   sourceIndexingProgress: number;
   sourceIndexingMessage: string;
+  sourceRetrievalBusy: boolean;
+  sourceRetrievalMessage: string;
 }
 
 
@@ -108,6 +111,8 @@ const state: AppState = {
   sourceIndexingId: "",
   sourceIndexingProgress: 0,
   sourceIndexingMessage: "",
+  sourceRetrievalBusy: false,
+  sourceRetrievalMessage: "",
 };
 
 let saveTimer: number | undefined;
@@ -240,7 +245,7 @@ function renderHome(): string {
   return `
     <section class="hero-panel">
       <div class="hero-copy">
-        <span class="eyebrow">نسخة المرحلة 0-H1</span>
+        <span class="eyebrow">Phase 1-A · مسار بسيط مرتبط بالمصادر</span>
         <h1>أنشئ اختبارك القصير بثقة.</h1>
         <p>أربع خطوات واضحة. المصادر والفحوص وجدول المواصفات تعمل في الخلفية، حيث تنتمي التفاصيل المزعجة.</p>
         <div class="hero-actions">
@@ -327,41 +332,55 @@ function renderWizardStep(): string {
 
 function renderContentStep(): string {
   const availableSubjects = SUBJECTS.filter((subject) => state.draft.grade !== null && subject.grades.includes(state.draft.grade));
-  const subject = availableSubjects.find((item) => item.id === state.draft.subjectId);
-  const unit = subject?.units.find((item) => item.id === state.draft.unitId);
-  const selectedLessons = unit?.lessons.filter((lesson) => state.draft.lessonIds.includes(lesson.id)) ?? [];
-  const outcomes = selectedLessons.flatMap((lesson) => lesson.outcomes);
-
+  const eligibleSources = state.sources.filter((source) =>
+    source.grade === state.draft.grade &&
+    source.subjectId === state.draft.subjectId &&
+    source.status === "مفهرس" &&
+    source.extractionStatus === "مكتمل",
+  );
+  const references = state.draft.sourceReferences;
   return `
-    <div class="section-intro"><h2>ما المحتوى الذي تريد قياسه؟</h2><p>اختر فقط ما يحتاجه الاختبار. لا ملفات ولا مراجع أمام المعلم؛ تلك الأعمال الشاقة تتولاها المنصة في الخلفية.</p></div>
+    <div class="section-intro"><h2>ما موضوع الاختبار؟</h2><p>ثلاثة حقول فقط. يطابق واثق الموضوع مع الصفحات المفهرسة عند الانتقال للخطوة التالية.</p></div>
     <div class="form-grid two-columns">
       <label class="field"><span>الصف</span><select id="grade-select"><option value="">اختر الصف</option>${Array.from({ length: 12 }, (_, index) => index + 1).map((grade) => `<option value="${grade}" ${state.draft.grade === grade ? "selected" : ""}>الصف ${grade}</option>`).join("")}</select></label>
       <label class="field"><span>المادة</span><select id="subject-select" ${availableSubjects.length === 0 ? "disabled" : ""}><option value="">اختر المادة</option>${availableSubjects.map((item) => `<option value="${item.id}" ${state.draft.subjectId === item.id ? "selected" : ""}>${item.label}</option>`).join("")}</select></label>
-      <label class="field full"><span>الوحدة</span><select id="unit-select" ${!subject ? "disabled" : ""}><option value="">اختر الوحدة</option>${subject?.units.map((item) => `<option value="${item.id}" ${state.draft.unitId === item.id ? "selected" : ""}>${item.label}</option>`).join("") ?? ""}</select><small>البيانات الحالية تجريبية وليست محتوى منهجيًا رسميًا.</small></label>
+      <label class="field full"><span>موضوع الاختبار أو اسم الدرس</span><input id="topic-input" type="text" value="${escapeHtml(state.draft.topic)}" placeholder="مثال: الشحنة الكهربائية" autocomplete="off"/><small>اكتب عبارة قصيرة وواضحة، ولا تحتاج إلى تحديد الوحدة أو أرقام الصفحات.</small></label>
     </div>
 
-    <div class="selection-block ${unit ? "" : "disabled-block"}">
-      <div class="selection-header"><div><h3>الدروس</h3><p>اختر درسًا أو عدة دروس، أو حدد الوحدة كاملة.</p></div>${unit ? `<button class="text-btn" data-action="select-all-lessons">تحديد الوحدة كاملة</button>` : ""}</div>
-      <div class="choice-grid">${unit?.lessons.map((lesson) => checkboxCard("lesson", lesson.id, lesson.label, state.draft.lessonIds.includes(lesson.id))).join("") ?? `<p class="empty-inline">اختر الوحدة أولًا.</p>`}</div>
-    </div>
+    <section class="source-match-card ${references.length ? "ready" : ""}">
+      <div>
+        <span class="source-match-label">المصادر المتاحة</span>
+        <h3>${state.draft.grade !== null && state.draft.subjectId ? `${eligibleSources.length} مصدر مفهرس مطابق للصف والمادة` : "اختر الصف والمادة أولًا"}</h3>
+        <p>${escapeHtml(state.sourceRetrievalMessage || (references.length
+          ? `تم ربط الموضوع بـ ${references.length} مقطعًا من ${new Set(references.map((reference) => reference.sourceId)).size} مصدر.`
+          : "سيبحث واثق في نص الصفحات عند الضغط على التالي."))}</p>
+      </div>
+      ${references.length ? `<div class="source-reference-list">${references.slice(0, 4).map(renderSourceReference).join("")}</div>` : ""}
+    </section>
 
-    <div class="selection-block ${outcomes.length ? "" : "disabled-block"}">
-      <div class="selection-header"><div><h3>نواتج التعلم</h3><p>سيبني واثق خطة الاختبار وفق النتائج التي تحددها.</p></div>${outcomes.length ? `<button class="text-btn" data-action="select-all-outcomes">تحديد الكل</button>` : ""}</div>
-      <div class="choice-list">${outcomes.map((outcome) => checkboxCard("outcome", outcome.id, outcome.label, state.draft.outcomeIds.includes(outcome.id))).join("") || `<p class="empty-inline">اختر درسًا واحدًا على الأقل.</p>`}</div>
-    </div>
-
-    ${renderWizardFooter(1)}
+    ${renderWizardFooter(1, !state.sourceRetrievalBusy)}
   `;
 }
 
-function checkboxCard(group: "lesson" | "outcome", id: string, label: string, checked: boolean): string {
-  return `<label class="check-card ${checked ? "selected" : ""}"><input type="checkbox" data-group="${group}" value="${id}" ${checked ? "checked" : ""}/><span class="check-box">${checked ? icon("check") : ""}</span><b>${escapeHtml(label)}</b></label>`;
+function renderSourceReference(reference: ExamDraft["sourceReferences"][number]): string {
+  const pages = reference.pageFrom === reference.pageTo ? `ص ${reference.pageFrom}` : `ص ${reference.pageFrom}-${reference.pageTo}`;
+  return `<article class="source-reference-item"><div><strong>${escapeHtml(reference.sourceTitle)}</strong><span>${escapeHtml(reference.sourceKind)} · ${pages}</span></div><p>${escapeHtml(reference.excerpt)}</p></article>`;
+}
+
+function renderSourceContextSummary(): string {
+  const references = state.draft.sourceReferences;
+  if (!references.length) return "";
+  return `<section class="compact-source-summary"><div><span>مرجع الموضوع</span><strong>${references.length} مقاطع مرتبطة</strong></div><div class="compact-source-chips">${references.slice(0, 3).map((reference) => {
+    const pages = reference.pageFrom === reference.pageTo ? `ص ${reference.pageFrom}` : `ص ${reference.pageFrom}-${reference.pageTo}`;
+    return `<span>${escapeHtml(reference.sourceTitle)} · ${pages}</span>`;
+  }).join("")}</div></section>`;
 }
 
 function renderSetupStep(): string {
   const validation = validateExamSetup(state.draft);
   return `
     <div class="section-intro"><h2>إعداد واضح بلا قوائم مرعبة</h2><p>حدد البيانات الأساسية وأنواع الأسئلة، وسيظهر التوافق فورًا.</p></div>
+    ${renderSourceContextSummary()}
     <div class="form-grid two-columns">
       ${inputField("title-input", "عنوان الاختبار", state.draft.title, "text", "مثال: الاختبار القصير الأول")}
       ${inputField("date-input", "تاريخ الاختبار", state.draft.examDate, "date")}
@@ -411,7 +430,7 @@ function renderPlanStep(): string {
   }
   const selectedCount = Object.keys(state.draft.selectedProposalByPlanItem).length;
   return `
-    <div class="section-intro inline"><div><h2>اختر سؤالًا واحدًا لكل مفردة</h2><p>كل مجموعة متكافئة في الهدف والصعوبة والدرجة. الاختلاف في الصياغة أو السياق أو العنصر البصري.</p></div><span class="progress-pill">${selectedCount} من ${state.draft.plan.length}</span></div>
+    <div class="section-intro inline"><div><h2>اختر صياغة مبدئية لكل مفردة</h2><p>هذه معاينة بنيوية مرتبطة بصفحات المصدر. التوليد العلمي الفعلي سيحل محل الصياغات التجريبية في المرحلة التالية.</p></div><span class="progress-pill">${selectedCount} من ${state.draft.plan.length}</span></div>
     <div class="plan-stack">${state.draft.plan.map((item, index) => renderPlanItem(item, index)).join("")}</div>
     ${renderWizardFooter(3, isPlanComplete(state.draft))}
   `;
@@ -419,10 +438,14 @@ function renderPlanStep(): string {
 
 function renderPlanItem(item: PlanItem, index: number): string {
   const chosen = state.draft.selectedProposalByPlanItem[item.id];
+  const reference = state.draft.sourceReferences.find((entry) => entry.id === item.sourceReferenceId);
+  const sourceLabel = reference
+    ? `${reference.sourceTitle} · ${reference.pageFrom === reference.pageTo ? `ص ${reference.pageFrom}` : `ص ${reference.pageFrom}-${reference.pageTo}`}`
+    : "مرجع غير محدد";
   return `<article class="plan-card">
-    <header><div class="question-number">${index + 1}</div><div><h3>${item.questionType}</h3><p>${escapeHtml(item.lessonLabel)} · ${escapeHtml(item.outcomeLabel)}</p></div><div class="plan-tags"><span>${item.cognitiveLevel}</span><span>${item.marks} ${item.marks === 1 ? "درجة" : "درجات"}</span></div></header>
-    <div class="proposal-grid">${item.proposals.map((proposal, proposalIndex) => `<label class="proposal-card ${chosen === proposal.id ? "selected" : ""}"><input type="radio" name="proposal-${item.id}" data-plan-id="${item.id}" value="${proposal.id}" ${chosen === proposal.id ? "checked" : ""}/><div class="proposal-top"><span>المقترح ${proposalIndex + 1}</span>${proposal.visualKind ? `<b>${proposal.visualKind}</b>` : ""}</div><p>${escapeHtml(proposal.text)}</p><span class="choose-label">${chosen === proposal.id ? `${icon("check")} تم الاختيار` : "اختر هذا السؤال"}</span></label>`).join("")}</div>
-    <footer><button class="text-btn" data-regenerate="${item.id}">${icon("spark")} توليد ثلاثة بدائل جديدة لهذه المفردة</button></footer>
+    <header><div class="question-number">${index + 1}</div><div><h3>${item.questionType}</h3><p>${escapeHtml(item.lessonLabel)} · ${escapeHtml(sourceLabel)}</p></div><div class="plan-tags"><span>${item.cognitiveLevel}</span><span>${item.marks} ${item.marks === 1 ? "درجة" : "درجات"}</span></div></header>
+    <div class="proposal-grid">${item.proposals.map((proposal, proposalIndex) => `<label class="proposal-card ${chosen === proposal.id ? "selected" : ""}"><input type="radio" name="proposal-${item.id}" data-plan-id="${item.id}" value="${proposal.id}" ${chosen === proposal.id ? "checked" : ""}/><div class="proposal-top"><span>الصياغة ${proposalIndex + 1}</span>${proposal.visualKind ? `<b>${proposal.visualKind}</b>` : ""}</div><p>${escapeHtml(proposal.text)}</p><span class="choose-label">${chosen === proposal.id ? `${icon("check")} تم الاختيار` : "اختر هذه الصياغة"}</span></label>`).join("")}</div>
+    <footer><button class="text-btn" data-regenerate="${item.id}">${icon("spark")} تجديد الصياغات لهذه المفردة</button></footer>
   </article>`;
 }
 
@@ -439,10 +462,10 @@ function renderReviewStep(): string {
         <footer class="paper-footer">- 1 -</footer>
       </section>
       <aside class="review-panel">
-        <div class="final-check"><h3>الفحص النهائي</h3>${checkRow("الصحة العلمية", true)}${checkRow("جدول المواصفات", true)}${checkRow("مجموع الدرجات", true)}${checkRow("التكرار المفاهيمي", true)}${checkRow("نموذج الإجابة", true)}</div>
+        <div class="final-check"><h3>حالة المسودة</h3>${checkRow("ارتباط الموضوع بالمصدر", state.draft.sourceReferences.length > 0)}${checkRow("مجموع الدرجات", true)}${checkRow("اختيار مفردات الخطة", isPlanComplete(state.draft))}${checkRow("التوليد العلمي الفعلي", false)}</div>
         <div class="review-summary"><span>الدرجة</span><strong>${state.draft.totalMarks}</strong><span>الأسئلة</span><strong>${state.draft.plan.length}</strong><span>الصعوبة</span><strong>${state.draft.difficulty}</strong></div>
-        <button class="primary-btn full" data-action="approve-model-a">${icon("check")} اعتماد النموذج أ</button>
-        <p class="muted-note">التصدير الحقيقي وإنشاء النموذج ب غير مفعّلين في Phase 0-B. هذه معاينة لمسار الاستخدام فقط.</p>
+        <button class="primary-btn full" data-action="save-now">${icon("save")} حفظ المسودة</button>
+        <p class="muted-note">هذه المرحلة تثبت اختيار الموضوع واسترجاع صفحاته. لا يُدّعى اعتماد علمي أو تصدير نهائي قبل تشغيل مولد الأسئلة الحقيقي.</p>
       </aside>
     </div>
     ${renderWizardFooter(4, true)}
@@ -454,7 +477,9 @@ function checkRow(label: string, okay: boolean): string {
 }
 
 function renderWizardFooter(step: WizardStep, canContinue = true): string {
-  return `<footer class="wizard-footer">${step > 1 ? `<button class="secondary-btn" data-action="previous-step">السابق</button>` : `<button class="secondary-btn" data-nav="home">إلغاء</button>`}<div>${step < 4 ? `<button class="primary-btn" data-action="next-step" ${canContinue ? "" : "disabled"}>التالي ${icon("arrow")}</button>` : `<button class="secondary-btn" data-nav="library">الذهاب إلى اختباراتي</button>`}</div></footer>`;
+  const retrieving = step === 1 && state.sourceRetrievalBusy;
+  const nextLabel = retrieving ? "جارٍ مطابقة المصادر…" : `التالي ${icon("arrow")}`;
+  return `<footer class="wizard-footer">${step > 1 ? `<button class="secondary-btn" data-action="previous-step">السابق</button>` : `<button class="secondary-btn" data-nav="home">إلغاء</button>`}<div>${step < 4 ? `<button class="primary-btn" data-action="next-step" ${canContinue && !retrieving ? "" : "disabled"}>${nextLabel}</button>` : `<button class="secondary-btn" data-nav="library">الذهاب إلى اختباراتي</button>`}</div></footer>`;
 }
 
 function renderLibrary(): string {
@@ -819,16 +844,8 @@ function handleAction(action: string, element: HTMLElement): void {
   }
   if (action === "save-now") return saveNow();
   if (action === "previous-step") return setStep(Math.max(1, state.draft.currentStep - 1) as WizardStep);
-  if (action === "next-step") return nextStep();
-  if (action === "select-all-lessons") return selectAllLessons();
-  if (action === "select-all-outcomes") return selectAllOutcomes();
+  if (action === "next-step") { void nextStep(); return; }
   if (action === "apply-suggestion") return applySuggestedCounts();
-  if (action === "approve-model-a") {
-    state.draft.status = "معتمد";
-    scheduleSave();
-    showToast("تمت محاكاة اعتماد النموذج أ بنجاح.");
-    return;
-  }
   if (action === "delete-draft") {
     clearDraft();
     state.draft = createEmptyDraft();
@@ -935,14 +952,17 @@ function handleAction(action: string, element: HTMLElement): void {
   if (action === "index-source" && sourceId) { void extractAndIndexSource(sourceId); return; }
 }
 
-function nextStep(): void {
+async function nextStep(): Promise<void> {
   const step = state.draft.currentStep;
   if (step === 1) {
-    const basicReady = state.draft.grade !== null && state.draft.subjectId && state.draft.unitId && state.draft.lessonIds.length && state.draft.outcomeIds.length;
-    if (!basicReady) return showToast("أكمل الصف والمادة والوحدة والدروس ونواتج التعلم أولًا.");
+    if (state.draft.grade === null || !state.draft.subjectId || !state.draft.topic.trim()) {
+      return showToast("اختر الصف والمادة واكتب موضوع الاختبار.");
+    }
+    const matched = await prepareSourceContext();
+    if (!matched) return;
     if (!state.draft.title) {
       const subject = SUBJECTS.find((item) => item.id === state.draft.subjectId)?.label ?? "العلوم";
-      state.draft.title = `الاختبار القصير الأول في ${subject}`;
+      state.draft.title = `اختبار قصير في ${state.draft.topic.trim()} - ${subject}`;
     }
     return setStep(2);
   }
@@ -959,14 +979,68 @@ function nextStep(): void {
   }
 }
 
+async function prepareSourceContext(): Promise<boolean> {
+  if (!centralSourceStore?.currentSession || state.sourceStorageStatus !== "متصل") {
+    state.sourceRetrievalMessage = "يلزم تسجيل دخول مالك المنصة للوصول إلى المقاطع المفهرسة.";
+    render();
+    showToast(state.sourceRetrievalMessage);
+    return false;
+  }
+  const eligible = state.sources.filter((source) =>
+    source.grade === state.draft.grade &&
+    source.subjectId === state.draft.subjectId &&
+    source.status === "مفهرس" &&
+    source.extractionStatus === "مكتمل",
+  );
+  if (!eligible.length) {
+    state.draft.sourceReferences = [];
+    state.sourceRetrievalMessage = "لا يوجد مصدر مفهرس مطابق لهذا الصف والمادة.";
+    render();
+    showToast(state.sourceRetrievalMessage);
+    return false;
+  }
+
+  state.sourceRetrievalBusy = true;
+  state.sourceRetrievalMessage = "جارٍ مطابقة الموضوع مع صفحات المصادر…";
+  render();
+  try {
+    const chunkGroups = await Promise.all(eligible.map(async (source) => ({
+      source,
+      chunks: await centralSourceStore.listSourceChunks(source.id),
+    })));
+    const candidates: SourceChunkCandidate[] = chunkGroups.flatMap(({ source, chunks }) =>
+      chunks.map((chunk) => ({ source, chunk })),
+    );
+    const result = rankSourceChunks(state.draft.topic, candidates, 6);
+    state.draft.sourceReferences = result.references;
+    state.sourceRetrievalBusy = false;
+    if (!result.references.length) {
+      state.sourceRetrievalMessage = "لم يجد واثق تطابقًا واضحًا للموضوع داخل الصفحات المفهرسة. جرّب اسمًا أقصر أو مصطلحًا واردًا في الكتاب.";
+      render();
+      showToast("لم يُعثر على صفحات مطابقة للموضوع.");
+      return false;
+    }
+    state.sourceRetrievalMessage = `تم العثور على ${result.references.length} مقطعًا مناسبًا من ${result.matchedSourceCount} مصدر.`;
+    scheduleSave();
+    return true;
+  } catch (error) {
+    state.sourceRetrievalBusy = false;
+    state.draft.sourceReferences = [];
+    state.sourceRetrievalMessage = error instanceof Error ? error.message : "تعذر قراءة مقاطع المصادر المفهرسة.";
+    render();
+    showToast(state.sourceRetrievalMessage);
+    return false;
+  }
+}
+
 function bindContentStep(): void {
   const gradeSelect = document.querySelector<HTMLSelectElement>("#grade-select");
   gradeSelect?.addEventListener("change", () => {
     state.draft.grade = gradeSelect.value ? Number(gradeSelect.value) : null;
     state.draft.subjectId = "";
-    state.draft.unitId = "";
-    state.draft.lessonIds = [];
-    state.draft.outcomeIds = [];
+    state.draft.topic = "";
+    state.draft.sourceReferences = [];
+    state.sourceRetrievalMessage = "";
     scheduleSave();
     render();
   });
@@ -974,68 +1048,18 @@ function bindContentStep(): void {
   const subjectSelect = document.querySelector<HTMLSelectElement>("#subject-select");
   subjectSelect?.addEventListener("change", () => {
     state.draft.subjectId = subjectSelect.value;
-    state.draft.unitId = "";
-    state.draft.lessonIds = [];
-    state.draft.outcomeIds = [];
+    state.draft.sourceReferences = [];
+    state.sourceRetrievalMessage = "";
     scheduleSave();
     render();
   });
 
-  const unitSelect = document.querySelector<HTMLSelectElement>("#unit-select");
-  unitSelect?.addEventListener("change", () => {
-    state.draft.unitId = unitSelect.value;
-    state.draft.lessonIds = [];
-    state.draft.outcomeIds = [];
+  document.querySelector<HTMLInputElement>("#topic-input")?.addEventListener("input", (event) => {
+    state.draft.topic = (event.target as HTMLInputElement).value;
+    state.draft.sourceReferences = [];
+    state.sourceRetrievalMessage = "";
     scheduleSave();
-    render();
   });
-
-  document.querySelectorAll<HTMLInputElement>('input[data-group="lesson"]').forEach((input) => {
-    input.addEventListener("change", () => {
-      toggleArrayValue(state.draft.lessonIds, input.value, input.checked);
-      const validOutcomeIds = getSelectedLessons().flatMap((lesson) => lesson.outcomes.map((outcome) => outcome.id));
-      state.draft.outcomeIds = state.draft.outcomeIds.filter((id) => validOutcomeIds.includes(id));
-      scheduleSave();
-      render();
-    });
-  });
-
-  document.querySelectorAll<HTMLInputElement>('input[data-group="outcome"]').forEach((input) => {
-    input.addEventListener("change", () => {
-      toggleArrayValue(state.draft.outcomeIds, input.value, input.checked);
-      scheduleSave();
-      render();
-    });
-  });
-}
-
-function getSelectedUnit() {
-  const subject = SUBJECTS.find((item) => item.id === state.draft.subjectId);
-  return subject?.units.find((item) => item.id === state.draft.unitId);
-}
-
-function getSelectedLessons() {
-  return getSelectedUnit()?.lessons.filter((lesson) => state.draft.lessonIds.includes(lesson.id)) ?? [];
-}
-
-function selectAllLessons(): void {
-  const unit = getSelectedUnit();
-  state.draft.lessonIds = unit?.lessons.map((lesson) => lesson.id) ?? [];
-  state.draft.outcomeIds = [];
-  scheduleSave();
-  render();
-}
-
-function selectAllOutcomes(): void {
-  state.draft.outcomeIds = getSelectedLessons().flatMap((lesson) => lesson.outcomes.map((outcome) => outcome.id));
-  scheduleSave();
-  render();
-}
-
-function toggleArrayValue(array: string[], value: string, enabled: boolean): void {
-  const index = array.indexOf(value);
-  if (enabled && index === -1) array.push(value);
-  if (!enabled && index >= 0) array.splice(index, 1);
 }
 
 function bindSetupStep(): void {

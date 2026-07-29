@@ -34,6 +34,17 @@ export interface QuestionCounts {
   long: number;
 }
 
+export interface ExamSourceReference {
+  id: string;
+  sourceId: string;
+  sourceTitle: string;
+  sourceKind: SourceKind;
+  pageFrom: number;
+  pageTo: number;
+  excerpt: string;
+  score: number;
+}
+
 export interface ExamDraft {
   id: string;
   grade: number | null;
@@ -41,6 +52,8 @@ export interface ExamDraft {
   unitId: string;
   lessonIds: string[];
   outcomeIds: string[];
+  topic: string;
+  sourceReferences: ExamSourceReference[];
   title: string;
   examDate: string;
   school: string;
@@ -68,6 +81,7 @@ export interface PlanItem {
   questionType: QuestionType;
   marks: number;
   proposals: QuestionProposal[];
+  sourceReferenceId?: string;
 }
 
 export interface QuestionProposal {

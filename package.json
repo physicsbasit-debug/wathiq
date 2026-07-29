@@ -1,9 +1,9 @@
 {
   "name": "wathiq",
-  "version": "0.0.24",
+  "version": "0.0.25",
   "private": true,
   "type": "module",
-  "description": "واثق: إدارة مصادر علمية وفهرستها حسب الصفحات والمقاطع دون اشتراط تحليل فهرس بصري",
+  "description": "واثق: إدارة المصادر وفهرستها حسب الصفحات والمقاطع وإنشاء اختبار قصير من موضوع واضح",
   "scripts": {
     "build": "node scripts/build.mjs",
     "dev": "node scripts/serve.mjs",
