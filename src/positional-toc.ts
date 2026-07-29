@@ -141,27 +141,77 @@ function isUnitLine(line: LayoutLine): boolean {
   return /الوحد[هة]\s+/.test(normalizeArabic(line.text)) && unitOrdinalFromText(line.text) !== null;
 }
 
+const CODE_SEPARATOR_PATTERN = "[-–—‑ـ_/:：.،\\\\|]";
+
 function codeMatch(value: string): RegExpMatchArray | null {
-  return normalizeDigits(value).match(/(^|\s)(\d{1,2})\s*[-–—‑]\s*(\d{1,2})(?=\s|$)/);
+  return normalizeDigits(value).match(new RegExp(`(^|\\s)(\\d{1,2})\\s*${CODE_SEPARATOR_PATTERN}+\\s*(\\d{1,2})(?=\\s|$)`));
+}
+
+function numericWordValue(word: SourceOcrLayoutWord): number | null {
+  const normalized = normalizeDigits(word.text).trim();
+  const match = normalized.match(/^[^0-9]*([0-9]{1,4})[^0-9]*$/);
+  if (!match?.[1]) return null;
+  const value = Number(match[1]);
+  return Number.isSafeInteger(value) && value >= 1 && value <= 5000 ? value : null;
 }
 
 function purePageNumbers(line: LayoutLine): Array<{ value: number; word: SourceOcrLayoutWord }> {
   return line.words.flatMap((word) => {
-    const normalized = normalizeDigits(cleanText(word.text));
-    if (!/^\d{1,4}$/.test(normalized)) return [];
-    const value = Number(normalized);
-    if (!Number.isSafeInteger(value) || value < 1 || value > 5000) return [];
-    return [{ value, word }];
+    const value = numericWordValue(word);
+    return value === null ? [] : [{ value, word }];
   }).sort((left, right) => left.word.xMin - right.word.xMin);
 }
 
-function extractPageNumber(line: LayoutLine, unitOrdinal: number, lessonOrdinal: number): number | null {
-  const candidates = purePageNumbers(line).filter((candidate) => candidate.value !== unitOrdinal && candidate.value !== lessonOrdinal);
-  if (candidates.length) return candidates[0]?.value ?? null;
-  const normalized = normalizeDigits(line.text);
-  const stripped = normalized.replace(/\d{1,2}\s*[-–—‑]\s*\d{1,2}/, " ");
-  const matches = [...stripped.matchAll(/\b(\d{1,4})\b/g)].map((match) => Number(match[1])).filter((value) => value > 0 && value <= 5000);
-  return matches.at(-1) ?? null;
+function lessonOrdinalFromLine(line: LayoutLine, unitOrdinal: number): number | null {
+  const matched = codeMatch(line.text);
+  if (matched?.[2] && matched[3]) {
+    const first = Number(matched[2]);
+    const second = Number(matched[3]);
+    if (second === unitOrdinal && first >= 1 && first <= 99) return first;
+    if (first === unitOrdinal && second >= 1 && second <= 99) return second;
+  }
+
+  // بعض نتائج Vision تفصل رقمي الرمز إلى كلمتين وتحذف الشرطة بينهما.
+  // نستبعد الرقم الواقع أقصى اليسار لأنه رقم الصفحة، ثم نقرأ الأرقام من جهة رمز الدرس.
+  const pageWord = purePageNumbers(line)[0]?.word;
+  const codeNumbers = line.words
+    .filter((word) => word !== pageWord)
+    .map((word) => numericWordValue(word))
+    .filter((value): value is number => value !== null && value <= 99)
+    .slice(0, 4);
+  for (let index = 0; index < codeNumbers.length - 1; index += 1) {
+    const first = codeNumbers[index];
+    const second = codeNumbers[index + 1];
+    if (first === undefined || second === undefined) continue;
+    if (second === unitOrdinal && first >= 1) return first;
+    if (first === unitOrdinal && second >= 1) return second;
+  }
+  return null;
+}
+
+function extractPageNumber(line: LayoutLine, unitOrdinal: number, lessonOrdinal: number | null): number | null {
+  const span = Math.max(1, line.xMax - line.xMin);
+  const candidates = purePageNumbers(line).filter((candidate) => (
+    candidate.value !== unitOrdinal && candidate.value !== lessonOrdinal
+  ));
+  const positional = candidates.find((candidate) => {
+    const relativeCenter = (wordCenterX(candidate.word) - line.xMin) / span;
+    return relativeCenter <= 0.38;
+  });
+  if (positional) return positional.value;
+
+  if (lessonOrdinal !== null) {
+    const normalized = normalizeDigits(line.text);
+    const stripped = normalized.replace(
+      new RegExp(`\\d{1,2}\\s*${CODE_SEPARATOR_PATTERN}+\\s*\\d{1,2}`),
+      " ",
+    );
+    const matches = [...stripped.matchAll(/\\b(\\d{1,4})\\b/g)]
+      .map((match) => Number(match[1]))
+      .filter((value) => value > 0 && value <= 5000 && value !== unitOrdinal && value !== lessonOrdinal);
+    return matches.at(-1) ?? null;
+  }
+  return null;
 }
 
 function cleanUnitTitle(value: string): string {
@@ -173,12 +223,17 @@ function cleanUnitTitle(value: string): string {
 
 function cleanLessonTitle(value: string, unitOrdinal: number, lessonOrdinal: number, pageNumber: number | null): string {
   let title = normalizeDigits(value);
-  title = title.replace(new RegExp(`(^|\\s)${lessonOrdinal}\\s*[-–—‑]\\s*${unitOrdinal}(?=\\s|$)`), " ");
-  title = title.replace(new RegExp(`(^|\\s)${unitOrdinal}\\s*[-–—‑]\\s*${lessonOrdinal}(?=\\s|$)`), " ");
+  const separator = `${CODE_SEPARATOR_PATTERN}+`;
+  title = title.replace(new RegExp(`(^|\\s)${lessonOrdinal}\\s*${separator}\\s*${unitOrdinal}(?=\\s|$)`), " ");
+  title = title.replace(new RegExp(`(^|\\s)${unitOrdinal}\\s*${separator}\\s*${lessonOrdinal}(?=\\s|$)`), " ");
+  // Vision قد يعيد رقمي الرمز منفصلين من دون الشرطة؛ نحذفهما من بداية السطر فقط.
+  title = title.replace(/^\\s*\\d{1,2}\\s+\\d{1,2}(?=\\s)/, " ");
   if (pageNumber) {
     title = title.replace(new RegExp(`(^|\\s)${pageNumber}(?=\\s|$)`), " ");
   }
-  return cleanText(title).replace(/^[0-9\s-]+|[0-9\s-]+$/g, "").trim();
+  return cleanText(title)
+    .replace(/^[0-9\s\-–—‑ـ_/:：.،\\|]+|[0-9\s\-–—‑ـ_/:：.،\\|]+$/g, "")
+    .trim();
 }
 
 function meaningfulArabicTitle(value: string): boolean {
@@ -202,10 +257,24 @@ function averageConfidence(words: SourceOcrLayoutWord[]): number {
   return Math.max(0, Math.min(1, values.reduce((sum, value) => sum + value, 0) / values.length));
 }
 
+function isIgnoredNonLessonLine(value: string): boolean {
+  const normalized = normalizeArabic(value);
+  return /^(?:مصطلحات علميه|ملحق|المراجعه|اسئله المراجعه|اجابات|قاموس|الفهرس|المحتويات)/.test(normalized);
+}
+
+function nextExpectedLessonOrdinal(unit: ParsedUnit): number {
+  return unit.lessons.reduce((maximum, lesson) => Math.max(maximum, lesson.lessonOrdinal), 0) + 1;
+}
+
 function parseColumn(lines: LayoutLine[]): ParsedUnit[] {
   const units: ParsedUnit[] = [];
   let currentUnit: ParsedUnit | null = null;
-  let pendingLesson: { lessonOrdinal: number; title: string; pageStart: number | null; words: SourceOcrLayoutWord[] } | null = null;
+  let pendingLesson: {
+    lessonOrdinal: number;
+    title: string;
+    pageStart: number | null;
+    words: SourceOcrLayoutWord[];
+  } | null = null;
 
   const finalizeLesson = (): void => {
     if (!currentUnit || !pendingLesson || !pendingLesson.pageStart || !meaningfulArabicTitle(pendingLesson.title)) {
@@ -221,11 +290,14 @@ function parseColumn(lines: LayoutLine[]): ParsedUnit[] {
         pageStart: pendingLesson.pageStart,
         confidence: averageConfidence(pendingLesson.words),
       });
+      currentUnit.lessons.sort((left, right) => left.lessonOrdinal - right.lessonOrdinal);
     }
     pendingLesson = null;
   };
 
-  for (const line of lines) {
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!line) continue;
     const text = cleanText(line.text);
     if (!text || /^(?:المحتويات|المقدمه|كيف تستخدم هذا الكتاب)/.test(normalizeArabic(text))) continue;
 
@@ -242,36 +314,83 @@ function parseColumn(lines: LayoutLine[]): ParsedUnit[] {
     }
 
     if (!currentUnit) continue;
-    const code = codeMatch(text);
-    if (code?.[2] && code[3]) {
+    if (isIgnoredNonLessonLine(text)) {
       finalizeLesson();
-      const first = Number(code[2]);
-      const second = Number(code[3]);
-      let lessonOrdinal: number | null = null;
-      if (second === currentUnit.ordinal) lessonOrdinal = first;
-      else if (first === currentUnit.ordinal) lessonOrdinal = second;
-      if (!lessonOrdinal || lessonOrdinal < 1 || lessonOrdinal > 99) continue;
-      const pageNumber = extractPageNumber(line, currentUnit.ordinal, lessonOrdinal);
+      continue;
+    }
+
+    const explicitLessonOrdinal = lessonOrdinalFromLine(line, currentUnit.ordinal);
+    if (explicitLessonOrdinal !== null) {
+      finalizeLesson();
+      const pageNumber = extractPageNumber(line, currentUnit.ordinal, explicitLessonOrdinal);
       pendingLesson = {
-        lessonOrdinal,
-        title: cleanLessonTitle(text, currentUnit.ordinal, lessonOrdinal, pageNumber),
+        lessonOrdinal: explicitLessonOrdinal,
+        title: cleanLessonTitle(text, currentUnit.ordinal, explicitLessonOrdinal, pageNumber),
         pageStart: pageNumber,
+        words: [...line.words],
+      };
+      if (pageNumber && meaningfulArabicTitle(pendingLesson.title)) finalizeLesson();
+      continue;
+    }
+
+    if (pendingLesson) {
+      const pageNumber = extractPageNumber(line, currentUnit.ordinal, null);
+      const continuation = lineContinuationText(line);
+      if (meaningfulArabicTitle(continuation)) {
+        pendingLesson.title = cleanText(`${pendingLesson.title} ${continuation}`);
+      }
+      if (!pendingLesson.pageStart && pageNumber) pendingLesson.pageStart = pageNumber;
+      pendingLesson.words.push(...line.words);
+      if (pendingLesson.pageStart && meaningfulArabicTitle(pendingLesson.title)) finalizeLesson();
+      continue;
+    }
+
+    const expectedOrdinal = nextExpectedLessonOrdinal(currentUnit);
+    const inferredPageNumber = extractPageNumber(line, currentUnit.ordinal, null);
+    const inferredTitle = cleanLessonTitle(text, currentUnit.ordinal, expectedOrdinal, inferredPageNumber);
+
+    // الاسترداد المكاني: صف عربي ينتهي برقم صفحة داخل نطاق الوحدة يُعد درسًا
+    // حتى لو حذف Vision رمز الدرس أو شوّهه بالكامل.
+    if (inferredPageNumber && meaningfulArabicTitle(inferredTitle)) {
+      pendingLesson = {
+        lessonOrdinal: expectedOrdinal,
+        title: inferredTitle,
+        pageStart: inferredPageNumber,
+        words: [...line.words],
+      };
+      finalizeLesson();
+      continue;
+    }
+
+    const continuation = lineContinuationText(line);
+    if (!meaningfulArabicTitle(continuation)) continue;
+
+    const nextLine = lines[index + 1];
+    const nextIsUnit = Boolean(nextLine && isUnitLine(nextLine));
+    const nextExplicitOrdinal = nextLine ? lessonOrdinalFromLine(nextLine, currentUnit.ordinal) : null;
+    const nextPageNumber = nextLine && !nextIsUnit
+      ? extractPageNumber(nextLine, currentUnit.ordinal, nextExplicitOrdinal)
+      : null;
+
+    // عناوين الوحدات قد تلتف إلى سطر قصير مثل «النصف».
+    if (currentUnit.lessons.length === 0 && continuation.length <= 20) {
+      currentUnit.title = cleanText(`${currentUnit.title} ${continuation}`);
+      continue;
+    }
+
+    // عنوان درس ملتف: السطر الأول يحمل العنوان، والسطر التالي يحمل بقية العنوان ورقم الصفحة.
+    if (!nextIsUnit && nextExplicitOrdinal === null && nextPageNumber) {
+      pendingLesson = {
+        lessonOrdinal: expectedOrdinal,
+        title: continuation,
+        pageStart: null,
         words: [...line.words],
       };
       continue;
     }
 
-    if (pendingLesson) {
-      const pageCandidates = purePageNumbers(line);
-      if (!pendingLesson.pageStart && pageCandidates.length) pendingLesson.pageStart = pageCandidates[0]?.value ?? null;
-      const continuation = lineContinuationText(line);
-      if (meaningfulArabicTitle(continuation)) pendingLesson.title = cleanText(`${pendingLesson.title} ${continuation}`);
-      pendingLesson.words.push(...line.words);
-      continue;
-    }
-
-    const continuation = lineContinuationText(line);
-    if (meaningfulArabicTitle(continuation) && currentUnit.lessons.length === 0 && text.length <= 50) {
+    // قبل أول درس فقط، السطر العربي القصير بلا صفحة ولا رمز هو امتداد لعنوان الوحدة.
+    if (currentUnit.lessons.length === 0) {
       currentUnit.title = cleanText(`${currentUnit.title} ${continuation}`);
     }
   }
