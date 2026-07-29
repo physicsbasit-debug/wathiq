@@ -779,3 +779,24 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
   .toc-draft-origin { align-self: end; padding-bottom: 8px; }
   .toc-reference-lines p { grid-template-columns: 1fr; gap: 3px; }
 }
+
+
+/* Phase 0-H3: page-first indexing. Visual TOC controls are retired from the runtime UI. */
+.source-readiness-card { margin-top: 18px; padding: 18px; border: 1px solid var(--border); border-radius: 16px; background: #fbfdff; display: grid; gap: 15px; }
+.source-readiness-card > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.source-readiness-card h3 { margin: 4px 0 6px; color: var(--navy); font-size: 20px; }
+.source-readiness-card p { margin: 0; color: var(--muted); line-height: 1.75; }
+.source-readiness-card.ready { border-color: #b9dfc7; background: #f7fcf8; }
+.source-readiness-card.warning { border-color: #efd39e; background: #fffaf0; }
+.source-readiness-badge { border-radius: 999px; padding: 7px 11px; background: #e8eef8; color: var(--navy); font-size: 12px; font-weight: 800; white-space: nowrap; }
+.source-readiness-card.ready .source-readiness-badge { background: #e3f5e9; color: #17643a; }
+.source-readiness-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.source-readiness-metrics > div { display: grid; gap: 5px; padding: 12px; border: 1px solid #e3e9f1; border-radius: 12px; background: #fff; }
+.source-readiness-metrics span { color: var(--muted); font-size: 12px; font-weight: 700; }
+.source-readiness-metrics strong { color: var(--navy); line-height: 1.5; }
+.source-readiness-note { padding-top: 12px; border-top: 1px solid #e3e9f1; font-size: 13px; }
+@media (max-width: 720px) {
+  .source-readiness-card > header { display: grid; }
+  .source-readiness-metrics { grid-template-columns: 1fr; }
+  .source-readiness-badge { justify-self: start; }
+}

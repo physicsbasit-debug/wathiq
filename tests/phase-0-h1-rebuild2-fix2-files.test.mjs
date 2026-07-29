@@ -26,7 +26,7 @@ test("Fix 2 يفصل فحص الكاش GET عن رفع صورة POST", async () 
   assert.match(drive, /method:\s*"GET"/);
   assert.match(toc, /readCachedPage/);
   assert.match(toc, /if \(cached\)/);
-  assert.match(app, /googleDriveService\.getCachedSourceLayoutPage/);
+  assert.doesNotMatch(app, /googleDriveService\.getCachedSourceLayoutPage/);
 });
 
 test("Fix 2 يحتفظ بإصلاح نوع معرفات Drive في Edge Function", async () => {

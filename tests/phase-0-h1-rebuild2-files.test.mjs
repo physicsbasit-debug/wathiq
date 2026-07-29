@@ -9,11 +9,10 @@ const edge = await readFile(new URL("../supabase/functions/google-drive-oauth/in
 const sql = await readFile(new URL("../supabase/phase_0_h1_rebuild2_positional_toc.sql", import.meta.url), "utf8");
 const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 
-test("تربط الواجهة OCR الموضعي بمنشئ المسودة بدل الرفض الشامل", () => {
-  assert.match(app, /extractPositionalTocLayouts/);
-  assert.match(app, /buildTocDraft/);
-  assert.doesNotMatch(app, /extractStructureFromPositionalToc/);
-  assert.match(app, /لم يُحفظ شيء بعد/);
+test("تحتفظ ملفات OCR الموضعي تاريخيًا لكنها لا تُربط بواجهة H3", () => {
+  assert.doesNotMatch(app, /extractPositionalTocLayouts|buildTocDraft|extractStructureFromPositionalToc|لم يُحفظ شيء بعد/);
+  assert.match(positional, /layoutPageToColumns/);
+  assert.match(renderer, /computeTocRenderScale/);
 });
 
 test("يفصل المحرك العمود الأيمن عن الأيسر ويقرأ رموز الدروس", () => {

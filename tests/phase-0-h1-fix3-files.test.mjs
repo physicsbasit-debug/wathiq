@@ -6,9 +6,10 @@ const app = await readFile(new URL("../src/app.ts", import.meta.url), "utf8");
 const structure = await readFile(new URL("../src/source-structure.ts", import.meta.url), "utf8");
 const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 
-test("تعلن الواجهة منشئ الفهرس المنظم بدل ادعاء الاستخراج الكامل", () => {
-  assert.match(app, /Phase 0-H2/);
-  assert.match(app, /صفوف قابلة للمراجعة/);
+test("تعلن الواجهة فهرسة الصفحات بدل منشئ الفهرس", () => {
+  assert.match(app, /Phase 0-H3/);
+  assert.match(app, /فهرسة حسب الصفحات/);
+  assert.doesNotMatch(app, /صفوف قابلة للمراجعة|Phase 0-H2/);
 });
 
 test("يبقى محرك H1 القديم متاحًا للتوافق ولا يقود مسار الواجهة", () => {
