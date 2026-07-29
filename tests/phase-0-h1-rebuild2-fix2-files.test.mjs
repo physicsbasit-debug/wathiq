@@ -39,7 +39,8 @@ test("Fix 2 يحتفظ بإصلاح نوع معرفات Drive في Edge Function
 });
 
 
-test("يرفع الإصدار إلى Fix 2", async () => {
+test("لا يتراجع الإصدار عن Fix 2", async () => {
   const packageJson = JSON.parse(await read("package.json"));
-  assert.equal(packageJson.version, "0.0.21");
+  const parts = String(packageJson.version).split(".").map(Number);
+  assert.ok(parts[0] > 0 || parts[1] > 0 || (parts[2] ?? 0) >= 21);
 });

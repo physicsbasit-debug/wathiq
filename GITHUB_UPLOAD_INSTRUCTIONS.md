@@ -1,9 +1,7 @@
-# رفع Phase 0-H1 Rebuild 2 Fix 2
+# رفع Phase 0-H1 Rebuild 2 Fix 3
 
-- الفرع: `fix/phase-0-h1-cache-handshake`
-- الرسالة: `fix: فصل فحص كاش OCR عن رفع صورة الفهرس`
-- ارفع ملفات Changed Files Only مع المحافظة على المسارات.
+- الفرع: `fix/phase-0-h1-spatial-lesson-recovery`
+- رسالة commit: `fix: استرداد دروس الفهرس عند تشويه رموز OCR`
+- ارفع محتويات الحزمة فوق جذر المستودع مع الحفاظ على المجلدات.
 - انتظر نجاح GitHub Actions قبل الدمج.
-- بعد الدمج انشر `supabase/functions/google-drive-oauth/index.ts` داخل Edge Function.
-- لا يوجد SQL جديد.
-- `pages.yml` لم يتغير.
+- لا يوجد SQL، ولا Edge Function، ولا تعديل على `.github/workflows/pages.yml`.

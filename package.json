@@ -1,9 +1,9 @@
 {
   "name": "wathiq",
-  "version": "0.0.21",
+  "version": "0.0.22",
   "private": true,
   "type": "module",
-  "description": "واثق: فصل فحص كاش OCR عن رفع الصورة لمنع تعليق الفهرس البصري",
+  "description": "واثق: استرداد الدروس مكانيًا عند تشويه رموز الفهرس في OCR",
   "scripts": {
     "build": "node scripts/build.mjs",
     "dev": "node scripts/serve.mjs",
