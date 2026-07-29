@@ -22,8 +22,8 @@ test("يفصل المحرك العمود الأيمن عن الأيسر ويقر
 });
 
 test("تجهز الواجهة صفحة PDF بدقة عالية قبل OCR الموضعي", () => {
-  assert.match(renderer, /PREFERRED_RENDER_SCALE = 3/);
-  assert.match(renderer, /MAX_RENDER_PIXELS = 16_000_000/);
+  assert.match(renderer, /PREFERRED_RENDER_SCALE = 2\.75/);
+  assert.match(renderer, /MAX_RENDER_PIXELS = 10_000_000/);
 });
 
 test("تضيف Edge Function مسار إحداثيات الكلمات وتخزن layout_json", () => {
@@ -34,5 +34,5 @@ test("تضيف Edge Function مسار إحداثيات الكلمات وتخزن
 });
 
 test("يرفع إصدار واثق إلى Rebuild 2", () => {
-  assert.equal(packageJson.version, "0.0.19");
+  assert.equal(packageJson.version, "0.0.20");
 });

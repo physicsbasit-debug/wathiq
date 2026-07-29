@@ -1,13 +1,9 @@
-# رفع Phase 0-H1 Rebuild 2 عبر GitHub
+# رفع Phase 0-H1 Rebuild 2 Fix 1
 
-1. أنشئ فرعًا من `main` باسم `fix/phase-0-h1-positional-ocr-toc`.
-2. ارفع محتويات حزمة الملفات المعدلة فقط.
-3. استخدم رسالة الالتزام: `fix: استخراج الفهرس من إحداثيات الكلمات`.
-4. افتح Pull Request وانتظر نجاح GitHub Actions، ولا تدمج بعد.
-5. نفّذ ملف SQL في Supabase.
-6. استبدل كود Edge Function `google-drive-oauth` بالكامل بالكود الجديد، ثم تأكد أن `Verify JWT with legacy secret` مغلق.
-7. ادمج Pull Request وانتظر نجاح النشر.
-8. افتح كتاب الفيزياء واضغط إعادة استخراج الهيكل. يمكن تحديد صفحة الفهرس `12` يدويًا عند الحاجة.
-9. لا تعتمد الهيكل إلا إذا ظهر 11 وحدة و29 درسًا.
-
-`pages.yml` لم يتغير.
+- الفرع: `fix/phase-0-h1-wallclock-timeout`
+- الرسالة: `fix: منع تعليق OCR عند تجاوز مهلة التنفيذ`
+- ارفع ملفات Changed Files Only مع المحافظة على المسارات.
+- انتظر نجاح GitHub Actions قبل الدمج.
+- بعد الدمج انشر ملف `supabase/functions/google-drive-oauth/index.ts` داخل Edge Function.
+- لا يوجد SQL جديد.
+- `pages.yml` لم يتغير.

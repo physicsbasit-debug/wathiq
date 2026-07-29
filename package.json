@@ -1,9 +1,9 @@
 {
   "name": "wathiq",
-  "version": "0.0.19",
+  "version": "0.0.20",
   "private": true,
   "type": "module",
-  "description": "واثق: استخراج فهرس الكتب العربية متعدد الأعمدة عبر OCR موضعي بإحداثيات الكلمات",
+  "description": "واثق: استخراج فهرس عربي موضعي مع مهلات آمنة وإعادة محاولة ومراقبة مراحل OCR",
   "scripts": {
     "build": "node scripts/build.mjs",
     "dev": "node scripts/serve.mjs",

@@ -4,9 +4,9 @@ const PDFJS_VERSION = "4.10.38";
 const PDFJS_BASE_URL = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_VERSION}/build`;
 const PDFJS_MODULE_URL = `${PDFJS_BASE_URL}/pdf.mjs`;
 const PDFJS_WORKER_URL = `${PDFJS_BASE_URL}/pdf.worker.mjs`;
-const PREFERRED_RENDER_SCALE = 3;
-const MAX_RENDER_PIXELS = 16_000_000;
-const JPEG_QUALITY = 0.94;
+const PREFERRED_RENDER_SCALE = 2.75;
+const MAX_RENDER_PIXELS = 10_000_000;
+const JPEG_QUALITY = 0.88;
 
 interface PdfViewportLike {
   width: number;

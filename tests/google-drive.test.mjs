@@ -277,3 +277,22 @@ test("يرسل صفحة الفهرس للتحليل الموضعي ويقرأ إ
   assert.match(calls[0].url, /\/ocr-layout-page$/);
   assert.equal(calls[0].init.headers["x-wathiq-page-number"], "12");
 });
+
+
+test("يوقف طلب OCR الموضعي إذا علقت Edge Function بدل إبقاء الواجهة معلقة", async () => {
+  let aborted = false;
+  const fetcher = async (_url, init = {}) => await new Promise((_resolve, reject) => {
+    const signal = init.signal;
+    if (!signal) return reject(new Error("لم تُرسل إشارة إلغاء للطلب."));
+    signal.addEventListener("abort", () => {
+      aborted = true;
+      reject(new DOMException("Aborted", "AbortError"));
+    }, { once: true });
+  });
+  const service = new GoogleDriveService(config, centralStore, fetcher, 8 * 1024 * 1024, 10);
+  await assert.rejects(
+    () => service.ocrSourceLayoutPage("source-timeout", 12, 124, new Blob(["image"], { type: "image/jpeg" })),
+    /توقفت خدمة التحليل البصري عن الاستجابة/,
+  );
+  assert.equal(aborted, true);
+});
