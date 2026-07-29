@@ -4,37 +4,33 @@ import { readFile } from "node:fs/promises";
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
-test("H2 يضيف منشئ فهرس منظم قابل للمراجعة", async () => {
-  const app = await read("src/app.ts");
-  const builder = await read("src/toc-draft-builder.ts");
-  assert.match(app, /Phase 0-H2 · منشئ الفهرس المنظم/);
-  assert.match(app, /save-toc-draft/);
-  assert.match(app, /approve-toc-draft/);
-  assert.match(app, /عرض نص OCR المرجعي/);
+test("H2 يبقى موثقًا تاريخيًا لكنه متقاعد من واجهة H3", async () => {
+  const [app, builder, doc] = await Promise.all([
+    read("src/app.ts"),
+    read("src/toc-draft-builder.ts"),
+    read("docs/PHASE_0_H2_STRUCTURED_TOC_BUILDER.md"),
+  ]);
+  assert.doesNotMatch(app, /Phase 0-H2 · منشئ الفهرس المنظم|save-toc-draft|approve-toc-draft|عرض نص OCR المرجعي/);
   assert.match(builder, /buildTocDraft/);
   assert.match(builder, /convertTocDraftRows/);
+  assert.match(doc, /Phase 0-H2/);
 });
 
-test("H2 لا يحفظ نتيجة OCR تلقائيًا ولا يحذف الهيكل السابق", async () => {
+test("H3 لا يستدعي حفظ أو حذف هيكل تلقائيًا", async () => {
   const app = await read("src/app.ts");
-  const extractStart = app.indexOf("async function extractAndSaveSourceStructure");
-  const extractEnd = app.indexOf("function updateTocDraftRow", extractStart);
-  const extractionBlock = app.slice(extractStart, extractEnd);
-  assert.match(extractionBlock, /state\.structureDraftActive = true/);
-  assert.doesNotMatch(extractionBlock, /replaceSourceStructure\(/);
-  assert.match(app, /لم يحذفها واثق/);
+  assert.doesNotMatch(app, /extractAndSaveSourceStructure|replaceSourceStructure\(|structureDraftActive/);
+  assert.match(app, /استرجاع حسب الصفحة والمقطع/);
 });
 
-test("H2 يفصل حفظ المسودة عن الاعتماد الصارم", async () => {
+test("H3 يعتمد جاهزية المصدر على استخراج الصفحات والمقاطع", async () => {
   const app = await read("src/app.ts");
-  const structure = await read("src/source-structure.ts");
-  assert.match(app, /validateSourceStructureDraft/);
-  assert.match(app, /validateSourceStructureForApproval/);
-  assert.match(structure, /الوحدة «\$\{root\.title\}» بلا دروس أو عناصر تابعة/);
+  assert.match(app, /renderSourceReadinessPanel/);
+  assert.match(app, /لا يحتاج المصدر إلى تحليل فهرس بصري/);
+  assert.match(app, /الوحدات والدروس ليست شرطًا/);
 });
 
-test("H2 لا يغيّر SQL أو Edge Function أو pages.yml", async () => {
+test("H3 لا يغيّر SQL أو Edge Function أو pages.yml", async () => {
   const packageJson = JSON.parse(await read("package.json"));
-  assert.equal(packageJson.version, "0.0.23");
-  assert.match(packageJson.description, /منشئ فهرس منظم/);
+  assert.equal(packageJson.version, "0.0.24");
+  assert.match(packageJson.description, /فهرستها حسب الصفحات والمقاطع/);
 });

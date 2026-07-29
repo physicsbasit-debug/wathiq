@@ -1,9 +1,7 @@
-# رفع Phase 0-H2 — Structured TOC Builder
+# رفع Phase 0-H3 عبر GitHub
 
-- أنشئ فرعًا من `main` باسم: `feat/phase-0-h2-structured-toc-builder`
-- ارفع محتويات حزمة **Changed Files Only** فوق جذر المستودع مع الحفاظ على المجلدات.
-- رسالة commit المقترحة: `feat: إضافة منشئ فهرس منظم قابل للمراجعة`
-- انتظر نجاح GitHub Actions قبل الدمج.
-- لا يوجد SQL جديد.
-- لا يوجد تحديث Edge Function.
-- لا يوجد تعديل على `.github/workflows/pages.yml`.
+- الفرع: `refactor/phase-0-h3-page-first-indexing`
+- ارفع محتويات حزمة Changed Files Only فوق الفرع.
+- رسالة الالتزام: `refactor: إلغاء تحليل الفهرس البصري واعتماد فهرسة الصفحات`
+- انتظر الفحص الأخضر قبل الدمج.
+- لا يوجد SQL أو Edge Function أو `pages.yml`.

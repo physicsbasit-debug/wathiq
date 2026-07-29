@@ -12,13 +12,11 @@ test("يضيف SQL جدول هيكل المصدر مع RLS", async () => {
   assert.match(sql, /parent_id/);
 });
 
-test("تربط الواجهة منشئ الفهرس ومراجعته واعتماده", async () => {
-  const app = await read("src/app.ts");
-  assert.match(app, /منشئ الفهرس المنظم/);
-  assert.match(app, /approve-source-structure/);
-  assert.match(app, /approve-toc-draft/);
-  assert.match(app, /replaceSourceStructure/);
-  assert.match(app, /listSourceChunks/);
+test("يبقى تخزين الهيكل القديم متوافقًا دون أن يقود واجهة H3", async () => {
+  const [app, store] = await Promise.all([read("src/app.ts"), read("src/central-source-store.ts")]);
+  assert.doesNotMatch(app, /approve-source-structure|approve-toc-draft|منشئ الفهرس المنظم/);
+  assert.match(store, /replaceSourceStructure/);
+  assert.match(store, /listSourceChunks/);
 });
 
 test("لا يتغير pages.yml في Phase 0-H2", async () => {

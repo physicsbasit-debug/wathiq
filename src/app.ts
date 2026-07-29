@@ -8,7 +8,7 @@ import {
   validateExamSetup,
 } from "./domain.js";
 import { clearDraft, loadDraft, loadProfile, loadSources, saveDraft, saveProfile, saveSources } from "./storage.js";
-import type { ExamDraft, ManagedSource, PlanItem, QuestionCounts, SourceDraft, SourceStatus, SourceExtractionResult, SourceStructureExtractionResult, SourceStructureNode, SourceStructureNodeType, ViewName, WizardStep } from "./types.js";
+import type { ExamDraft, ManagedSource, PlanItem, QuestionCounts, SourceDraft, SourceStatus, SourceExtractionResult, ViewName, WizardStep } from "./types.js";
 import { escapeHtml, formatArabicDate, icon } from "./ui.js";
 import { buildSourceDrivePath, changeSourceStatus, createEmptySourceDraft, createManagedSource, findDuplicateContentSource, findDuplicateSource, sourceSubjectLabel, SOURCE_KINDS, SOURCE_SEMESTERS, validateSourceDraft } from "./source-domain.js";
 import { createRegistryBackup, mergeSourceRegistry, parseRegistryBackup } from "./source-registry.js";
@@ -17,11 +17,7 @@ import { getRuntimeConfig, isCentralStorageConfigured, isGoogleDriveConfigured }
 import { GoogleDriveService, type GoogleDriveStatus, type PendingSourceUpload, type SourceUploadProgress } from "./google-drive.js";
 import { extractPdfText, shouldInvalidateLegacyExtraction, type PdfExtractionProgress } from "./pdf-indexer.js";
 import { extractPdfWithArabicOcr } from "./ocr-indexer.js";
-import { extractPositionalTocLayouts } from "./toc-layout-ocr.js";
-import { detectTocPagesFromChunks } from "./positional-toc.js";
-import { buildTocDraft, composeStructureTitle, convertTocDraftRows, createEmptyTocDraftRow, splitStructureTitle, type TocDraftReferenceLine, type TocDraftRow } from "./toc-draft-builder.js";
 import { resolveInitialView, viewFromHash, viewHash } from "./navigation.js";
-import { createManualStructureNode, extractSourceStructure, parsePageSelection, resequenceStructureNodes, shouldQuarantineLegacyStructureDraft, SOURCE_STRUCTURE_NODE_TYPES, validateSourceStructureDraft, validateSourceStructureForApproval } from "./source-structure.js";
 
 const appRoot = document.querySelector<HTMLDivElement>("#app");
 if (!appRoot) throw new Error("تعذر العثور على جذر التطبيق.");
@@ -58,17 +54,6 @@ interface AppState {
   sourceIndexingId: string;
   sourceIndexingProgress: number;
   sourceIndexingMessage: string;
-  structureSourceId: string;
-  structureNodes: SourceStructureNode[];
-  structureLoaded: boolean;
-  structureBusy: boolean;
-  structureMessage: string;
-  structureDirty: boolean;
-  structureManualTocPages: string;
-  structureDraftActive: boolean;
-  structureDraftRows: TocDraftRow[];
-  structureDraftReferenceLines: TocDraftReferenceLine[];
-  structureDraftTocPages: number[];
 }
 
 
@@ -123,17 +108,6 @@ const state: AppState = {
   sourceIndexingId: "",
   sourceIndexingProgress: 0,
   sourceIndexingMessage: "",
-  structureSourceId: "",
-  structureNodes: [],
-  structureLoaded: false,
-  structureBusy: false,
-  structureMessage: "",
-  structureDirty: false,
-  structureManualTocPages: "",
-  structureDraftActive: false,
-  structureDraftRows: [],
-  structureDraftReferenceLines: [],
-  structureDraftTocPages: [],
 };
 
 let saveTimer: number | undefined;
@@ -619,7 +593,7 @@ function renderAdmin(): string {
   const visibleSources = state.sources.filter((source) => state.sourceFilter === "الكل" || source.status === state.sourceFilter);
   const selectedSource = state.sources.find((source) => source.id === state.selectedSourceId);
   return `
-    <section class="page-heading"><div><span class="eyebrow">لوحة مالك المنصة</span><h1>إدارة المصادر</h1><p>رفع المصادر واستخراج نصها، ثم بناء هيكل الوحدات والدروس من الفهرس ومراجعته قبل الاعتماد.</p></div><span class="demo-badge">Phase 0-H2 · منشئ الفهرس</span></section>
+    <section class="page-heading"><div><span class="eyebrow">لوحة مالك المنصة</span><h1>إدارة المصادر</h1><p>ارفع المصادر واستخرج نصها وفهرسه حسب الصفحات والمقاطع. لا يحتاج المصدر إلى تحليل فهرس بصري كي يصبح جاهزًا للاستخدام.</p></div><span class="demo-badge">Phase 0-H3 · فهرسة حسب الصفحات</span></section>
 
     ${renderSourceStoragePanel()}
     ${renderGoogleDrivePanel()}
@@ -651,7 +625,7 @@ function renderAdmin(): string {
 
     <section class="source-table-wrap">
       <div class="source-list-heading">
-        <div><h2>مكتبة المصادر</h2><p>بعد رفع PDF يحاول واثق طبقة النص أولًا، ثم يتيح OCR عربيًا فعليًا للملفات المصورة أو المشوهة مع استكمال الصفحات بعد الانقطاع.</p></div>
+        <div><h2>مكتبة المصادر</h2><p>بعد رفع PDF يستخرج واثق النص ويحفظ كل مقطع مع رقم صفحته. OCR العربي يبقى للملفات المصورة أو المشوهة فقط.</p></div>
         <label class="search-field"><span>بحث</span><input id="source-search" placeholder="اسم المصدر أو المادة أو رقم الفهرسة"/></label>
       </div>
       <div class="source-filter-row">${(["الكل", "جاهز للفهرسة", "مفهرس", "يحتاج مراجعة", "مؤرشف"] as const).map((filter) => `<button class="filter-chip ${state.sourceFilter === filter ? "active" : ""}" data-source-filter="${filter}">${filter}</button>`).join("")}</div>
@@ -722,8 +696,8 @@ function renderSourceDetails(source: ManagedSource): string {
       <div class="source-reference"><span>مسار Google Drive</span><code>${escapeHtml(source.drivePath)}</code></div>
       ${source.extractionMessage ? `<div class="extraction-note status-${extractionStatus === "مكتمل" ? "ok" : extractionStatus === "يحتاج OCR" || extractionStatus === "فشل" ? "warn" : "idle"}"><strong>${escapeHtml(extractionStatus)}</strong><p>${escapeHtml(source.extractionMessage)}</p></div>` : ""}
       ${source.extractionPreview ? `<div class="extraction-preview"><span>معاينة النص المستخرج</span><p>${escapeHtml(source.extractionPreview)}</p></div>` : ""}
-      ${headings.length ? `<div class="detected-headings"><span>عناوين مرشحة وليست معتمدة بعد</span><div>${headings.slice(0, 12).map((heading) => `<small>${escapeHtml(heading)}</small>`).join("")}</div></div>` : ""}
-      ${renderSourceStructurePanel(source)}
+      ${headings.length ? `<div class="detected-headings"><span>عناوين مستخرجة للمساعدة في البحث، وليست فهرسًا للكتاب</span><div>${headings.slice(0, 12).map((heading) => `<small>${escapeHtml(heading)}</small>`).join("")}</div></div>` : ""}
+      ${renderSourceReadinessPanel(source)}
       <div class="source-detail-actions">
         ${source.mode === "file" && source.driveFileId && source.status !== "مؤرشف" ? `<button class="primary-btn compact" data-action="index-source" data-source-id="${source.id}" ${state.sourceIndexingId ? "disabled" : ""}>${sourceExtractionActionLabel(source, state.sourceIndexingId === source.id)}</button>` : ""}
         ${source.driveWebViewLink ? `<a class="secondary-btn compact source-drive-link" href="${escapeHtml(source.driveWebViewLink)}" target="_blank" rel="noreferrer">فتح الملف في Google Drive</a>` : ""}
@@ -732,101 +706,36 @@ function renderSourceDetails(source: ManagedSource): string {
   `;
 }
 
-function renderManualTocControls(source: ManagedSource): string {
-  return `<div class="manual-toc-controls">
-    <label><span>صفحات الفهرس يدويًا</span><input inputmode="numeric" data-structure-toc-pages value="${escapeHtml(state.structureManualTocPages)}" placeholder="مثال: 4-5 أو 4، 5" /></label>
-    <button class="secondary-btn compact" data-action="extract-source-structure-manual" data-source-id="${source.id}" ${state.structureBusy ? "disabled" : ""}>استخراج من الصفحات المحددة</button>
-  </div>`;
-}
-
-function renderSourceStructurePanel(source: ManagedSource): string {
-  const eligible = source.mode === "file" && source.extractionStatus === "مكتمل" && source.status === "مفهرس";
-  if (!eligible) {
-    return `<section class="source-structure-card unavailable"><div><span class="eyebrow">هيكل الكتاب</span><h3>يظهر بعد اكتمال استخراج النص</h3><p>استخرج النص وفهرسه أولًا، ثم افتح منشئ الفهرس لمراجعة الوحدات والدروس.</p></div></section>`;
-  }
-  if (state.structureSourceId !== source.id || !state.structureLoaded) {
-    return `<section class="source-structure-card loading"><div><span class="eyebrow">هيكل الكتاب</span><h3>${state.structureBusy ? "جارٍ تحميل الهيكل…" : "جارٍ التحقق من الهيكل المحفوظ…"}</h3><p>${escapeHtml(state.structureMessage || "انتظر لحظة؛ لا توجد طقوس إضافية مطلوبة.")}</p></div></section>`;
-  }
-  if (state.structureDraftActive) return renderTocDraftBuilder(source);
-  if (!state.structureNodes.length) {
-    return `<section class="source-structure-card empty"><div><span class="eyebrow">Phase 0-H2 · منشئ فهرس منظم</span><h3>ابنِ الهيكل من مسودة قابلة للمراجعة</h3><p>${escapeHtml(state.structureMessage || "يقرأ واثق صفوف الفهرس ويعرضها في جدول قابل للتعديل. لن يحفظ أو يعتمد شيئًا تلقائيًا.")}</p></div><div class="structure-empty-actions"><button class="primary-btn compact" data-action="extract-source-structure" data-source-id="${source.id}" ${state.structureBusy ? "disabled" : ""}>${state.structureBusy ? "جارٍ تجهيز المسودة…" : "فتح منشئ الفهرس"}</button>${renderManualTocControls(source)}<button class="ghost-btn compact" data-action="add-structure-unit" data-source-id="${source.id}" ${state.structureBusy ? "disabled" : ""}>بدء هيكل يدوي</button></div></section>`;
-  }
-  const draftValidation = validateSourceStructureDraft(state.structureNodes);
-  const approvalValidation = validateSourceStructureForApproval(state.structureNodes);
-  const approved = state.structureNodes.every((node) => node.reviewStatus === "معتمد");
-  const units = state.structureNodes.filter((node) => node.nodeType === "وحدة");
-  return `<section class="source-structure-card review">
-    <header><div><span class="eyebrow">هيكل الكتاب</span><h3>${approved ? "هيكل معتمد" : "مراجعة الوحدات والدروس"}</h3><p>${escapeHtml(state.structureMessage || `يحتوي الهيكل على ${units.length} وحدة و${state.structureNodes.length - units.length} عنصرًا تابعًا.`)}</p></div><span class="structure-review-badge ${approved ? "approved" : "draft"}">${approved ? "معتمد" : state.structureDirty ? "تعديلات غير محفوظة" : "مسودة محفوظة"}</span></header>
-    ${!approvalValidation.valid ? `<div class="structure-validation"><strong>يحتاج ضبطًا قبل الاعتماد</strong><ul>${approvalValidation.issues.slice(0, 8).map((issue) => `<li>${escapeHtml(issue)}</li>`).join("")}</ul></div>` : `<div class="structure-validation success"><strong>الهيكل اجتاز التحقق ويمكن اعتماده.</strong></div>`}
-    <div class="structure-tree">${state.structureNodes.map((node, index) => renderStructureNodeRow(node, index, units)).join("")}</div>
-    <div class="structure-toolbar">
-      <button class="ghost-btn compact" data-action="add-structure-unit" data-source-id="${source.id}" ${state.structureBusy ? "disabled" : ""}>إضافة وحدة</button>
-      <button class="ghost-btn compact" data-action="add-structure-child" data-source-id="${source.id}" ${state.structureBusy || !units.length ? "disabled" : ""}>إضافة درس</button>
-      <button class="ghost-btn compact" data-action="reextract-source-structure" data-source-id="${source.id}" ${state.structureBusy ? "disabled" : ""}>فتح مسودة OCR جديدة</button>
-      ${renderManualTocControls(source)}
-      <span class="structure-spacer"></span>
-      <button class="secondary-btn compact" data-action="save-source-structure" data-source-id="${source.id}" ${state.structureBusy || !draftValidation.valid ? "disabled" : ""}>حفظ المسودة</button>
-      <button class="primary-btn compact" data-action="approve-source-structure" data-source-id="${source.id}" ${state.structureBusy || !approvalValidation.valid ? "disabled" : ""}>اعتماد الهيكل</button>
+function renderSourceReadinessPanel(source: ManagedSource): string {
+  const complete = source.mode === "file" && source.extractionStatus === "مكتمل" && source.status === "مفهرس";
+  const needsOcr = source.extractionStatus === "يحتاج OCR";
+  const failed = source.extractionStatus === "فشل";
+  const pageCount = source.extractedPageCount ?? 0;
+  const characterCount = source.extractedCharacterCount ?? 0;
+  const statusLabel = complete ? "جاهز للاستخدام" : needsOcr ? "يحتاج OCR" : failed ? "تعذر الاستخراج" : "بانتظار الفهرسة";
+  const message = complete
+    ? `تم حفظ نص ${pageCount} صفحة مع أرقام الصفحات، وأصبح المصدر جاهزًا للبحث والاسترجاع دون تحليل فهرس بصري.`
+    : needsOcr
+      ? "شغّل OCR العربي لاستخراج نص الصفحات المصورة، ثم يصبح المصدر جاهزًا للاستخدام."
+      : failed
+        ? "أعد محاولة الاستخراج أو OCR. لا توجد خطوة خاصة بفهرس الوحدات والدروس."
+        : "استخرج نص PDF وفهرسه حسب الصفحات. هذا هو المسار المعتمد والوحيد المطلوب حاليًا.";
+  return `<section class="source-readiness-card ${complete ? "ready" : needsOcr || failed ? "warning" : "pending"}">
+    <header><div><span class="eyebrow">الفهرسة المعتمدة</span><h3>${statusLabel}</h3><p>${escapeHtml(message)}</p></div><span class="source-readiness-badge">${complete ? "صفحات ومقاطع" : "لا يحتاج فهرسًا بصريًا"}</span></header>
+    <div class="source-readiness-metrics">
+      <div><span>الصفحات</span><strong>${pageCount || "—"}</strong></div>
+      <div><span>الحروف المستخرجة</span><strong>${characterCount ? characterCount.toLocaleString("ar-OM") : "—"}</strong></div>
+      <div><span>طريقة العمل</span><strong>استرجاع حسب الصفحة والمقطع</strong></div>
     </div>
+    <p class="source-readiness-note">الوحدات والدروس ليست شرطًا لتشغيل واثق. يمكن إضافة ربط يدوي اختياري لاحقًا عندما تحتاجه مرحلة إنشاء الاختبارات، من دون OCR للفهرس.</p>
   </section>`;
 }
 
-function renderTocDraftBuilder(source: ManagedSource): string {
-  const conversion = convertTocDraftRows(source.id, state.structureDraftRows, source.extractedPageCount ?? 1);
-  const draftValidation = validateSourceStructureDraft(conversion.nodes);
-  const approvalValidation = validateSourceStructureForApproval(conversion.nodes);
-  const combinedIssues = [...new Set([...conversion.issues, ...approvalValidation.issues])];
-  const unitCount = state.structureDraftRows.filter((row) => row.rowType === "وحدة").length;
-  const lessonCount = state.structureDraftRows.filter((row) => row.rowType === "درس").length;
-  const ignoredCount = state.structureDraftRows.filter((row) => row.rowType === "تجاهل").length;
-  return `<section class="source-structure-card toc-builder">
-    <header><div><span class="eyebrow">Phase 0-H2 · منشئ الفهرس المنظم</span><h3>راجع الصفوف قبل الحفظ</h3><p>${escapeHtml(state.structureMessage || "صنّف الصفوف وعدّل الرمز والعنوان والصفحة. لا توجد نتيجة محفوظة حتى تضغط حفظ أو اعتماد.")}</p></div><span class="structure-review-badge draft">${unitCount} وحدة · ${lessonCount} درس · ${ignoredCount} متجاهل</span></header>
-    ${combinedIssues.length ? `<div class="structure-validation"><strong>ملاحظات التحقق</strong><ul>${combinedIssues.slice(0, 10).map((issue) => `<li>${escapeHtml(issue)}</li>`).join("")}</ul></div>` : `<div class="structure-validation success"><strong>المسودة مكتملة وقابلة للاعتماد.</strong></div>`}
-    <div class="toc-draft-table" role="table" aria-label="مسودة فهرس الكتاب">
-      <div class="toc-draft-head" role="row"><span>ترتيب</span><span>النوع</span><span>الرمز</span><span>العنوان</span><span>الصفحة</span><span>المصدر</span><span>إجراء</span></div>
-      ${state.structureDraftRows.map((row, index) => renderTocDraftRow(row, index)).join("")}
-    </div>
-    <div class="structure-toolbar">
-      <button class="ghost-btn compact" data-action="add-toc-draft-unit" data-source-id="${source.id}">إضافة وحدة</button>
-      <button class="ghost-btn compact" data-action="add-toc-draft-lesson" data-source-id="${source.id}">إضافة درس</button>
-      <button class="ghost-btn compact" data-action="check-toc-draft" data-source-id="${source.id}">التحقق من الهيكل</button>
-      <button class="danger-link compact" data-action="cancel-toc-draft" data-source-id="${source.id}">إلغاء المسودة</button>
-      <span class="structure-spacer"></span>
-      <button class="secondary-btn compact" data-action="save-toc-draft" data-source-id="${source.id}" ${!draftValidation.valid || conversion.issues.length ? "disabled" : ""}>حفظ كمسودة</button>
-      <button class="primary-btn compact" data-action="approve-toc-draft" data-source-id="${source.id}" ${!approvalValidation.valid || conversion.issues.length ? "disabled" : ""}>اعتماد الهيكل</button>
-    </div>
-    <details class="toc-reference-lines"><summary>عرض نص OCR المرجعي (${state.structureDraftReferenceLines.length} سطرًا)</summary><div>${state.structureDraftReferenceLines.slice(0, 120).map((line) => `<p><small>ص ${line.sourcePage} · ${line.sourceColumn}</small><span>${escapeHtml(line.text)}</span></p>`).join("")}</div></details>
-  </section>`;
-}
 
-function renderTocDraftRow(row: TocDraftRow, index: number): string {
-  return `<article class="toc-draft-row ${row.rowType === "تجاهل" ? "ignored" : ""}" role="row" data-toc-draft-row="${row.id}">
-    <div class="structure-move"><button class="icon-btn" data-action="move-toc-draft-up" data-toc-draft-id="${row.id}" ${index === 0 ? "disabled" : ""} aria-label="تحريك لأعلى">↑</button><button class="icon-btn" data-action="move-toc-draft-down" data-toc-draft-id="${row.id}" ${index === state.structureDraftRows.length - 1 ? "disabled" : ""} aria-label="تحريك لأسفل">↓</button></div>
-    <label><span class="mobile-label">النوع</span><select data-toc-draft-type="${row.id}"><option value="وحدة" ${row.rowType === "وحدة" ? "selected" : ""}>وحدة</option><option value="درس" ${row.rowType === "درس" ? "selected" : ""}>درس</option><option value="تجاهل" ${row.rowType === "تجاهل" ? "selected" : ""}>تجاهل</option></select></label>
-    <label><span class="mobile-label">الرمز</span><input data-toc-draft-code="${row.id}" value="${escapeHtml(row.code)}" ${row.rowType !== "درس" ? "disabled" : ""} placeholder="1-1" dir="ltr"/></label>
-    <label class="toc-draft-title"><span class="mobile-label">العنوان</span><input data-toc-draft-title="${row.id}" value="${escapeHtml(row.title)}"/></label>
-    <label><span class="mobile-label">الصفحة</span><input type="number" min="1" data-toc-draft-page="${row.id}" value="${row.pageStart ?? ""}" ${row.rowType !== "درس" ? "disabled" : ""}/></label>
-    <div class="toc-draft-origin"><small>ص ${row.sourcePage || "يدوي"}</small><span>${row.sourceColumn}</span></div>
-    <button class="danger-link compact" data-action="delete-toc-draft-row" data-toc-draft-id="${row.id}">حذف</button>
-  </article>`;
-}
 
-function renderStructureNodeRow(node: SourceStructureNode, index: number, units: SourceStructureNode[]): string {
-  const child = node.parentId !== null;
-  const titleParts = splitStructureTitle(node.title);
-  const parentOptions = [`<option value="">بدون وحدة</option>`, ...units.filter((unit) => unit.id !== node.id).map((unit) => `<option value="${unit.id}" ${node.parentId === unit.id ? "selected" : ""}>${escapeHtml(unit.title)}</option>`)].join("");
-  return `<article class="structure-node-row ${child ? "child" : "root"}" data-structure-row="${node.id}">
-    <div class="structure-move"><button class="icon-btn" data-action="move-structure-up" data-structure-id="${node.id}" ${index === 0 ? "disabled" : ""} aria-label="تحريك لأعلى">↑</button><button class="icon-btn" data-action="move-structure-down" data-structure-id="${node.id}" ${index === state.structureNodes.length - 1 ? "disabled" : ""} aria-label="تحريك لأسفل">↓</button></div>
-    <label><span>النوع</span><select data-structure-type="${node.id}">${SOURCE_STRUCTURE_NODE_TYPES.map((type) => `<option value="${type}" ${node.nodeType === type ? "selected" : ""}>${type}</option>`).join("")}</select></label>
-    <label><span>الرمز</span><input data-structure-code="${node.id}" value="${escapeHtml(titleParts.code)}" ${node.nodeType === "وحدة" ? "disabled" : ""} placeholder="1-1" dir="ltr"/></label>
-    <label class="structure-title-field"><span>العنوان</span><input data-structure-title="${node.id}" value="${escapeHtml(titleParts.title)}"/></label>
-    <label><span>يتبع</span><select data-structure-parent="${node.id}" ${node.nodeType === "وحدة" ? "disabled" : ""}>${parentOptions}</select></label>
-    <label><span>من صفحة</span><input type="number" min="1" data-structure-page-start="${node.id}" value="${node.pageStart}"/></label>
-    <label><span>إلى صفحة</span><input type="number" min="1" data-structure-page-end="${node.id}" value="${node.pageEnd}"/></label>
-    <div class="structure-confidence"><span>الثقة</span><strong>${Math.round(node.confidence * 100)}%</strong></div>
-    <button class="danger-link compact" data-action="delete-structure-node" data-structure-id="${node.id}">حذف</button>
-  </article>`;
-}
+
+
+
 
 function renderSourceRow(source: ManagedSource): string {
   const subject = SUBJECTS.find((item) => item.id === source.subjectId)?.label ?? "غير محددة";
@@ -1011,40 +920,16 @@ function handleAction(action: string, element: HTMLElement): void {
   if (action === "export-source-registry") return exportSourceRegistry();
   if (action === "close-source-details") {
     state.selectedSourceId = "";
-    resetSourceStructureState();
     render();
     return;
   }
   const sourceId = element.dataset.sourceId;
   if (action === "view-source" && sourceId) {
     state.selectedSourceId = sourceId;
-    resetSourceStructureState(sourceId);
     render();
-    void loadSourceStructure(sourceId);
     window.setTimeout(() => document.querySelector(".source-details-card")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
     return;
   }
-  if (action === "extract-source-structure" && sourceId) { void extractAndSaveSourceStructure(sourceId); return; }
-  if (action === "extract-source-structure-manual" && sourceId) { void extractAndSaveSourceStructure(sourceId, true, true); return; }
-  if (action === "reextract-source-structure" && sourceId) { void extractAndSaveSourceStructure(sourceId, true); return; }
-  if (action === "save-source-structure" && sourceId) { void saveCurrentSourceStructure(sourceId, false); return; }
-  if (action === "approve-source-structure" && sourceId) { void saveCurrentSourceStructure(sourceId, true); return; }
-  if (action === "save-toc-draft" && sourceId) { void saveCurrentTocDraft(sourceId, false); return; }
-  if (action === "approve-toc-draft" && sourceId) { void saveCurrentTocDraft(sourceId, true); return; }
-  if (action === "check-toc-draft" && sourceId) { checkCurrentTocDraft(sourceId); return; }
-  if (action === "cancel-toc-draft" && sourceId) { cancelCurrentTocDraft(); return; }
-  if (action === "add-toc-draft-unit" && sourceId) { addTocDraftRow("وحدة"); return; }
-  if (action === "add-toc-draft-lesson" && sourceId) { addTocDraftRow("درس"); return; }
-  if (action === "add-structure-unit" && sourceId) { addStructureNode(sourceId, "وحدة"); return; }
-  if (action === "add-structure-child" && sourceId) { addStructureNode(sourceId, "درس"); return; }
-  const tocDraftId = element.dataset.tocDraftId;
-  if (action === "delete-toc-draft-row" && tocDraftId) { deleteTocDraftRow(tocDraftId); return; }
-  if (action === "move-toc-draft-up" && tocDraftId) { moveTocDraftRow(tocDraftId, -1); return; }
-  if (action === "move-toc-draft-down" && tocDraftId) { moveTocDraftRow(tocDraftId, 1); return; }
-  const structureId = element.dataset.structureId;
-  if (action === "delete-structure-node" && structureId) { deleteStructureNode(structureId); return; }
-  if (action === "move-structure-up" && structureId) { moveStructureNode(structureId, -1); return; }
-  if (action === "move-structure-down" && structureId) { moveStructureNode(structureId, 1); return; }
   if (action === "archive-source" && sourceId) { void archiveSource(sourceId); return; }
   if (action === "restore-source" && sourceId) { void restoreSource(sourceId); return; }
   if (action === "index-source" && sourceId) { void extractAndIndexSource(sourceId); return; }
@@ -1315,44 +1200,6 @@ function bindAdmin(): void {
     state.sourceDraft.rightsConfirmed = (event.target as HTMLInputElement).checked;
   });
 
-  document.querySelectorAll<HTMLInputElement>("[data-structure-toc-pages]").forEach((input) => {
-    input.addEventListener("input", () => { state.structureManualTocPages = input.value; });
-  });
-  document.querySelectorAll<HTMLSelectElement>("[data-toc-draft-type]").forEach((select) => {
-    select.addEventListener("change", () => updateTocDraftRow(select.dataset.tocDraftType ?? "", { rowType: select.value as TocDraftRow["rowType"] }, true));
-  });
-  document.querySelectorAll<HTMLInputElement>("[data-toc-draft-code]").forEach((input) => {
-    input.addEventListener("input", () => updateTocDraftRow(input.dataset.tocDraftCode ?? "", { code: input.value }, false));
-  });
-  document.querySelectorAll<HTMLInputElement>("[data-toc-draft-title]").forEach((input) => {
-    input.addEventListener("input", () => updateTocDraftRow(input.dataset.tocDraftTitle ?? "", { title: input.value }, false));
-  });
-  document.querySelectorAll<HTMLInputElement>("[data-toc-draft-page]").forEach((input) => {
-    input.addEventListener("change", () => updateTocDraftRow(input.dataset.tocDraftPage ?? "", { pageStart: input.value ? Math.max(1, Number(input.value) || 1) : null }, true));
-  });
-  document.querySelectorAll<HTMLInputElement>("[data-structure-code]").forEach((input) => {
-    input.addEventListener("input", () => updateStructureNodeTitlePart(input.dataset.structureCode ?? "", "code", input.value));
-  });
-  document.querySelectorAll<HTMLInputElement>("[data-structure-title]").forEach((input) => {
-    input.addEventListener("input", () => updateStructureNodeTitlePart(input.dataset.structureTitle ?? "", "title", input.value));
-  });
-  document.querySelectorAll<HTMLInputElement>("[data-structure-page-start]").forEach((input) => {
-    input.addEventListener("change", () => updateStructureNode(input.dataset.structurePageStart ?? "", { pageStart: Math.max(1, Number(input.value) || 1) }, true));
-  });
-  document.querySelectorAll<HTMLInputElement>("[data-structure-page-end]").forEach((input) => {
-    input.addEventListener("change", () => updateStructureNode(input.dataset.structurePageEnd ?? "", { pageEnd: Math.max(1, Number(input.value) || 1) }, true));
-  });
-  document.querySelectorAll<HTMLSelectElement>("[data-structure-type]").forEach((select) => {
-    select.addEventListener("change", () => {
-      const id = select.dataset.structureType ?? "";
-      const nodeType = select.value as SourceStructureNodeType;
-      const fallbackParent = state.structureNodes.find((node) => node.nodeType === "وحدة" && node.id !== id)?.id ?? null;
-      updateStructureNode(id, { nodeType, parentId: nodeType === "وحدة" ? null : (state.structureNodes.find((node) => node.id === id)?.parentId ?? fallbackParent) }, true);
-    });
-  });
-  document.querySelectorAll<HTMLSelectElement>("[data-structure-parent]").forEach((select) => {
-    select.addEventListener("change", () => updateStructureNode(select.dataset.structureParent ?? "", { parentId: select.value || null }, true));
-  });
 
   document.querySelector<HTMLInputElement>("#source-registry-file")?.addEventListener("change", async (event) => {
     const file = (event.target as HTMLInputElement).files?.[0];
@@ -1593,377 +1440,21 @@ function updateSourceIndexingProgress(progress: PdfExtractionProgress): void {
   if (bar) bar.style.width = `${progress.percent}%`;
 }
 
-function resetSourceStructureState(sourceId = ""): void {
-  state.structureSourceId = sourceId;
-  state.structureNodes = [];
-  state.structureLoaded = false;
-  state.structureBusy = false;
-  state.structureMessage = "";
-  state.structureDirty = false;
-  state.structureManualTocPages = "";
-  state.structureDraftActive = false;
-  state.structureDraftRows = [];
-  state.structureDraftReferenceLines = [];
-  state.structureDraftTocPages = [];
-}
 
-async function loadSourceStructure(sourceId: string): Promise<void> {
-  if (!centralSourceStore || state.sourceStorageStatus !== "متصل") {
-    state.structureSourceId = sourceId;
-    state.structureLoaded = true;
-    state.structureMessage = "يلزم الاتصال بالسجل المركزي لحفظ هيكل الكتاب ومراجعته.";
-    render();
-    return;
-  }
-  state.structureSourceId = sourceId;
-  state.structureBusy = true;
-  state.structureMessage = "جارٍ تحميل الهيكل المحفوظ…";
-  render();
-  try {
-    const nodes = await centralSourceStore.listSourceStructure(sourceId);
-    if (state.structureSourceId !== sourceId) return;
-    const sequencedNodes = resequenceStructureNodes(nodes);
-    state.structureNodes = sequencedNodes;
-    state.structureLoaded = true;
-    state.structureBusy = false;
-    state.structureDirty = false;
-    state.structureDraftActive = false;
-    state.structureDraftRows = [];
-    state.structureDraftReferenceLines = [];
-    state.structureDraftTocPages = [];
-    state.structureMessage = nodes.length
-      ? nodes.every((node) => node.reviewStatus === "معتمد")
-        ? "الهيكل معتمد ومحفوظ مركزيًا."
-        : shouldQuarantineLegacyStructureDraft(sequencedNodes)
-          ? "هذه مسودة قديمة أو مشوهة. لم يحذفها واثق؛ راجعها أو افتح منشئ الفهرس الجديد."
-          : "الهيكل محفوظ كمسودة مراجعة."
-      : "لا يوجد هيكل محفوظ لهذا المصدر بعد.";
-    render();
-  } catch (error) {
-    if (state.structureSourceId !== sourceId) return;
-    state.structureLoaded = true;
-    state.structureBusy = false;
-    state.structureMessage = error instanceof Error ? error.message : "تعذر تحميل هيكل المصدر.";
-    render();
-  }
-}
 
-async function extractAndSaveSourceStructure(sourceId: string, replaceExisting = false, useManualTocPages = false): Promise<void> {
-  if (!centralSourceStore || state.sourceStorageStatus !== "متصل") {
-    showToast("سجّل دخول مالك المنصة أولًا.");
-    return;
-  }
-  const source = state.sources.find((item) => item.id === sourceId);
-  if (!source || source.extractionStatus !== "مكتمل") {
-    showToast("أكمل استخراج نص المصدر قبل بناء الهيكل.");
-    return;
-  }
-  if (state.structureNodes.length && !replaceExisting) {
-    showToast("يوجد هيكل محفوظ بالفعل؛ افتح مسودة OCR جديدة من شريط المراجعة.");
-    return;
-  }
-  state.structureSourceId = sourceId;
-  state.structureLoaded = true;
-  state.structureBusy = true;
-  state.structureMessage = useManualTocPages ? "جارٍ تجهيز مسودة من صفحات الفهرس المحددة…" : "جارٍ تحديد صفحات الفهرس وتجهيز صفوف قابلة للمراجعة…";
-  render();
-  try {
-    const chunks = await centralSourceStore.listSourceChunks(sourceId);
-    if (!chunks.length) throw new Error("لا توجد مقاطع نصية مفهرسة لهذا المصدر.");
-    const totalPages = source.extractedPageCount ?? 1;
-    const manualPages = useManualTocPages ? parsePageSelection(state.structureManualTocPages, totalPages) : [];
-    if (useManualTocPages && !manualPages.length) throw new Error("اكتب صفحات الفهرس مثل: 4-5 أو 4، 5.");
-    const detectedPages = useManualTocPages ? manualPages : detectTocPagesFromChunks(chunks, totalPages);
 
-    if (detectedPages.length && googleDriveService) {
-      state.structureMessage = `جارٍ قراءة صفوف الفهرس في الصفحات ${detectedPages.join("، ")}…`;
-      render();
-      const access = await googleDriveService.getPdfSourceAccess(sourceId);
-      const layouts = await extractPositionalTocLayouts(
-        sourceId,
-        access,
-        detectedPages,
-        ({ sourceId: requestSourceId, pageNumber, totalPages: requestTotalPages, image }) => googleDriveService.ocrSourceLayoutPage(
-          requestSourceId,
-          pageNumber,
-          requestTotalPages,
-          image,
-        ),
-        ({ sourceId: requestSourceId, pageNumber }) => googleDriveService.getCachedSourceLayoutPage(
-          requestSourceId,
-          pageNumber,
-        ),
-        (progress) => {
-          state.structureMessage = progress.message;
-          render();
-        },
-      );
-      const draft = buildTocDraft(layouts);
-      state.structureDraftActive = true;
-      state.structureDraftRows = draft.rows;
-      state.structureDraftReferenceLines = draft.referenceLines;
-      state.structureDraftTocPages = draft.tocPages;
-      state.structureMessage = draft.message;
-      state.structureBusy = false;
-      state.structureDirty = false;
-      render();
-      showToast("تم تجهيز مسودة الفهرس للمراجعة، ولم يُحفظ شيء بعد.");
-      return;
-    }
 
-    const result: SourceStructureExtractionResult = extractSourceStructure(
-      sourceId,
-      chunks,
-      totalPages,
-      useManualTocPages ? { tocPages: manualPages, allowUnitHeadingFallback: false } : {},
-    );
-    if (!result.nodes.length) {
-      state.structureMessage = result.message;
-      state.structureBusy = false;
-      render();
-      showToast(result.message);
-      return;
-    }
-    state.structureNodes = result.nodes;
-    state.structureDraftActive = false;
-    state.structureMessage = `${result.message} هذه مسودة محلية لم تُحفظ بعد.`;
-    state.structureBusy = false;
-    state.structureDirty = true;
-    render();
-    showToast("تم تجهيز مسودة الهيكل ولم تُحفظ بعد.");
-  } catch (error) {
-    state.structureBusy = false;
-    state.structureMessage = error instanceof Error ? error.message : "تعذر تجهيز مسودة فهرس الكتاب.";
-    render();
-    showToast(state.structureMessage);
-  }
-}
 
-function updateTocDraftRow(
-  rowId: string,
-  changes: Partial<Pick<TocDraftRow, "rowType" | "code" | "title" | "pageStart">>,
-  rerender: boolean,
-): void {
-  if (!rowId) return;
-  state.structureDraftRows = state.structureDraftRows.map((row) => {
-    if (row.id !== rowId) return row;
-    const next = { ...row, ...changes };
-    if (next.rowType !== "درس") {
-      next.code = next.rowType === "وحدة" ? next.code : "";
-      next.pageStart = null;
-    }
-    return next;
-  });
-  state.structureMessage = "المسودة معدلة محليًا ولم تُحفظ بعد.";
-  if (rerender) render();
-}
 
-function addTocDraftRow(type: "وحدة" | "درس"): void {
-  const row = createEmptyTocDraftRow(type, state.structureDraftRows.length);
-  state.structureDraftRows = [...state.structureDraftRows, row];
-  state.structureMessage = `أضيف صف ${type} يدويًا إلى المسودة.`;
-  render();
-}
 
-function deleteTocDraftRow(rowId: string): void {
-  state.structureDraftRows = state.structureDraftRows
-    .filter((row) => row.id !== rowId)
-    .map((row, orderIndex) => ({ ...row, orderIndex }));
-  state.structureMessage = "حُذف الصف من المسودة المحلية.";
-  render();
-}
 
-function moveTocDraftRow(rowId: string, direction: -1 | 1): void {
-  const ordered = [...state.structureDraftRows].sort((left, right) => left.orderIndex - right.orderIndex);
-  const index = ordered.findIndex((row) => row.id === rowId);
-  const targetIndex = index + direction;
-  if (index < 0 || targetIndex < 0 || targetIndex >= ordered.length) return;
-  const current = ordered[index];
-  const target = ordered[targetIndex];
-  if (!current || !target) return;
-  ordered[index] = target;
-  ordered[targetIndex] = current;
-  state.structureDraftRows = ordered.map((row, orderIndex) => ({ ...row, orderIndex }));
-  state.structureMessage = "تغير ترتيب صفوف المسودة.";
-  render();
-}
 
-function cancelCurrentTocDraft(): void {
-  state.structureDraftActive = false;
-  state.structureDraftRows = [];
-  state.structureDraftReferenceLines = [];
-  state.structureDraftTocPages = [];
-  state.structureMessage = state.structureNodes.length
-    ? "أُلغيت مسودة OCR وبقي الهيكل المحفوظ دون تغيير."
-    : "أُلغيت مسودة OCR ولم يُحفظ شيء.";
-  render();
-}
 
-function checkCurrentTocDraft(sourceId: string): void {
-  const source = state.sources.find((item) => item.id === sourceId);
-  if (!source) return;
-  const conversion = convertTocDraftRows(sourceId, state.structureDraftRows, source.extractedPageCount ?? 1);
-  const validation = validateSourceStructureForApproval(conversion.nodes);
-  const issues = [...new Set([...conversion.issues, ...validation.issues])];
-  state.structureMessage = issues.length
-    ? `التحقق وجد ${issues.length} ملاحظة. أولها: ${issues[0]}`
-    : "الهيكل اجتاز التحقق ويمكن اعتماده.";
-  render();
-  showToast(state.structureMessage);
-}
 
-async function saveCurrentTocDraft(sourceId: string, approve: boolean): Promise<void> {
-  if (!centralSourceStore || state.sourceStorageStatus !== "متصل") {
-    showToast("يلزم الاتصال بالسجل المركزي لحفظ الهيكل.");
-    return;
-  }
-  const source = state.sources.find((item) => item.id === sourceId);
-  if (!source) return;
-  const conversion = convertTocDraftRows(sourceId, state.structureDraftRows, source.extractedPageCount ?? 1);
-  const validation = approve
-    ? validateSourceStructureForApproval(conversion.nodes)
-    : validateSourceStructureDraft(conversion.nodes);
-  const issues = [...new Set([...conversion.issues, ...validation.issues])];
-  if (issues.length) {
-    showToast(issues[0] ?? "أكمل بيانات المسودة قبل الحفظ.");
-    return;
-  }
-  state.structureBusy = true;
-  state.structureMessage = approve ? "جارٍ اعتماد الهيكل…" : "جارٍ حفظ المسودة…";
-  render();
-  try {
-    const now = new Date().toISOString();
-    const nodes = conversion.nodes.map((node) => ({
-      ...node,
-      reviewStatus: approve ? "معتمد" as const : "مرشح" as const,
-      updatedAt: now,
-    }));
-    await centralSourceStore.replaceSourceStructure(sourceId, nodes);
-    state.structureNodes = nodes;
-    state.structureDraftActive = false;
-    state.structureDraftRows = [];
-    state.structureDraftReferenceLines = [];
-    state.structureDraftTocPages = [];
-    state.structureBusy = false;
-    state.structureDirty = false;
-    state.structureMessage = approve ? "تم اعتماد الهيكل وحفظه مركزيًا." : "تم حفظ مسودة الهيكل مركزيًا.";
-    render();
-    showToast(state.structureMessage);
-  } catch (error) {
-    state.structureBusy = false;
-    state.structureMessage = error instanceof Error ? error.message : "تعذر حفظ مسودة الهيكل.";
-    render();
-    showToast(state.structureMessage);
-  }
-}
 
-function updateStructureNodeTitlePart(nodeId: string, part: "code" | "title", value: string): void {
-  const node = state.structureNodes.find((item) => item.id === nodeId);
-  if (!node) return;
-  const current = splitStructureTitle(node.title);
-  const nextCode = part === "code" ? value : current.code;
-  const nextTitle = part === "title" ? value : current.title;
-  updateStructureNode(nodeId, {
-    title: node.nodeType === "وحدة" ? nextTitle : composeStructureTitle(nextCode, nextTitle),
-  }, false);
-}
 
-function updateStructureNode(
-  nodeId: string,
-  changes: Partial<Pick<SourceStructureNode, "title" | "nodeType" | "parentId" | "pageStart" | "pageEnd">>,
-  rerender: boolean,
-): void {
-  if (!nodeId) return;
-  const now = new Date().toISOString();
-  state.structureNodes = state.structureNodes.map((node) => {
-    if (node.id !== nodeId) return node;
-    const next = { ...node, ...changes, reviewStatus: "مرشح" as const, updatedAt: now };
-    if (next.nodeType === "وحدة") {
-      next.parentId = null;
-      next.title = splitStructureTitle(next.title).title;
-    }
-    if (next.pageEnd < next.pageStart) next.pageEnd = next.pageStart;
-    return next;
-  });
-  state.structureNodes = resequenceStructureNodes(state.structureNodes);
-  state.structureDirty = true;
-  state.structureMessage = "عدّل الهيكل ثم احفظه أو اعتمده.";
-  if (rerender) render();
-}
 
-function addStructureNode(sourceId: string, nodeType: SourceStructureNodeType): void {
-  const units = state.structureNodes.filter((node) => node.nodeType === "وحدة");
-  const parent = nodeType === "وحدة" ? null : units.at(-1) ?? null;
-  const pageStart = parent?.pageStart ?? Math.max(1, state.structureNodes.at(-1)?.pageEnd ?? 1);
-  const node = createManualStructureNode(sourceId, nodeType, parent?.id ?? null, pageStart, state.structureNodes.length);
-  state.structureNodes = resequenceStructureNodes([...state.structureNodes, node]);
-  state.structureDirty = true;
-  state.structureMessage = "تمت إضافة عنصر يدوي؛ أكمل عنوانه وصفحاته قبل الحفظ.";
-  render();
-}
 
-function deleteStructureNode(nodeId: string): void {
-  const removedIds = new Set([nodeId, ...state.structureNodes.filter((node) => node.parentId === nodeId).map((node) => node.id)]);
-  state.structureNodes = resequenceStructureNodes(state.structureNodes.filter((node) => !removedIds.has(node.id)));
-  state.structureDirty = true;
-  state.structureMessage = removedIds.size > 1 ? "حُذفت الوحدة وعناصرها التابعة من مسودة المراجعة." : "حُذف العنصر من مسودة المراجعة.";
-  render();
-}
-
-function moveStructureNode(nodeId: string, direction: -1 | 1): void {
-  const node = state.structureNodes.find((item) => item.id === nodeId);
-  if (!node) return;
-  const siblings = state.structureNodes.filter((item) => item.parentId === node.parentId).sort((left, right) => left.orderIndex - right.orderIndex);
-  const index = siblings.findIndex((item) => item.id === nodeId);
-  const target = siblings[index + direction];
-  if (!target) return;
-  const next = state.structureNodes.map((item) => {
-    if (item.id === node.id) return { ...item, orderIndex: target.orderIndex, reviewStatus: "مرشح" as const, updatedAt: new Date().toISOString() };
-    if (item.id === target.id) return { ...item, orderIndex: node.orderIndex, reviewStatus: "مرشح" as const, updatedAt: new Date().toISOString() };
-    return item;
-  });
-  state.structureNodes = resequenceStructureNodes(next);
-  state.structureDirty = true;
-  state.structureMessage = "تغير ترتيب الهيكل؛ احفظ التعديلات.";
-  render();
-}
-
-async function saveCurrentSourceStructure(sourceId: string, approve: boolean): Promise<void> {
-  if (!centralSourceStore || state.sourceStorageStatus !== "متصل") {
-    showToast("يلزم الاتصال بالسجل المركزي لحفظ الهيكل.");
-    return;
-  }
-  const validation = approve
-    ? validateSourceStructureForApproval(state.structureNodes)
-    : validateSourceStructureDraft(state.structureNodes);
-  if (!validation.valid) {
-    showToast(validation.issues[0] ?? "أكمل بيانات الهيكل قبل الحفظ.");
-    return;
-  }
-  state.structureBusy = true;
-  state.structureMessage = approve ? "جارٍ اعتماد الهيكل…" : "جارٍ حفظ التعديلات…";
-  render();
-  try {
-    const now = new Date().toISOString();
-    const nodes = resequenceStructureNodes(state.structureNodes).map((node) => ({
-      ...node,
-      reviewStatus: approve ? "معتمد" as const : node.reviewStatus,
-      updatedAt: now,
-    }));
-    await centralSourceStore.replaceSourceStructure(sourceId, nodes);
-    state.structureNodes = nodes;
-    state.structureBusy = false;
-    state.structureDirty = false;
-    state.structureMessage = approve ? "تم اعتماد الهيكل وحفظه مركزيًا." : "تم حفظ مسودة الهيكل مركزيًا.";
-    render();
-    showToast(state.structureMessage);
-  } catch (error) {
-    state.structureBusy = false;
-    state.structureMessage = error instanceof Error ? error.message : "تعذر حفظ هيكل المصدر.";
-    render();
-    showToast(state.structureMessage);
-  }
-}
 
 function exportSourceRegistry(): void {
   const backup = createRegistryBackup(state.sources);

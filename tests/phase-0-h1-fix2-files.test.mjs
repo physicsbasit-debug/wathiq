@@ -6,10 +6,9 @@ const app = await readFile(new URL("../src/app.ts", import.meta.url), "utf8");
 const structure = await readFile(new URL("../src/source-structure.ts", import.meta.url), "utf8");
 const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 
-test("لا تحذف الواجهة المسودة القديمة المشوهة تلقائيًا في H2", () => {
-  assert.match(app, /shouldQuarantineLegacyStructureDraft/);
-  assert.match(app, /لم يحذفها واثق/);
-  assert.doesNotMatch(app, /حذف واثق مسودة قديمة مشوهة تلقائيًا/);
+test("لا تستدعي واجهة H3 مسودات الهيكل القديمة ولا تحذفها", () => {
+  assert.doesNotMatch(app, /shouldQuarantineLegacyStructureDraft|لم يحذفها واثق|حذف واثق مسودة قديمة مشوهة تلقائيًا/);
+  assert.match(structure, /shouldQuarantineLegacyStructureDraft/);
 });
 
 test("يحتفظ المحرك ببوابة التعرف على المسودات القديمة", () => {

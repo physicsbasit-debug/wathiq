@@ -1,9 +1,9 @@
 {
   "name": "wathiq",
-  "version": "0.0.23",
+  "version": "0.0.24",
   "private": true,
   "type": "module",
-  "description": "واثق: منشئ فهرس منظم لمراجعة صفوف OCR قبل حفظ هيكل الكتاب واعتماده",
+  "description": "واثق: إدارة مصادر علمية وفهرستها حسب الصفحات والمقاطع دون اشتراط تحليل فهرس بصري",
   "scripts": {
     "build": "node scripts/build.mjs",
     "dev": "node scripts/serve.mjs",
