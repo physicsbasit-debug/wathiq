@@ -94,6 +94,7 @@ export interface ExamDraft {
   lessonTopics: string[];
   topic: string;
   sourceReferences: ExamSourceReference[];
+  sourceRetrievalVersion: string;
   title: ExamTitleOption;
   examDate: string;
   school: string;

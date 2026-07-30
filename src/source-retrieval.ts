@@ -5,8 +5,10 @@ const NON_WORDS = /[^\p{L}\p{N}]+/gu;
 const STOP_WORDS = new Set([
   "في", "من", "الى", "إلى", "على", "عن", "ما", "ماذا", "كيف", "هل", "هو", "هي", "هذا", "هذه",
   "ذلك", "تلك", "ثم", "او", "أو", "و", "ف", "ب", "ك", "ل", "التي", "الذي", "الذين", "مع", "بين",
-  "درس", "موضوع", "وحدة", "اختبار", "شرح", "تعريف",
+  "درس", "موضوع", "وحدة", "اختبار", "شرح", "تعريف", "كل", "مكان", "داخل", "خارج",
 ]);
+
+export const SOURCE_RETRIEVAL_VERSION = "strict-lesson-scope-1";
 
 export interface SourceChunkCandidate {
   source: ManagedSource;
@@ -56,12 +58,38 @@ function sourcePriority(source: ManagedSource): number {
   return authority + kind;
 }
 
+export function isLikelyNavigationOrMetadataChunk(content: string): boolean {
+  const normalized = normalizeArabicSearchText(content);
+  if (!normalized) return true;
+  if (["المحتويات", "الفهرس", "حقوق الطبع", "حقوق النشر", "الطبعه التجريبيه", "الناشر"].some((marker) => normalized.includes(marker))) {
+    return true;
+  }
+  const lessonCodes = content.match(/(?:^|\s)\d{1,2}\s*[-–—]\s*\d{1,2}(?=\s|$)/g) ?? [];
+  const unitMentions = normalized.match(/الوحده/g) ?? [];
+  const punctuation = content.match(/[.؟!؛:]/g) ?? [];
+  if (lessonCodes.length >= 4 && punctuation.length <= 5) return true;
+  if (unitMentions.length >= 4 && punctuation.length <= 4) return true;
+  return false;
+}
+
+export function referenceSupportsLesson(query: string, content: string): boolean {
+  if (isLikelyNavigationOrMetadataChunk(content)) return false;
+  const tokens = tokenizeArabicSearch(query);
+  if (!tokens.length) return false;
+  const normalized = normalizeArabicSearchText(content);
+  const matched = tokens.filter((token) => normalized.includes(token)).length;
+  const required = tokens.length === 1 ? 1 : Math.min(2, tokens.length);
+  return matched >= required;
+}
+
 function scoreChunk(query: string, tokens: string[], candidate: SourceChunkCandidate): number {
   const normalized = normalizeArabicSearchText(candidate.chunk.content);
-  if (!normalized) return 0;
+  if (!normalized || !referenceSupportsLesson(query, candidate.chunk.content)) return 0;
   let score = 0;
   const normalizedQuery = normalizeArabicSearchText(query);
+  const corePhrase = tokens.join(" ");
   if (normalizedQuery.length >= 4 && normalized.includes(normalizedQuery)) score += 60;
+  else if (corePhrase.length >= 4 && normalized.includes(corePhrase)) score += 42;
   for (const token of tokens) {
     const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const matches = normalized.match(new RegExp(`(?:^|\\s)${escaped}(?=\\s|$)`, "g"));
@@ -69,6 +97,8 @@ function scoreChunk(query: string, tokens: string[], candidate: SourceChunkCandi
     else if (normalized.includes(token)) score += 5;
   }
   if (tokens.length && tokens.every((token) => normalized.includes(token))) score += 20;
+  if (candidate.chunk.content.length >= 500) score += 8;
+  if ((candidate.chunk.content.match(/[.؟!؛]/g) ?? []).length >= 3) score += 5;
   return score + sourcePriority(candidate.source) / 10;
 }
 

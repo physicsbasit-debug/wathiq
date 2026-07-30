@@ -27,7 +27,7 @@ import { GoogleDriveService, type GoogleDriveStatus, type PendingSourceUpload, t
 import { extractPdfText, shouldInvalidateLegacyExtraction, type PdfExtractionProgress } from "./pdf-indexer.js";
 import { extractPdfWithArabicOcr } from "./ocr-indexer.js";
 import { resolveInitialView, viewFromHash, viewHash } from "./navigation.js";
-import { rankSourceChunks, type SourceChunkCandidate } from "./source-retrieval.js";
+import { rankSourceChunks, SOURCE_RETRIEVAL_VERSION, type SourceChunkCandidate } from "./source-retrieval.js";
 import {
   applyGeneratedQuestions,
   buildQuestionGenerationRequest,
@@ -236,6 +236,7 @@ function invalidateGeneratedQuestions(): void {
 
 function invalidateSourceAndGeneratedQuestions(): void {
   state.draft.sourceReferences = [];
+  state.draft.sourceRetrievalVersion = "";
   state.sourceRetrievalMessage = "";
   invalidateGeneratedQuestions();
 }
@@ -581,7 +582,7 @@ function renderPlanItem(item: PlanItem, index: number): string {
     <header><div class="question-number">${index + 1}</div><div><h3>${item.questionType}</h3><p>${escapeHtml(item.lessonLabel)} · ${escapeHtml(sourceLabel)}</p></div><div class="plan-tags"><span>${item.cognitiveLevel}</span><span>${item.marks} ${item.marks === 1 ? "درجة" : "درجات"}</span></div></header>
     ${renderPlanVisual(item)}
     <div class="proposal-grid">${item.proposals.map((proposal, proposalIndex) => `<label class="proposal-card ${chosen === proposal.id ? "selected" : ""}"><input type="radio" name="proposal-${item.id}" data-plan-id="${item.id}" value="${proposal.id}" ${chosen === proposal.id ? "checked" : ""} ${state.draft.status === "معتمد" ? "disabled" : ""}/><div class="proposal-top"><span>البديل ${proposalIndex + 1}</span><div class="proposal-badges">${proposal.questionForm ? `<b class="question-form-badge">${escapeHtml(proposal.questionForm)}</b>` : ""}${proposal.needsReview ? `<b class="review-needed-badge">يحتاج تدقيقًا أدق</b>` : ""}</div></div>${proposal.stimulus ? `<div class="proposal-stimulus">${escapeHtml(proposal.stimulus)}</div>` : ""}<p>${escapeHtml(proposal.text)}</p>${renderProposalOptions(proposal.options)}<details class="proposal-evidence"><summary>الإجابة ونموذج التصحيح ودليل المصدر</summary><p class="proposal-answer"><strong>الإجابة:</strong> ${escapeHtml(proposal.answer)}</p>${renderMarkScheme(proposal.markScheme)}${proposal.rationale ? `<p><strong>سبب الإجابة:</strong> ${escapeHtml(proposal.rationale)}</p>` : ""}${proposal.sourceSupport ? `<blockquote>${escapeHtml(proposal.sourceSupport)}</blockquote>` : ""}</details><span class="choose-label">${chosen === proposal.id ? `${icon("check")} تم الاختيار` : "اختر هذا السؤال"}</span></label>`).join("")}</div>
-    <footer><button class="text-btn" data-regenerate="${item.id}" ${(state.questionGenerationBusy || state.draft.status === "معتمد") ? "disabled" : ""}>${icon("spark")} توليد ثلاثة بدائل جديدة لهذه المفردة</button></footer>
+    <footer><button class="text-btn" data-regenerate="${item.id}" ${(state.questionGenerationBusy || state.draft.status === "معتمد") ? "disabled" : ""}>${icon("spark")} توليد ثلاثة بدائل مشابهة لهذه المفردة</button></footer>
   </article>`;
 }
 
@@ -771,7 +772,7 @@ function renderReviewStep(): string {
         <div class="final-check"><h3>حالة ${approved ? "الاختبار" : "المسودة"}</h3>${readiness.checks.map((check) => checkRow(check.label, check.okay)).join("")}</div>
         <div class="review-summary"><span>الدرجة</span><strong>${state.draft.totalMarks}</strong><span>الأسئلة</span><strong>${state.draft.plan.length}</strong><span>الحالة</span><strong>${state.draft.status}</strong></div>
         ${renderAnswerKey(selected, paperLayout.labels)}
-        ${approved ? `<section class="export-panel"><h3>التصدير النهائي</h3><div class="export-grid"><button class="secondary-btn" data-action="export-student-word">ورقة الطالب Word (.doc)</button><button class="secondary-btn" data-action="export-student-pdf">ورقة الطالب PDF / طباعة</button><button class="secondary-btn" data-action="export-answer-word">نموذج الإجابة Word (.doc)</button><button class="secondary-btn" data-action="export-answer-pdf">نموذج الإجابة PDF / طباعة</button></div></section>` : ""}
+        <section class="export-panel"><h3>${approved ? "التصدير النهائي" : "تصدير نسخة مسودة للمراجعة"}</h3><div class="export-grid"><button class="secondary-btn" data-action="export-student-word">ورقة الطالب Word (.doc)</button><button class="secondary-btn" data-action="export-student-pdf">ورقة الطالب PDF / طباعة</button><button class="secondary-btn" data-action="export-answer-word">نموذج الإجابة Word (.doc)</button><button class="secondary-btn" data-action="export-answer-pdf">نموذج الإجابة PDF / طباعة</button></div></section>
         ${approved
           ? `<button class="secondary-btn full approval-toggle" data-action="reopen-draft">إلغاء الاعتماد للتعديل</button>`
           : `<button class="primary-btn full approval-toggle" data-action="approve-draft" ${readiness.ready ? "" : "disabled"}>${icon("check")} اعتماد الاختبار</button>`}
@@ -881,23 +882,58 @@ function renderPolicyRuleCard(title: string, rules: readonly string[]): string {
   return `<article class="policy-rule-card"><h3>${title}</h3><ul>${rules.map((rule) => `<li>${escapeHtml(rule)}</li>`).join("")}</ul></article>`;
 }
 
+interface LibraryCardExam {
+  id: string;
+  title: string;
+  subject: string;
+  grade: number;
+  status: "مسودة" | "معتمد";
+  date: string;
+  progress?: number;
+  hasModelB?: boolean;
+  isLocal: boolean;
+  isComplete?: boolean;
+}
+
 function renderLibrary(): string {
   const localDraft = loadDraft();
-  const exams = [
-    ...(localDraft ? [{ id: localDraft.id, title: localDraft.title || "مسودة اختبار بلا عنوان", subject: SUBJECTS.find((item) => item.id === localDraft.subjectId)?.label ?? "غير محددة", grade: localDraft.grade ?? 0, status: localDraft.status === "معتمد" ? "معتمد" as const : "مسودة" as const, date: localDraft.updatedAt.slice(0, 10), progress: localDraft.status === "معتمد" ? 100 : localDraft.currentStep * 25 }] : []),
-    ...MOCK_LIBRARY,
-  ].filter((exam) => state.libraryFilter === "الكل" || exam.status === state.libraryFilter);
+  const localExam: LibraryCardExam[] = localDraft ? [{
+    id: localDraft.id,
+    title: localDraft.title || "مسودة اختبار بلا عنوان",
+    subject: SUBJECTS.find((item) => item.id === localDraft.subjectId)?.label ?? "غير محددة",
+    grade: localDraft.grade ?? 0,
+    status: localDraft.status === "معتمد" ? "معتمد" : "مسودة",
+    date: localDraft.updatedAt.slice(0, 10),
+    progress: localDraft.status === "معتمد" ? 100 : localDraft.currentStep * 25,
+    isLocal: true,
+    isComplete: localDraft.currentStep >= 4 && isPlanComplete(localDraft),
+  }] : [];
+  const examples: LibraryCardExam[] = MOCK_LIBRARY.map((exam) => ({ ...exam, isLocal: false }));
+  const exams = [...localExam, ...examples]
+    .filter((exam) => state.libraryFilter === "الكل" || exam.status === state.libraryFilter);
 
   return `
-    <section class="page-heading"><div><span class="eyebrow">مكتبتك الخاصة</span><h1>اختباراتي</h1><p>المسودات والاختبارات المعتمدة، لا شيء أكثر. البساطة ليست نقصًا، بل إنقاذ.</p></div><button class="primary-btn" data-action="new-exam">${icon("plus")} اختبار جديد</button></section>
+    <section class="page-heading"><div><span class="eyebrow">مكتبتك الخاصة</span><h1>اختباراتي</h1><p>افتح الاختبار المعتمد أو نزّل ورقة الطالب ونموذج الإجابة مباشرة من هنا.</p></div><button class="primary-btn" data-action="new-exam">${icon("plus")} اختبار جديد</button></section>
     <div class="filter-bar"><div class="segmented small">${["الكل", "مسودة", "معتمد"].map((filter) => `<button data-library-filter="${filter}" class="${state.libraryFilter === filter ? "active" : ""}">${filter}</button>`).join("")}</div><label class="search-field"><span>بحث</span><input id="library-search" placeholder="ابحث بالعنوان أو المادة"/></label></div>
     <div class="library-grid" id="library-grid">${exams.map(renderExamCard).join("") || `<div class="empty-state"><h2>لا توجد نتائج</h2><p>جرّب مرشحًا آخر بدل معاقبة قاعدة البيانات بنظرات الاستغراب.</p></div>`}</div>
   `;
 }
 
-function renderExamCard(exam: (typeof MOCK_LIBRARY)[number]): string {
-  return `<article class="exam-card" data-search-text="${escapeHtml(`${exam.title} ${exam.subject} ${exam.grade}`)}"><div class="exam-card-head"><span class="status-badge ${exam.status === "معتمد" ? "approved" : "draft"}">${exam.status}</span>${exam.hasModelB ? `<span class="model-badge">أ + ب</span>` : ""}</div><h2>${escapeHtml(exam.title)}</h2><p>${escapeHtml(exam.subject)} · الصف ${exam.grade || "غير محدد"}</p><div class="exam-meta"><span>${formatArabicDate(exam.date)}</span>${exam.progress ? `<span>${exam.progress}% مكتمل</span>` : ""}</div>${exam.progress ? `<div class="progress-track"><span style="width:${exam.progress}%"></span></div>` : ""}<div class="exam-actions">${exam.status === "مسودة" ? `<button class="primary-btn compact" data-action="resume-draft">متابعة</button><button class="ghost-btn compact" data-action="delete-draft">حذف</button>` : `<button class="primary-btn compact" data-action="resume-draft">فتح الاختبار</button>`}</div></article>`;
+function renderExamCard(exam: LibraryCardExam): string {
+  const exportActions = `<button class="secondary-btn compact" data-action="library-export-student-word">الطالب Word</button>
+         <button class="secondary-btn compact" data-action="library-export-student-pdf">الطالب PDF</button>
+         <button class="secondary-btn compact" data-action="library-export-answer-word">الإجابة Word</button>
+         <button class="secondary-btn compact" data-action="library-export-answer-pdf">الإجابة PDF</button>`;
+  const actions = exam.isLocal
+    ? exam.status === "مسودة"
+      ? exam.isComplete
+        ? `<button class="primary-btn compact" data-action="preview-library-exam">معاينة المسودة</button><button class="secondary-btn compact" data-action="resume-draft">متابعة التعديل</button>${exportActions}<button class="ghost-btn compact" data-action="delete-draft">حذف</button>`
+        : `<button class="primary-btn compact" data-action="resume-draft">متابعة</button><button class="ghost-btn compact" data-action="delete-draft">حذف</button>`
+      : `<button class="primary-btn compact" data-action="preview-library-exam">معاينة الاختبار</button>${exportActions}`
+    : `<button class="ghost-btn compact" data-action="mock-download">مثال توضيحي</button>`;
+  return `<article class="exam-card" data-search-text="${escapeHtml(`${exam.title} ${exam.subject} ${exam.grade}`)}"><div class="exam-card-head"><span class="status-badge ${exam.status === "معتمد" ? "approved" : "draft"}">${exam.status}</span>${exam.hasModelB ? `<span class="model-badge">أ + ب</span>` : ""}</div><h2>${escapeHtml(exam.title)}</h2><p>${escapeHtml(exam.subject)} · الصف ${exam.grade || "غير محدد"}</p><div class="exam-meta"><span>${formatArabicDate(exam.date)}</span>${exam.progress ? `<span>${exam.progress}% مكتمل</span>` : ""}</div>${exam.progress ? `<div class="progress-track"><span style="width:${exam.progress}%"></span></div>` : ""}<div class="exam-actions library-exam-actions">${actions}</div></article>`;
 }
+
 
 
 function renderSourceStoragePanel(): string {
@@ -1265,6 +1301,29 @@ function handleAction(action: string, element: HTMLElement): void {
     navigate("wizard");
     return;
   }
+  if (action === "preview-library-exam") {
+    const loaded = loadDraft();
+    if (!loaded) return showToast("تعذر العثور على الاختبار المحفوظ.");
+    state.draft = loaded;
+    state.draft.currentStep = 4;
+    navigate("wizard");
+    return;
+  }
+  if (["library-export-student-word", "library-export-student-pdf", "library-export-answer-word", "library-export-answer-pdf"].includes(action)) {
+    const loaded = loadDraft();
+    if (!loaded || loaded.currentStep < 4 || !isPlanComplete(loaded)) return showToast("لا يوجد اختبار مكتمل قابل للتصدير.");
+    state.draft = loaded;
+    const kind = action.includes("answer") ? "answer" as const : "student" as const;
+    const document = exportDocumentHtml(kind);
+    if (action.endsWith("word")) {
+      void downloadWordHtml(document.fileName, document.html)
+        .then(() => showToast(loaded.status === "معتمد" ? "تم تجهيز ملف Word للتنزيل." : "تم تجهيز نسخة مسودة غير معتمدة للمراجعة."))
+        .catch((error: unknown) => showToast(error instanceof Error ? error.message : "تعذر تجهيز ملف Word."));
+    } else if (!printHtmlDocument(document.fileName, document.html)) {
+      showToast("تعذر فتح نافذة الطباعة. اسمح بالنوافذ المنبثقة ثم أعد المحاولة.");
+    }
+    return;
+  }
   if (action === "save-now") return saveNow();
   if (action === "approve-draft") {
     const readiness = reviewReadiness(selectedPaperItems());
@@ -1286,15 +1345,15 @@ function handleAction(action: string, element: HTMLElement): void {
     return;
   }
   if (["export-student-word", "export-student-pdf", "export-answer-word", "export-answer-pdf"].includes(action)) {
-    if (state.draft.status !== "معتمد") {
-      showToast("اعتمد الاختبار أولًا قبل التصدير النهائي.");
+    if (!isPlanComplete(state.draft) || state.draft.currentStep < 4) {
+      showToast("أكمل اختيار مفردات الاختبار قبل التصدير.");
       return;
     }
     const kind = action.includes("answer") ? "answer" as const : "student" as const;
     const document = exportDocumentHtml(kind);
     if (action.endsWith("word")) {
       void downloadWordHtml(document.fileName, document.html)
-        .then(() => showToast("تم تجهيز ملف Word للتنزيل مع تحويل الرسومات إلى صور واضحة."))
+        .then(() => showToast(state.draft.status === "معتمد" ? "تم تجهيز ملف Word للتنزيل مع تحويل الرسومات إلى صور واضحة." : "تم تجهيز نسخة مسودة غير معتمدة للمراجعة."))
         .catch((error: unknown) => showToast(error instanceof Error ? error.message : "تعذر تجهيز ملف Word."));
     } else if (!printHtmlDocument(document.fileName, document.html)) {
       showToast("تعذر فتح نافذة الطباعة. اسمح بالنوافذ المنبثقة ثم أعد المحاولة.");
@@ -1539,7 +1598,7 @@ async function regeneratePlanItem(item: PlanItem): Promise<void> {
   }
   const subject = SUBJECTS.find((entry) => entry.id === state.draft.subjectId)?.label ?? state.draft.subjectId;
   state.questionGenerationBusy = true;
-  state.questionGenerationMessage = `جارٍ توليد بدائل جديدة للسؤال ${state.draft.plan.indexOf(item) + 1}…`;
+  state.questionGenerationMessage = `جارٍ توليد بدائل مشابهة للسؤال ${state.draft.plan.indexOf(item) + 1}…`;
   render();
   try {
     const request = buildQuestionGenerationRequest(
@@ -1553,6 +1612,15 @@ async function regeneratePlanItem(item: PlanItem): Promise<void> {
       [item],
       state.draft.plan,
     );
+    const anchor = selectedProposal(state.draft, item) ?? item.proposals[0];
+    if (anchor && request.items[0]) {
+      request.items[0].regenerationAnchor = {
+        stimulus: anchor.stimulus ?? "",
+        text: anchor.text,
+        answer: anchor.answer,
+        questionForm: anchor.questionForm ?? request.items[0].styleTarget,
+      };
+    }
     const response = await questionGenerationService.generate(request);
     const [replacement] = applyGeneratedQuestions([item], response);
     if (!replacement) throw new Error("تعذر ربط البدائل الجديدة بمفردة الخطة.");
@@ -1562,7 +1630,7 @@ async function regeneratePlanItem(item: PlanItem): Promise<void> {
     state.draft.generationModel = response.model;
     state.draft.generatedAt = response.generatedAt;
     state.questionGenerationBusy = false;
-    state.questionGenerationMessage = "تم توليد ثلاثة بدائل جديدة لهذه المفردة.";
+    state.questionGenerationMessage = "تم توليد ثلاثة بدائل مشابهة لهذه المفردة.";
     scheduleSave();
     render();
     showToast(state.questionGenerationMessage);
@@ -1597,6 +1665,7 @@ async function prepareSourceContext(): Promise<boolean> {
   );
   if (!eligible.length) {
     state.draft.sourceReferences = [];
+    state.draft.sourceRetrievalVersion = "";
     state.sourceRetrievalMessage = "لا يوجد مصدر مفهرس مطابق لهذا الصف والمادة.";
     render();
     showToast(state.sourceRetrievalMessage);
@@ -1629,6 +1698,7 @@ async function prepareSourceContext(): Promise<boolean> {
     const missingLessons = lessonResults.filter((result) => result.references.length === 0).map((result) => result.lesson);
     if (missingLessons.length) {
       state.draft.sourceReferences = [];
+      state.draft.sourceRetrievalVersion = "";
       state.sourceRetrievalBusy = false;
       state.sourceRetrievalMessage = `لم يجد واثق صفحات واضحة للدروس: ${missingLessons.join("، ")}. اكتب رقم الدرس واسمه كما يردان في الكتاب.`;
       render();
@@ -1636,6 +1706,7 @@ async function prepareSourceContext(): Promise<boolean> {
       return false;
     }
     state.draft.sourceReferences = lessonResults.flatMap((result) => result.references);
+    state.draft.sourceRetrievalVersion = SOURCE_RETRIEVAL_VERSION;
     state.sourceRetrievalBusy = false;
     const matchedSources = new Set(state.draft.sourceReferences.map((reference) => reference.sourceId)).size;
     state.sourceRetrievalMessage = `تم ربط ${lessons.length} دروس بـ ${state.draft.sourceReferences.length} مقاطع من ${matchedSources} مصدر.`;
@@ -1645,6 +1716,7 @@ async function prepareSourceContext(): Promise<boolean> {
   } catch (error) {
     state.sourceRetrievalBusy = false;
     state.draft.sourceReferences = [];
+    state.draft.sourceRetrievalVersion = "";
     state.sourceRetrievalMessage = error instanceof Error ? error.message : "تعذر قراءة مقاطع المصادر المفهرسة.";
     render();
     showToast(state.sourceRetrievalMessage);

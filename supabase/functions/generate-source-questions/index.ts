@@ -65,6 +65,13 @@ interface GenerationReference {
   content: string;
 }
 
+interface RegenerationAnchor {
+  stimulus: string;
+  text: string;
+  answer: string;
+  questionForm: QuestionDesignPattern;
+}
+
 interface GenerationItem {
   planItemId: string;
   questionType: QuestionType;
@@ -75,6 +82,7 @@ interface GenerationItem {
   lessonLabel: string;
   styleTarget: QuestionDesignPattern;
   visualTarget: QuestionVisualType;
+  regenerationAnchor?: RegenerationAnchor;
 }
 
 interface GenerationRequest {
@@ -152,6 +160,7 @@ interface EvidenceCatalog {
   fragments: EvidenceFragment[];
   byId: Map<string, EvidenceFragment>;
   byReferenceId: Map<string, EvidenceFragment[]>;
+  referenceContentById: Map<string, string>;
 }
 
 Deno.serve(async (req) => {
@@ -375,6 +384,8 @@ function buildSystemInstructions(): string {
     "مهمتك إنشاء أسئلة من النصوص المرجعية المرفقة فقط، دون إضافة معلومة علمية من الذاكرة أو الإنترنت.",
     "أنشئ ثلاثة بدائل مختلفة لكل مفردة مرسلة في هذه الدفعة فقط، مع الحفاظ حرفيًا على الدرس ونوع السؤال وهدف التقويم ومستوى الصعوبة والدرجة ونمط styleTarget.",
     "لا تخلط بين الدروس؛ كل مفردة مرتبطة باسم درس ومرجع صفحة محددين في الخطة.",
+    "يُمنع إنشاء أسئلة عن اسم الوحدة أو رقمها أو اسم الكتاب أو الصفحة أو موضع الدرس في المنهج؛ المطلوب قياس المحتوى العلمي للدرس فقط.",
+    "إذا وُجد regenerationAnchor فأنشئ البدائل الجديدة مشابهة له في المفهوم العلمي ونمط السؤال ومستوى العمق، مع تغيير الصياغة أو القيم فقط عندما يدعم المرجع ذلك. لا تنتقل إلى مفهوم آخر داخل الكتاب.",
     "اجعل السؤال يقيس الفهم العلمي لا حفظ صياغة الكتاب. لا تكثر من أسئلة التعريف المباشر؛ استخدمها فقط عندما يكون styleTarget=مفهومي والمعلومة مصطلحًا أساسيًا.",
     "عند styleTarget=سياقي: قدّم موقفًا واقعيًا قصيرًا ومناسبًا للبيئة العُمانية أو محايدًا ثقافيًا، ثم اسأل عن تطبيق المفهوم.",
     "عند styleTarget=حسابي: ضع المعطيات والوحدات في stimulus، واطلب إظهار خطوات الحل، واجعل لكل درجة نقطة تصحيح مستقلة تشمل الطريقة والنتيجة والوحدة عند الحاجة.",
@@ -607,6 +618,17 @@ function parseGenerationRequest(value: unknown): GenerationRequest {
       lessonLabel,
       styleTarget: requireEnum(item.styleTarget, ["مفهومي", "سياقي", "حسابي", "بيانات", "استقصائي", "مقارنة"] as const, "نمط بناء السؤال غير صالح."),
       visualTarget: requireEnum(item.visualTarget, ["none", "line_graph", "bar_chart", "pressure_diagram", "circuit_diagram"] as const, "نوع الرسم التعليمي غير صالح."),
+      ...(item.regenerationAnchor === undefined ? {} : {
+        regenerationAnchor: (() => {
+          const anchor = requireRecord(item.regenerationAnchor, "مرساة إعادة التوليد غير صالحة.");
+          return {
+            stimulus: typeof anchor.stimulus === "string" ? anchor.stimulus.trim().slice(0, 1_200) : "",
+            text: requireText(anchor.text, "نص مرساة إعادة التوليد غير موجود.", 1_200),
+            answer: requireText(anchor.answer, "إجابة مرساة إعادة التوليد غير موجودة.", 1_000),
+            questionForm: requireEnum(anchor.questionForm, ["مفهومي", "سياقي", "حسابي", "بيانات", "استقصائي", "مقارنة"] as const, "نمط مرساة إعادة التوليد غير صالح."),
+          };
+        })(),
+      }),
     };
   };
 
@@ -737,6 +759,7 @@ function buildEvidenceCatalog(references: GenerationReference[]): EvidenceCatalo
     fragments,
     byId: new Map(fragments.map((fragment) => [fragment.id, fragment])),
     byReferenceId,
+    referenceContentById: new Map(references.map((reference) => [reference.id, reference.content])),
   };
 }
 
@@ -830,6 +853,8 @@ function validateAndHydrateGeneratedPayload(
           evidenceCatalog,
           requested.styleTarget,
           requested.marks,
+          requested.lessonLabel,
+          requested.regenerationAnchor,
         )
       ),
     });
@@ -1134,6 +1159,8 @@ function validateAndHydrateAlternative(
   evidenceCatalog: EvidenceCatalog,
   requestedStyleTarget: QuestionDesignPattern,
   marks: number,
+  lessonLabel: string,
+  regenerationAnchor?: RegenerationAnchor,
 ): GeneratedAlternative {
   if (!alternative || typeof alternative !== "object") throw retryableError("أحد بدائل الأسئلة غير صالح.");
   for (const field of ["text", "answer", "rationale", "sourceEvidenceId"] as const) {
@@ -1170,14 +1197,25 @@ function validateAndHydrateAlternative(
     throw retryableError("سؤال غير موضوعي يحتوي بدائل اختيار من متعدد.");
   }
 
+  if (isMetaSourceQuestion(`${alternative.stimulus} ${alternative.text}`)) {
+    throw retryableError("أنشأ مولد الأسئلة سؤالًا عن بنية الكتاب بدل المحتوى العلمي للدرس.");
+  }
   const evidence = evidenceCatalog.byId.get(alternative.sourceEvidenceId.trim());
   if (!evidence || evidence.referenceId !== sourceReferenceId) {
     throw retryableError("اختار مولد الأسئلة دليلًا لا ينتمي إلى مرجع المفردة.");
   }
-  const weakAffinity = !hasEvidenceAffinity(
-    `${alternative.text} ${alternative.answer} ${alternative.rationale}`,
-    evidence.text,
-  );
+  const referenceContent = evidenceCatalog.referenceContentById.get(sourceReferenceId) ?? evidence.text;
+  if (!referenceSupportsLessonScope(lessonLabel, referenceContent)) {
+    throw retryableError("المرجع المختار لا يثبت ارتباط السؤال بالدرس المحدد.");
+  }
+  const questionMaterial = `${alternative.stimulus} ${alternative.text} ${alternative.answer} ${alternative.rationale}`;
+  if (!hasEvidenceAffinity(questionMaterial, evidence.text, lessonLabel)) {
+    throw retryableError("السؤال المولد لا يرتبط بصورة كافية بدليل المرجع المحدد.");
+  }
+  if (regenerationAnchor && !hasRegenerationSimilarity(questionMaterial, regenerationAnchor, lessonLabel)) {
+    throw retryableError("إعادة التوليد ابتعدت عن مفهوم السؤال المختار بدل تقديم صياغة مشابهة.");
+  }
+  const weakAffinity = false;
   const commandReview = questionType !== "اختيار من متعدد" && !hasAppropriateCommandWord(alternative.text, marks);
   return {
     stimulus: alternative.stimulus.trim(),
@@ -1193,6 +1231,61 @@ function validateAndHydrateAlternative(
   };
 }
 
+function isMetaSourceQuestion(value: string): boolean {
+  const normalized = normalizeForEvidence(value);
+  const patterns = [
+    "في اي وحده", "اسم الوحده", "رقم الوحده", "اي فصل", "اسم الفصل",
+    "كتاب الطالب", "في الكتاب", "اسم الكتاب", "رقم الصفحه", "في اي صفحه", "موضع الدرس", "يتناول المنهج",
+  ];
+  return patterns.some((pattern) => normalized.includes(normalizeForEvidence(pattern)));
+}
+
+function canonicalEvidenceToken(token: string): string {
+  let value = token;
+  if (value.length > 4 && /^[وف]/u.test(value)) value = value.slice(1);
+  if (value.length > 5 && value.startsWith("لل")) value = value.slice(2);
+  else if (value.length > 4 && /^[بكل]/u.test(value)) value = value.slice(1);
+  if (value.length > 4 && value.startsWith("ال")) value = value.slice(2);
+  return value;
+}
+
+function referenceSupportsLessonScope(lessonLabel: string | undefined, evidenceText: string): boolean {
+  if (!lessonLabel?.trim()) return true;
+  const stopWords = new Set(["درس", "الوحده", "موضوع", "في", "من", "الى", "على", "كل", "مكان", "داخل", "خارج"]);
+  const lessonTokens = normalizeForEvidence(lessonLabel)
+    .split(/\s+/u)
+    .map(canonicalEvidenceToken)
+    .filter((token) => token.length >= 3 && !stopWords.has(token) && !/^\d+$/.test(token));
+  if (!lessonTokens.length) return true;
+  const evidenceTokens = new Set(normalizeForEvidence(evidenceText).split(/\s+/u).map(canonicalEvidenceToken));
+  const matched = lessonTokens.filter((token) => evidenceTokens.has(token)).length;
+  return matched >= Math.min(2, lessonTokens.length);
+}
+
+function hasRegenerationSimilarity(questionMaterial: string, anchor: RegenerationAnchor, lessonLabel: string): boolean {
+  const anchorMaterial = `${anchor.stimulus} ${anchor.text} ${anchor.answer}`;
+  const stopWords = new Set([
+    "الذي", "التي", "هذا", "هذه", "ذلك", "تلك", "على", "الى", "في", "من", "عن", "مع",
+    "او", "ثم", "ما", "ماذا", "كيف", "لماذا", "هو", "هي", "ان", "كان", "تكون", "يكون",
+    "اكتب", "حدد", "اذكر", "اختر", "احسب", "صف", "فسر", "اشرح", "استنتج", "اقترح", "برر",
+  ]);
+  const tokenSet = (value: string) => new Set(
+    normalizeForEvidence(value).split(/\s+/u).map(canonicalEvidenceToken)
+      .filter((token) => token.length >= 3 && !stopWords.has(token) && !/^\d+(?:\.\d+)?$/u.test(token)),
+  );
+  const generated = tokenSet(questionMaterial);
+  const anchored = tokenSet(anchorMaterial);
+  const lesson = tokenSet(lessonLabel);
+  let shared = 0;
+  for (const token of generated) {
+    if (!anchored.has(token)) continue;
+    shared += 1;
+    if (!lesson.has(token) && token.length >= 5) return true;
+    if (shared >= 2) return true;
+  }
+  return false;
+}
+
 function hasAppropriateCommandWord(questionText: string, marks: number): boolean {
   const normalized = normalizeForEvidence(questionText);
   const oneMark = ["اكتب", "حدد", "اذكر", "اختر", "سم", "عين", "احسب", "استخرج"];
@@ -1200,7 +1293,7 @@ function hasAppropriateCommandWord(questionText: string, marks: number): boolean
   return (marks === 1 ? oneMark : multiMark).some((command) => normalized.includes(normalizeForEvidence(command)));
 }
 
-function hasEvidenceAffinity(questionMaterial: string, evidenceText: string): boolean {
+function hasEvidenceAffinity(questionMaterial: string, evidenceText: string, lessonLabel = ""): boolean {
   const stopWords = new Set([
     "الذي", "التي", "هذا", "هذه", "ذلك", "تلك", "على", "الى", "في", "من", "عن", "مع",
     "او", "ثم", "ما", "ماذا", "كيف", "لماذا", "هو", "هي", "ان", "كان", "تكون", "يكون",
@@ -1209,13 +1302,17 @@ function hasEvidenceAffinity(questionMaterial: string, evidenceText: string): bo
   const tokens = (value: string) => new Set(
     normalizeForEvidence(value)
       .split(/\s+/u)
+      .map(canonicalEvidenceToken)
       .filter((token) => token.length >= 3 && !stopWords.has(token)),
   );
   const questionTokens = tokens(questionMaterial);
   const evidenceTokens = tokens(evidenceText);
+  const lessonTokens = tokens(lessonLabel);
   let shared = 0;
   for (const token of questionTokens) {
-    if (evidenceTokens.has(token)) shared += 1;
+    if (!evidenceTokens.has(token)) continue;
+    shared += 1;
+    if (lessonTokens.has(token)) return true;
     if (shared >= 2) return true;
   }
   return shared >= 1 && (questionTokens.size <= 4 || evidenceTokens.size <= 6);

@@ -36,6 +36,8 @@ async function loadEdgeHelpers() {
     buildServerOwnedVisualSpec,
     generationThinkingBudget,
     generationOutputTokenLimit,
+    isMetaSourceQuestion,
+    referenceSupportsLessonScope,
     generateAndValidate,
   };\n`;
 
@@ -151,6 +153,7 @@ test("يفرض المخطط ويثبت الدليل عبر معرف مقطع م�
       styleTarget: "مفهومي",
       visualTarget: "none",
       sourceReferenceId: "R-1",
+      lessonLabel: "1-1 الضغط",
     }],
     references,
   };
@@ -287,7 +290,7 @@ test("يرفض معرف دليل تابعًا لمرجع آخر بدل قبول 
   const catalog = helpers.buildEvidenceCatalog(references);
   const wrongEvidence = catalog.fragments.find((fragment) => fragment.referenceId === "R-2");
   const request = {
-    items: [{ planItemId: "P-1", questionType: "إجابة قصيرة", marks: 1, styleTarget: "مفهومي", visualTarget: "none", sourceReferenceId: "R-1" }],
+    items: [{ planItemId: "P-1", questionType: "إجابة قصيرة", marks: 1, styleTarget: "مفهومي", visualTarget: "none", sourceReferenceId: "R-1", lessonLabel: "1-1 الضغط" }],
     references,
   };
   const payload = {
@@ -318,7 +321,7 @@ test("يضيف الخادم نص الدليل نفسه ويضع علامة مر�
   const references = [{ id: "R-1", content: "الضغط هو القوة المؤثرة عموديًا على وحدة المساحة." }];
   const catalog = helpers.buildEvidenceCatalog(references);
   const request = {
-    items: [{ planItemId: "P-1", questionType: "إجابة قصيرة", marks: 1, styleTarget: "مفهومي", visualTarget: "none", sourceReferenceId: "R-1" }],
+    items: [{ planItemId: "P-1", questionType: "إجابة قصيرة", marks: 1, styleTarget: "مفهومي", visualTarget: "none", sourceReferenceId: "R-1", lessonLabel: "1-1 الضغط" }],
     references,
   };
   const payload = {
@@ -339,9 +342,10 @@ test("يضيف الخادم نص الدليل نفسه ويضع علامة مر�
       })),
     }],
   };
-  const hydrated = helpers.validateAndHydrateGeneratedPayload(payload, request, catalog);
-  assert.equal(hydrated.items[0].alternatives[0].sourceSupport, catalog.fragments[0].text);
-  assert.equal(hydrated.items[0].alternatives[0].needsReview, true);
+  assert.throws(
+    () => helpers.validateAndHydrateGeneratedPayload(payload, request, catalog),
+    /لا يرتبط بصورة كافية بدليل المرجع/,
+  );
 });
 
 
@@ -393,7 +397,7 @@ test("يحوّل خانات نموذج التصحيح الثابتة إلى نق
   const references = [{ id: "R-1", content: "تنتقل الشحنة الكهربائية بين الأجسام عند الدلك." }];
   const catalog = helpers.buildEvidenceCatalog(references);
   const request = {
-    items: [{ planItemId: "P-M", questionType: "إجابة طويلة", marks: 3, styleTarget: "استقصائي", visualTarget: "none", sourceReferenceId: "R-1" }],
+    items: [{ planItemId: "P-M", questionType: "إجابة طويلة", marks: 3, styleTarget: "استقصائي", visualTarget: "none", sourceReferenceId: "R-1", lessonLabel: "1-1 الشحنة الكهربائية" }],
     references,
   };
   const payload = {
@@ -431,4 +435,34 @@ test("يحوّل خانات نموذج التصحيح الثابتة إلى نق
     () => helpers.validateAndHydrateGeneratedPayload(payload, request, catalog),
     /لا يوزع نقطة مستقلة لكل درجة/,
   );
+});
+
+
+test("يرفض الأسئلة الوصفية عن الوحدة والكتاب بدل المحتوى العلمي", () => {
+  assert.equal(helpers.isMetaSourceQuestion("في أي وحدة دراسية يتناول كتاب الطالب النشاط الإشعاعي؟"), true);
+  assert.equal(helpers.isMetaSourceQuestion("فسر سبب عدم استقرار بعض النوى."), false);
+});
+
+test("يتحقق من أن دليل السؤال تابع لموضوع الدرس المحدد", () => {
+  assert.equal(helpers.referenceSupportsLessonScope("9-1 النشاط الإشعاعي", "النشاط الإشعاعي انبعاث تلقائي من نوى غير مستقرة"), true);
+  assert.equal(helpers.referenceSupportsLessonScope("9-1 النشاط الإشعاعي", "الضغط هو القوة المؤثرة على وحدة المساحة"), false);
+});
+
+
+test("يرفض إعادة توليد تنتقل إلى مفهوم آخر رغم صحة المصدر العام", () => {
+  const references = [{ id: "R-1", content: "النشاط الإشعاعي هو انبعاث تلقائي من نوى غير مستقرة، وتختلف أنواع الإشعاع في قدرتها على الاختراق." }];
+  const catalog = helpers.buildEvidenceCatalog(references);
+  const request = {
+    items: [{
+      planItemId: "P-R", questionType: "إجابة قصيرة", marks: 1, styleTarget: "مفهومي", visualTarget: "none",
+      sourceReferenceId: "R-1", lessonLabel: "9-1 النشاط الإشعاعي",
+      regenerationAnchor: { stimulus: "", text: "عرّف النشاط الإشعاعي.", answer: "انبعاث تلقائي من نوى غير مستقرة.", questionForm: "مفهومي" },
+    }], references,
+  };
+  const payload = { items: [{ planItemId: "P-R", alternatives: Array.from({ length: 3 }, () => ({
+    stimulus: "", text: "اذكر نوعًا من الإشعاع الأعلى قدرة على الاختراق.", options: [], answer: "أشعة جاما.",
+    rationale: "تعتمد الإجابة على مقارنة أنواع الإشعاع.", markScheme: { point1: "ذكر أشعة جاما.", point2: "", point3: "", point4: "" },
+    questionForm: "مفهومي", workingRequired: false, sourceEvidenceId: catalog.fragments[0].id, needsReview: false,
+  })) }] };
+  assert.throws(() => helpers.validateAndHydrateGeneratedPayload(payload, request, catalog), /ابتعدت عن مفهوم السؤال المختار/);
 });
