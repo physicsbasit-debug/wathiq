@@ -1,7 +1,9 @@
 import type {
+  AssessmentType,
   CognitiveLevel,
   Difficulty,
   ExamSourceReference,
+  ItemDifficulty,
   PlanItem,
   QuestionProposal,
   QuestionType,
@@ -10,7 +12,7 @@ import type { OwnerSession } from "./central-source-store.js";
 import type { WathiqRuntimeConfig } from "./runtime-config.js";
 import { SCIENCE_ASSESSMENT_POLICY_ID } from "./assessment-policy.js";
 
-export const SOURCE_GENERATION_VERSION = "source-grounded-policy-ai-3-multi-lessons-batched";
+export const SOURCE_GENERATION_VERSION = "source-grounded-policy-ai-4-exam-type-date";
 export const GENERATION_BATCH_SIZE = 2;
 
 export interface QuestionGenerationReference {
@@ -26,13 +28,14 @@ export interface QuestionGenerationItem {
   planItemId: string;
   questionType: QuestionType;
   cognitiveLevel: CognitiveLevel;
+  difficultyLevel?: ItemDifficulty;
   marks: number;
   sourceReferenceId: string;
   lessonLabel: string;
 }
 
 export interface QuestionGenerationRequest {
-  assessmentType: "اختبار قصير رسمي";
+  assessmentType: AssessmentType;
   assessmentPolicyId: string;
   topic: string;
   lessons: string[];
@@ -166,6 +169,7 @@ function generationItem(item: PlanItem): QuestionGenerationItem {
     planItemId: item.id,
     questionType: item.questionType,
     cognitiveLevel: item.cognitiveLevel,
+    ...(item.difficultyLevel ? { difficultyLevel: item.difficultyLevel } : {}),
     marks: item.marks,
     sourceReferenceId: item.sourceReferenceId,
     lessonLabel: item.lessonLabel,
@@ -173,6 +177,7 @@ function generationItem(item: PlanItem): QuestionGenerationItem {
 }
 
 export function buildQuestionGenerationRequest(
+  assessmentType: AssessmentType,
   topic: string,
   lessons: readonly string[],
   grade: number,
@@ -201,7 +206,7 @@ export function buildQuestionGenerationRequest(
     };
   });
   return {
-    assessmentType: "اختبار قصير رسمي",
+    assessmentType,
     assessmentPolicyId: SCIENCE_ASSESSMENT_POLICY_ID,
     topic: topic.trim(),
     lessons: normalizedLessons,

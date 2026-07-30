@@ -3,6 +3,9 @@ export type WizardStep = 1 | 2 | 3 | 4;
 export type Difficulty = "سهل" | "متوسط" | "متقدم";
 export type QuestionType = "اختيار من متعدد" | "إجابة قصيرة" | "إجابة طويلة";
 export type CognitiveLevel = "معرفة" | "تطبيق" | "استدلال";
+export type ItemDifficulty = "منخفض" | "متوسط" | "مرتفع";
+export type ExamTitleOption = "الاختبار القصير الأول" | "الاختبار القصير الثاني" | "الاختبار النهائي";
+export type AssessmentType = "اختبار قصير رسمي" | "امتحان نهاية الفصل الدراسي";
 
 export interface LearningOutcome {
   id: string;
@@ -49,7 +52,7 @@ export interface ExamSourceReference {
 
 export interface ExamDraft {
   id: string;
-  assessmentType: "اختبار قصير رسمي";
+  assessmentType: AssessmentType;
   assessmentPolicyId: string;
   grade: number | null;
   subjectId: string;
@@ -59,7 +62,7 @@ export interface ExamDraft {
   lessonTopics: string[];
   topic: string;
   sourceReferences: ExamSourceReference[];
-  title: string;
+  title: ExamTitleOption;
   examDate: string;
   school: string;
   directorate: string;
@@ -86,6 +89,7 @@ export interface PlanItem {
   outcomeId: string;
   outcomeLabel: string;
   cognitiveLevel: CognitiveLevel;
+  difficultyLevel?: ItemDifficulty;
   questionType: QuestionType;
   marks: number;
   proposals: QuestionProposal[];

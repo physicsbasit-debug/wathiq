@@ -61,6 +61,7 @@ test("يبني طلب الدفعة من سياق المقطع الكامل وم�
     planItem("plan-2", "1-2 التأثيرات الكهربائية", "ref-2"),
   ];
   const request = buildQuestionGenerationRequest(
+    "اختبار قصير رسمي",
     "1-1 الشحنة الكهربائية، 1-2 التأثيرات الكهربائية",
     ["1-1 الشحنة الكهربائية", "1-2 التأثيرات الكهربائية"],
     10,
@@ -119,7 +120,7 @@ test("يتحقق من ثلاثة بدائل ثم يربطها بخطة الاخ�
   assert.equal(generated[0].proposals.length, 3);
   assert.equal(generated[0].proposals[0].options.length, 4);
   assert.equal(generated[0].proposals[0].answer, "خاصية فيزيائية");
-  assert.equal(SOURCE_GENERATION_VERSION, "source-grounded-policy-ai-3-multi-lessons-batched");
+  assert.equal(SOURCE_GENERATION_VERSION, "source-grounded-policy-ai-4-exam-type-date");
 });
 
 test("يرفض سؤال اختيار من متعدد لا تطابق إجابته أحد البدائل", () => {
