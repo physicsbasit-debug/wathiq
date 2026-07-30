@@ -1377,3 +1377,107 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
 .library-exam-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .55rem; }
 .library-exam-actions .primary-btn { grid-column: 1 / -1; }
 @media (max-width: 720px) { .library-exam-actions { grid-template-columns: 1fr; } .library-exam-actions .primary-btn { grid-column: auto; } }
+
+/* Phase 1-C2 Fix 2: اختيار الدروس مباشرة من فهرس المصدر */
+.lesson-catalog-field {
+  border: 1px solid #d6e0ec;
+  border-radius: 16px;
+  background: #f8fbff;
+  padding: 16px;
+}
+
+.lesson-catalog-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  max-height: 390px;
+  overflow: auto;
+  padding: 2px;
+}
+
+.lesson-catalog-option {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-height: 58px;
+  padding: 10px 12px;
+  border: 1px solid #d6e0ec;
+  border-radius: 13px;
+  background: #fff;
+  cursor: pointer;
+  transition: border-color .15s ease, box-shadow .15s ease, background .15s ease;
+}
+
+.lesson-catalog-option:hover {
+  border-color: #91acd0;
+  box-shadow: 0 5px 16px rgba(22, 55, 96, .07);
+}
+
+.lesson-catalog-option.selected {
+  border-color: var(--navy);
+  background: #eef5fc;
+  box-shadow: 0 0 0 2px rgba(29, 63, 114, .08);
+}
+
+.lesson-catalog-option.disabled {
+  opacity: .48;
+  cursor: not-allowed;
+}
+
+.lesson-catalog-option input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--navy);
+  flex: 0 0 auto;
+}
+
+.lesson-catalog-option > span {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.lesson-catalog-option b {
+  display: inline-flex;
+  direction: ltr;
+  padding: 4px 7px;
+  border-radius: 8px;
+  background: #e8f0fa;
+  color: var(--navy);
+  font-size: 12px;
+}
+
+.lesson-catalog-option strong {
+  color: var(--navy-deep);
+  line-height: 1.5;
+}
+
+.lesson-catalog-option small {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.lesson-catalog-empty {
+  padding: 22px;
+  border: 1px dashed #b9c9dc;
+  border-radius: 13px;
+  background: #fff;
+  color: var(--muted);
+  text-align: center;
+  line-height: 1.7;
+}
+
+.lesson-catalog-empty.warning {
+  border-color: #e1c37c;
+  background: #fffaf0;
+  color: #74591f;
+}
+
+@media (max-width: 760px) {
+  .lesson-catalog-list { grid-template-columns: 1fr; max-height: 450px; }
+  .lesson-catalog-option > span { grid-template-columns: auto minmax(0, 1fr); }
+  .lesson-catalog-option small { grid-column: 2; }
+}

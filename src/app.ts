@@ -15,7 +15,7 @@ import {
   validateExamSetup,
 } from "./domain.js";
 import { clearDraft, loadDraft, loadProfile, loadSources, saveDraft, saveProfile, saveSources } from "./storage.js";
-import type { ExamDraft, ExamTitleOption, ManagedSource, PlanItem, QuestionCounts, SourceDraft, SourceStatus, SourceExtractionResult, ViewName, WizardStep } from "./types.js";
+import type { ExamDraft, ExamTitleOption, ManagedSource, PlanItem, QuestionCounts, SourceDraft, SourceStatus, SourceExtractionResult, SourceStructureNode, ViewName, WizardStep } from "./types.js";
 import { escapeHtml, formatArabicDate, icon } from "./ui.js";
 import { questionVisualTypeLabel, renderQuestionVisualSvg, validateQuestionVisualSpec } from "./question-visual.js";
 import { buildStandaloneExamDocument, downloadWordHtml, interleaveAssessmentItems, printHtmlDocument, safeExportFileName } from "./exam-export.js";
@@ -25,9 +25,11 @@ import { CentralSourceStore } from "./central-source-store.js";
 import { getRuntimeConfig, isCentralStorageConfigured, isGoogleDriveConfigured } from "./runtime-config.js";
 import { GoogleDriveService, type GoogleDriveStatus, type PendingSourceUpload, type SourceUploadProgress } from "./google-drive.js";
 import { extractPdfText, shouldInvalidateLegacyExtraction, type PdfExtractionProgress } from "./pdf-indexer.js";
+import { extractSourceStructure } from "./source-structure.js";
 import { extractPdfWithArabicOcr } from "./ocr-indexer.js";
 import { resolveInitialView, viewFromHash, viewHash } from "./navigation.js";
 import { rankSourceChunks, SOURCE_RETRIEVAL_VERSION, type SourceChunkCandidate } from "./source-retrieval.js";
+import { buildLessonCatalog, selectedLessonIds, type LessonCatalogOption } from "./lesson-catalog.js";
 import {
   applyGeneratedQuestions,
   buildQuestionGenerationRequest,
@@ -87,6 +89,10 @@ interface AppState {
   sourceRetrievalMessage: string;
   questionGenerationBusy: boolean;
   questionGenerationMessage: string;
+  lessonCatalog: LessonCatalogOption[];
+  lessonCatalogKey: string;
+  lessonCatalogBusy: boolean;
+  lessonCatalogMessage: string;
 }
 
 
@@ -148,6 +154,10 @@ const state: AppState = {
   sourceRetrievalMessage: "",
   questionGenerationBusy: false,
   questionGenerationMessage: "",
+  lessonCatalog: [],
+  lessonCatalogKey: "",
+  lessonCatalogBusy: false,
+  lessonCatalogMessage: "",
 };
 
 let saveTimer: number | undefined;
@@ -396,24 +406,51 @@ function renderWizardStep(): string {
   }
 }
 
-function renderContentStep(): string {
-  const availableSubjects = SUBJECTS.filter((subject) => state.draft.grade !== null && subject.grades.includes(state.draft.grade));
-  const eligibleSources = state.sources.filter((source) =>
+function eligibleSourcesForDraft(): ManagedSource[] {
+  return state.sources.filter((source) =>
     source.grade === state.draft.grade &&
     source.subjectId === state.draft.subjectId &&
     source.status === "مفهرس" &&
     source.extractionStatus === "مكتمل",
   );
+}
+
+function lessonCatalogSelectionKey(): string {
+  return [state.draft.grade ?? "", state.draft.subjectId, ...eligibleSourcesForDraft().map((source) => `${source.id}:${source.updatedAt}`)].join("|");
+}
+
+function renderLessonCatalog(): string {
+  const selectedLabels = new Set(normalizeLessonTopics(state.draft.lessonTopics));
+  const selectedCount = selectedLabels.size;
+  if (state.draft.grade === null || !state.draft.subjectId) {
+    return `<div class="lesson-catalog-empty">اختر الصف والمادة، وستظهر دروس الكتاب هنا تلقائيًا.</div>`;
+  }
+  if (state.lessonCatalogBusy) {
+    return `<div class="lesson-catalog-empty">جارٍ تجهيز قائمة الدروس من فهرس المصدر…</div>`;
+  }
+  if (!state.lessonCatalog.length) {
+    return `<div class="lesson-catalog-empty warning">${escapeHtml(state.lessonCatalogMessage || "لم يجد واثق دروسًا مرقمة قابلة للاختيار في المصدر المطابق.")}</div>`;
+  }
+  return `<div class="lesson-catalog-list">${state.lessonCatalog.map((lesson) => {
+    const checked = selectedLabels.has(lesson.label);
+    const disabled = !checked && selectedCount >= MAX_LESSON_TOPICS;
+    const pages = lesson.pageStart ? `<small>${lesson.pageStart === lesson.pageEnd || !lesson.pageEnd ? `ص ${lesson.pageStart}` : `ص ${lesson.pageStart}-${lesson.pageEnd}`}</small>` : "";
+    return `<label class="lesson-catalog-option ${checked ? "selected" : ""} ${disabled ? "disabled" : ""}"><input type="checkbox" data-lesson-option-id="${escapeHtml(lesson.id)}" ${checked ? "checked" : ""} ${disabled ? "disabled" : ""}/><span><b>${escapeHtml(lesson.code)}</b><strong>${escapeHtml(lesson.title)}</strong>${pages}</span></label>`;
+  }).join("")}</div>`;
+}
+
+function renderContentStep(): string {
+  const availableSubjects = SUBJECTS.filter((subject) => state.draft.grade !== null && subject.grades.includes(state.draft.grade));
+  const eligibleSources = eligibleSourcesForDraft();
   const references = state.draft.sourceReferences;
   return `
-    <div class="section-intro"><h2>ما الدروس الداخلة في الاختبار؟</h2><p>الاختبار القصير الرسمي يغطي من درسين إلى خمسة دروس. يبحث واثق عن صفحات كل درس بصورة مستقلة.</p></div>
+    <div class="section-intro"><h2>اختر دروس الاختبار</h2><p>حدد من درسين إلى خمسة دروس من القائمة المستخرجة من فهرس الكتاب. لا كتابة يدوية ولا تخمين.</p></div>
     <div class="form-grid two-columns">
       <label class="field"><span>الصف</span><select id="grade-select"><option value="">اختر الصف</option>${[5, 6, 7, 8, 9, 10].map((grade) => `<option value="${grade}" ${state.draft.grade === grade ? "selected" : ""}>الصف ${grade}</option>`).join("")}</select></label>
       <label class="field"><span>المادة</span><select id="subject-select" ${availableSubjects.length === 0 ? "disabled" : ""}><option value="">اختر المادة</option>${availableSubjects.map((item) => `<option value="${item.id}" ${state.draft.subjectId === item.id ? "selected" : ""}>${item.label}</option>`).join("")}</select></label>
-      <section class="field full lesson-topics-field" aria-labelledby="lesson-topics-label">
-        <div class="lesson-topics-head"><div><span id="lesson-topics-label">الدروس الداخلة في الاختبار</span><small>أدخل رقم الدرس واسمه كما يظهران في الكتاب، مثل: 1-1 الضغط.</small></div><b id="lesson-topic-count">${normalizeLessonTopics(state.draft.lessonTopics).length}/${MAX_LESSON_TOPICS}</b></div>
-        <div class="lesson-topic-list">${renderLessonTopicRows()}</div>
-        <button type="button" class="secondary-btn lesson-add-btn" data-action="add-lesson" ${state.draft.lessonTopics.length >= MAX_LESSON_TOPICS ? "disabled" : ""}>${icon("plus")} إضافة درس</button>
+      <section class="field full lesson-catalog-field" aria-labelledby="lesson-topics-label">
+        <div class="lesson-topics-head"><div><span id="lesson-topics-label">الدروس الداخلة في الاختبار</span><small>اختر الدروس مباشرة من فهرس المصدر المفهرس.</small></div><b id="lesson-topic-count">${normalizeLessonTopics(state.draft.lessonTopics).length}/${MAX_LESSON_TOPICS}</b></div>
+        ${renderLessonCatalog()}
       </section>
     </div>
 
@@ -430,15 +467,6 @@ function renderContentStep(): string {
 
     ${renderWizardFooter(1, !state.sourceRetrievalBusy)}
   `;
-}
-
-function renderLessonTopicRows(): string {
-  return state.draft.lessonTopics.map((lesson, index) => `
-    <div class="lesson-topic-row">
-      <span class="lesson-topic-number">${index + 1}</span>
-      <input data-lesson-topic-index="${index}" type="text" value="${escapeHtml(lesson)}" placeholder="مثال: 1-${index + 1} اسم الدرس" autocomplete="off" aria-label="الدرس ${index + 1}"/>
-      <button type="button" class="lesson-remove-btn" data-action="remove-lesson" data-lesson-index="${index}" ${state.draft.lessonTopics.length <= MIN_LESSON_TOPICS ? "disabled" : ""} aria-label="حذف الدرس ${index + 1}">حذف</button>
-    </div>`).join("");
 }
 
 function renderSourceReference(reference: ExamDraft["sourceReferences"][number]): string {
@@ -1260,27 +1288,6 @@ function bindEvents(): void {
 }
 
 function handleAction(action: string, element: HTMLElement): void {
-  if (action === "add-lesson") {
-    if (state.draft.lessonTopics.length >= MAX_LESSON_TOPICS) return;
-    state.draft.lessonTopics.push("");
-    syncDraftTopicFromLessons(state.draft);
-    invalidateSourceAndGeneratedQuestions();
-    scheduleSave();
-    render();
-    window.setTimeout(() => document.querySelector<HTMLInputElement>(`[data-lesson-topic-index="${state.draft.lessonTopics.length - 1}"]`)?.focus(), 0);
-    return;
-  }
-  if (action === "remove-lesson") {
-    if (state.draft.lessonTopics.length <= MIN_LESSON_TOPICS) return;
-    const index = Number(element.dataset.lessonIndex);
-    if (!Number.isInteger(index) || index < 0 || index >= state.draft.lessonTopics.length) return;
-    state.draft.lessonTopics.splice(index, 1);
-    syncDraftTopicFromLessons(state.draft);
-    invalidateSourceAndGeneratedQuestions();
-    scheduleSave();
-    render();
-    return;
-  }
   if (action === "new-exam") {
     const profile = loadProfile();
     state.draft = createEmptyDraft();
@@ -1496,7 +1503,7 @@ async function nextStep(): Promise<void> {
   if (step === 1) {
     const lessons = normalizeLessonTopics(state.draft.lessonTopics);
     if (state.draft.grade === null || !state.draft.subjectId || lessons.length < MIN_LESSON_TOPICS || lessons.length > MAX_LESSON_TOPICS) {
-      return showToast(`اختر الصف والمادة وأدخل من ${MIN_LESSON_TOPICS} إلى ${MAX_LESSON_TOPICS} دروس.`);
+      return showToast(`اختر الصف والمادة وحدد من ${MIN_LESSON_TOPICS} إلى ${MAX_LESSON_TOPICS} دروس من القائمة.`);
     }
     syncDraftTopicFromLessons(state.draft);
     const matched = await prepareSourceContext();
@@ -1651,7 +1658,7 @@ async function prepareSourceContext(): Promise<boolean> {
   }
   const lessons = normalizeLessonTopics(state.draft.lessonTopics);
   if (lessons.length < MIN_LESSON_TOPICS || lessons.length > MAX_LESSON_TOPICS) {
-    state.sourceRetrievalMessage = `أدخل من ${MIN_LESSON_TOPICS} إلى ${MAX_LESSON_TOPICS} دروس قبل البحث في المصادر.`;
+    state.sourceRetrievalMessage = `حدد من ${MIN_LESSON_TOPICS} إلى ${MAX_LESSON_TOPICS} دروس من القائمة قبل المتابعة.`;
     render();
     showToast(state.sourceRetrievalMessage);
     return false;
@@ -1700,7 +1707,7 @@ async function prepareSourceContext(): Promise<boolean> {
       state.draft.sourceReferences = [];
       state.draft.sourceRetrievalVersion = "";
       state.sourceRetrievalBusy = false;
-      state.sourceRetrievalMessage = `لم يجد واثق صفحات واضحة للدروس: ${missingLessons.join("، ")}. اكتب رقم الدرس واسمه كما يردان في الكتاب.`;
+      state.sourceRetrievalMessage = `لم يجد واثق صفحات واضحة للدروس: ${missingLessons.join("، ")}. راجع اختيار الدروس من الفهرس.`;
       render();
       showToast("بعض الدروس لم ترتبط بصفحات من المصدر.");
       return false;
@@ -1724,14 +1731,73 @@ async function prepareSourceContext(): Promise<boolean> {
   }
 }
 
+async function loadLessonCatalogForCurrentSelection(force = false): Promise<void> {
+  const key = lessonCatalogSelectionKey();
+  if (!force && (state.lessonCatalogBusy || state.lessonCatalogKey === key)) return;
+  state.lessonCatalogKey = key;
+  state.lessonCatalog = [];
+  state.lessonCatalogMessage = "";
+  if (state.draft.grade === null || !state.draft.subjectId) return;
+  const eligible = eligibleSourcesForDraft();
+  if (!eligible.length) {
+    state.lessonCatalogMessage = "لا يوجد مصدر مفهرس مطابق للصف والمادة.";
+    return;
+  }
+  state.lessonCatalogBusy = true;
+  render();
+  try {
+    const structures = new Map<string, SourceStructureNode[]>();
+    if (centralSourceStore?.currentSession && state.sourceStorageStatus === "متصل") {
+      const loaded = await Promise.all(eligible.map(async (source) => {
+        try {
+          let nodes = await centralSourceStore.listSourceStructure(source.id);
+          const existingCatalog = buildLessonCatalog([source], new Map([[source.id, nodes]]));
+          if (existingCatalog.length < MIN_LESSON_TOPICS) {
+            const chunks = await centralSourceStore.listSourceChunks(source.id);
+            const extracted = extractSourceStructure(
+              source.id,
+              chunks,
+              source.extractedPageCount ?? 0,
+              { allowUnitHeadingFallback: false },
+            );
+            if (extracted.reliableTocFound) nodes = extracted.nodes;
+          }
+          return [source.id, nodes] as const;
+        } catch {
+          return [source.id, [] as SourceStructureNode[]] as const;
+        }
+      }));
+      loaded.forEach(([sourceId, nodes]) => structures.set(sourceId, nodes));
+    }
+    state.lessonCatalog = buildLessonCatalog(eligible, structures);
+    const validLabels = new Set(state.lessonCatalog.map((lesson) => lesson.label));
+    const retained = normalizeLessonTopics(state.draft.lessonTopics).filter((label) => validLabels.has(label));
+    if (retained.length !== normalizeLessonTopics(state.draft.lessonTopics).length) {
+      state.draft.lessonTopics = retained;
+      syncDraftTopicFromLessons(state.draft);
+      invalidateSourceAndGeneratedQuestions();
+      scheduleSave();
+    }
+    state.lessonCatalogMessage = state.lessonCatalog.length
+      ? `تم تجهيز ${state.lessonCatalog.length} درسًا من فهرس المصدر.`
+      : "لم يعثر واثق على دروس مرقمة واضحة في فهرس المصدر. أعد فهرسة المصدر النصية فقط إذا كان الملف قديمًا.";
+  } finally {
+    state.lessonCatalogBusy = false;
+    render();
+  }
+}
+
 function bindContentStep(): void {
   const gradeSelect = document.querySelector<HTMLSelectElement>("#grade-select");
   gradeSelect?.addEventListener("change", () => {
     state.draft.grade = gradeSelect.value ? Number(gradeSelect.value) : null;
     applyOfficialAssessmentTemplate(state.draft);
     state.draft.subjectId = "";
-    state.draft.lessonTopics = ["", ""];
+    state.draft.lessonTopics = [];
     state.draft.topic = "";
+    state.lessonCatalog = [];
+    state.lessonCatalogKey = "";
+    state.lessonCatalogMessage = "";
     invalidateSourceAndGeneratedQuestions();
     scheduleSave();
     render();
@@ -1740,23 +1806,42 @@ function bindContentStep(): void {
   const subjectSelect = document.querySelector<HTMLSelectElement>("#subject-select");
   subjectSelect?.addEventListener("change", () => {
     state.draft.subjectId = subjectSelect.value;
+    state.draft.lessonTopics = [];
+    state.draft.topic = "";
+    state.lessonCatalog = [];
+    state.lessonCatalogKey = "";
+    state.lessonCatalogMessage = "";
     invalidateSourceAndGeneratedQuestions();
     scheduleSave();
     render();
   });
 
-  document.querySelectorAll<HTMLInputElement>("[data-lesson-topic-index]").forEach((input) => {
-    input.addEventListener("input", () => {
-      const index = Number(input.dataset.lessonTopicIndex);
-      if (!Number.isInteger(index) || index < 0 || index >= state.draft.lessonTopics.length) return;
-      state.draft.lessonTopics[index] = input.value;
+  document.querySelectorAll<HTMLInputElement>("[data-lesson-option-id]").forEach((input) => {
+    input.addEventListener("change", () => {
+      const option = state.lessonCatalog.find((lesson) => lesson.id === input.dataset.lessonOptionId);
+      if (!option) return;
+      const selected = new Set(normalizeLessonTopics(state.draft.lessonTopics));
+      if (input.checked) {
+        if (selected.size >= MAX_LESSON_TOPICS) {
+          input.checked = false;
+          showToast(`يمكن اختيار ${MAX_LESSON_TOPICS} دروس كحد أقصى.`);
+          return;
+        }
+        selected.add(option.label);
+      } else {
+        selected.delete(option.label);
+      }
+      state.draft.lessonTopics = state.lessonCatalog.filter((lesson) => selected.has(lesson.label)).map((lesson) => lesson.label);
       syncDraftTopicFromLessons(state.draft);
       invalidateSourceAndGeneratedQuestions();
-      const count = document.querySelector<HTMLElement>("#lesson-topic-count");
-      if (count) count.textContent = `${normalizeLessonTopics(state.draft.lessonTopics).length}/${MAX_LESSON_TOPICS}`;
       scheduleSave();
+      render();
     });
   });
+
+  if (state.draft.grade !== null && state.draft.subjectId && !state.lessonCatalogBusy && state.lessonCatalogKey !== lessonCatalogSelectionKey()) {
+    window.setTimeout(() => { void loadLessonCatalogForCurrentSelection(); }, 0);
+  }
 }
 
 function syncSetupFieldsFromDom(): void {
