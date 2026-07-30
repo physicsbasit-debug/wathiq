@@ -16,7 +16,7 @@ import type { WathiqRuntimeConfig } from "./runtime-config.js";
 import { SCIENCE_ASSESSMENT_POLICY_ID } from "./assessment-policy.js";
 import { parseQuestionVisualSpec } from "./question-visual.js";
 
-export const SOURCE_GENERATION_VERSION = "source-grounded-policy-ai-9-visual-svg";
+export const SOURCE_GENERATION_VERSION = "source-grounded-policy-ai-10-strict-lesson-scope";
 export const GENERATION_BATCH_SIZE = 2;
 
 export interface QuestionGenerationReference {
@@ -26,6 +26,13 @@ export interface QuestionGenerationReference {
   pageFrom: number;
   pageTo: number;
   content: string;
+}
+
+export interface QuestionRegenerationAnchor {
+  stimulus: string;
+  text: string;
+  answer: string;
+  questionForm: QuestionDesignPattern;
 }
 
 export interface QuestionGenerationItem {
@@ -38,6 +45,7 @@ export interface QuestionGenerationItem {
   lessonLabel: string;
   styleTarget: QuestionDesignPattern;
   visualTarget: QuestionVisualType;
+  regenerationAnchor?: QuestionRegenerationAnchor;
 }
 
 export interface QuestionGenerationRequest {
@@ -268,7 +276,7 @@ function deriveQuestionVisualTarget(
   if (normalizedSubject.includes("فيزياء")) {
     if (/(دائره|بطاريه|مصباح|مقاوم|تيار|جهد|مكثف|اميتر|فولتميتر)/u.test(evidence)) {
       if (item.cognitiveLevel === "معرفة" && item.marks === 1) return "none";
-      return pattern === "بيانات" && officialIndex % 2 === 0 ? "line_graph" : "circuit_diagram";
+      return "circuit_diagram";
     }
     if (/(ضغط|سائل|عمق|كثافه|طفو)/u.test(evidence)) {
       if (item.cognitiveLevel === "معرفة" || item.marks === 1) return "none";
@@ -276,9 +284,12 @@ function deriveQuestionVisualTarget(
       if (pattern === "مقارنة" && officialIndex % 2 === 1) return "none";
       return "pressure_diagram";
     }
-  }
-  if (item.cognitiveLevel === "استدلال" || pattern === "بيانات") {
-    return officialIndex % 2 === 0 ? "line_graph" : "bar_chart";
+    if (/(مسافه.{0,30}زمن|سرعه.{0,30}زمن|درجه حراره.{0,30}زمن|زمن.{0,30}(مسافه|سرعه|درجه حراره))/u.test(evidence)) {
+      return item.cognitiveLevel === "معرفة" && item.marks === 1 ? "none" : "line_graph";
+    }
+    if (/(رسم بياني بالاعمده|مخطط اعمده|اعمده بيانيه)/u.test(evidence)) {
+      return item.cognitiveLevel === "معرفة" && item.marks === 1 ? "none" : "bar_chart";
+    }
   }
   return "none";
 }

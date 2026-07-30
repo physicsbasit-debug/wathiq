@@ -1372,3 +1372,8 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
   .export-panel,
   .approval-toggle { display: none !important; }
 }
+
+/* Phase 1-C2 Fix 1: strict lesson scope and library exports */
+.library-exam-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .55rem; }
+.library-exam-actions .primary-btn { grid-column: 1 / -1; }
+@media (max-width: 720px) { .library-exam-actions { grid-template-columns: 1fr; } .library-exam-actions .primary-btn { grid-column: auto; } }

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { normalizeExamDraft } from "../dist/assets/storage.js";
+import { SOURCE_RETRIEVAL_VERSION } from "../dist/assets/source-retrieval.js";
 
 function twoLessonReferences() {
   return [
@@ -89,8 +90,9 @@ test("يحافظ على مسودة حديثة مرتبطة بدرسين ويعي
     plan: [{ id: "legacy-plan" }],
   });
   assert.ok(draft);
-  assert.equal(draft.currentStep, 2);
+  assert.equal(draft.currentStep, 1);
   assert.equal(draft.topic, "1-1 الشحنة الكهربائية، 1-2 التأثيرات الكهربائية");
+  assert.deepEqual(draft.sourceReferences, []);
   assert.deepEqual(draft.plan, []);
 });
 
@@ -102,8 +104,9 @@ test("يحافظ على مرحلة الخطة لمسودة منشأة بالإص
     assessmentPolicyId: "oman-science-assessment-2025-2026",
     lessonTopics: ["1-1 الشحنة الكهربائية", "1-2 التأثيرات الكهربائية"],
     sourceReferences: twoLessonReferences(),
+    sourceRetrievalVersion: SOURCE_RETRIEVAL_VERSION,
     currentStep: 3,
-    generationVersion: "source-grounded-policy-ai-9-visual-svg",
+    generationVersion: "source-grounded-policy-ai-10-strict-lesson-scope",
     plan: [{ id: "plan-1", proposals: [] }],
   });
   assert.ok(draft);

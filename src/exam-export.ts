@@ -93,7 +93,9 @@ const EXPORT_STYLES = `
   .teacher-key-head { display: flex; justify-content: space-between; gap: 4mm; }
   .teacher-key ol { margin: 2mm 7mm; }
   .teacher-key blockquote { margin: 2mm 0; padding: 2mm 3mm; border-right: 3px solid #8298b2; background: #f7f9fb; }
-  .approval-stamp { margin: 5mm auto; padding: 2mm; text-align: center; font-weight: 800; color: #17583f; white-space: nowrap; }
+  .approval-stamp, .draft-stamp { margin: 5mm auto; padding: 2mm; text-align: center; font-weight: 800; white-space: nowrap; }
+  .approval-stamp { color: #17583f; }
+  .draft-stamp { color: #8a4f08; border: 1px dashed #b77a25; }
   @media print { body { print-color-adjust: exact; -webkit-print-color-adjust: exact; } }
 `;
 
@@ -107,7 +109,7 @@ export interface StandaloneExamDocumentInput {
 export function buildStandaloneExamDocument(input: StandaloneExamDocumentInput): string {
   const approval = input.approvedAt
     ? `<div class="approval-stamp">نسخة معتمدة بتاريخ ${input.approvedAt}</div>`
-    : "";
+    : `<div class="draft-stamp">نسخة مسودة غير معتمدة للمراجعة</div>`;
   return `<!doctype html><html lang="ar" dir="rtl" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="ProgId" content="Word.Document"/><meta name="Generator" content="واثق"/><title>${input.title}</title><style>${EXPORT_STYLES}</style></head><body><main class="export-document" data-export-kind="${input.kind}">${approval}${input.bodyHtml}</main></body></html>`;
 }
 

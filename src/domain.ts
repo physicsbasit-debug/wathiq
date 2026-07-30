@@ -56,6 +56,7 @@ export function createEmptyDraft(now = new Date()): ExamDraft {
     lessonTopics: ["", ""],
     topic: "",
     sourceReferences: [],
+    sourceRetrievalVersion: "",
     title: "الاختبار القصير الأول",
     examDate: toDateInputValue(now),
     school: "مدرسة الباسط للتعليم الأساسي",

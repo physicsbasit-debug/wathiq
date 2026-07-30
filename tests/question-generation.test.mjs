@@ -142,7 +142,7 @@ test("يتحقق من ثلاثة بدائل ثم يربطها بخطة الاخ�
   assert.equal(generated[0].proposals[0].answer, "خاصية فيزيائية");
   assert.equal(generated[0].proposals[0].questionForm, "مفهومي");
   assert.deepEqual(generated[0].proposals[0].markScheme, ["تحديد العبارة العلمية الصحيحة."]);
-  assert.equal(SOURCE_GENERATION_VERSION, "source-grounded-policy-ai-9-visual-svg");
+  assert.equal(SOURCE_GENERATION_VERSION, "source-grounded-policy-ai-10-strict-lesson-scope");
   assert.equal(parsed.requestId, "WQ-TEST1234");
 });
 
@@ -333,4 +333,15 @@ test("يفصل مفردات التطبيق البصرية المحتملة في 
     { id: 3, questionType: "اختيار من متعدد", cognitiveLevel: "معرفة", marks: 1 },
   ];
   assert.deepEqual(splitQuestionGenerationBatches(items).map((batch) => batch.map((item) => item.id)), [[1], [2], [3]]);
+});
+
+
+test("لا يفرض رسم ضغط أو دائرة على درس النشاط الإشعاعي", () => {
+  const item = {
+    id: "rad-1", lessonId: "l", lessonLabel: "9-1 النشاط الإشعاعي في كل مكان", outcomeId: "o", outcomeLabel: "فهم النشاط الإشعاعي",
+    proposals: [], questionType: "إجابة قصيرة", marks: 2, cognitiveLevel: "استدلال", sourceReferenceId: "r-rad",
+  };
+  const refs = [{ id: "r-rad", sourceId: "s", sourceTitle: "كتاب", sourceKind: "كتاب الطالب", pageFrom: 12, pageTo: 12, excerpt: "النشاط الإشعاعي انبعاث تلقائي من نوى غير مستقرة.", context: "النشاط الإشعاعي انبعاث تلقائي من نوى غير مستقرة، وتوجد إشعاعات ألفا وبيتا وجاما.", score: 95 }];
+  const request = buildQuestionGenerationRequest("اختبار قصير رسمي", "النشاط الإشعاعي", ["9-1 النشاط الإشعاعي في كل مكان", "9-2 أنواع الإشعاع"], 10, "الفيزياء", "متوسط", refs, [item], [item]);
+  assert.equal(request.items[0].visualTarget, "none");
 });

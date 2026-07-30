@@ -4,6 +4,7 @@ import { SCIENCE_ASSESSMENT_POLICY_ID, assessmentTypeForTitle, getOfficialAssess
 import { normalizeManagedSource } from "./source-registry.js";
 import { SOURCE_GENERATION_VERSION } from "./question-generation.js";
 import { diversifyQuestionVisualSpec } from "./question-visual.js";
+import { SOURCE_RETRIEVAL_VERSION } from "./source-retrieval.js";
 
 const DRAFT_KEY = "wathiq.phase0b.latestDraft";
 const PROFILE_KEY = "wathiq.phase0b.profile";
@@ -89,6 +90,7 @@ export function normalizeExamDraft(value: unknown): ExamDraft | null {
       : (typeof candidate.topic === "string" && candidate.topic.trim() ? [candidate.topic.trim(), ""] : ["", ""]),
     topic: typeof candidate.topic === "string" ? candidate.topic : "",
     sourceReferences: normalizeSourceReferences(candidate.sourceReferences),
+    sourceRetrievalVersion: typeof candidate.sourceRetrievalVersion === "string" ? candidate.sourceRetrievalVersion : "",
     title: normalizedTitle,
     examDate: typeof candidate.examDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(candidate.examDate)
       ? candidate.examDate
@@ -117,6 +119,17 @@ export function normalizeExamDraft(value: unknown): ExamDraft | null {
 
   if (draft.lessonTopics.filter((item) => item.trim()).length < 2 || draft.sourceReferences.length === 0) {
     draft.currentStep = 1;
+    draft.plan = [];
+    draft.selectedProposalByPlanItem = {};
+    draft.generationVersion = "";
+    draft.generationModel = "";
+    draft.generatedAt = "";
+    draft.approvedAt = "";
+    draft.status = "مسودة";
+  } else if (draft.sourceRetrievalVersion !== SOURCE_RETRIEVAL_VERSION) {
+    draft.currentStep = 1;
+    draft.sourceReferences = [];
+    draft.sourceRetrievalVersion = "";
     draft.plan = [];
     draft.selectedProposalByPlanItem = {};
     draft.generationVersion = "";
