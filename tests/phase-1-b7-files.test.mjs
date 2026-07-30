@@ -24,7 +24,7 @@ test("يتحقق أن الدليل المختار ينتمي إلى مرجع ا�
   assert.match(edge, /evidence_catalog_ready/);
 });
 
-test("يرفع إصدار مولد الأسئلة إلى عقد الأدلة المرقمة", () => {
-  assert.match(generator, /source-grounded-policy-ai-7-evidence-anchors/);
-  assert.equal(pkg.version, "0.0.33");
+test("يبقي عقد الأدلة المرقمة داخل الإصدار الأسلوبي الأحدث", () => {
+  assert.match(generator, /source-grounded-policy-ai-8-cambridge-style/);
+  assert.equal(pkg.version, "0.0.34");
 });

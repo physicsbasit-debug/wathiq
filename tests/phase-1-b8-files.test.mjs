@@ -1,0 +1,42 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { readFile } from "node:fs/promises";
+
+const app = await readFile(new URL("../src/app.ts", import.meta.url), "utf8");
+const policy = await readFile(new URL("../src/assessment-policy.ts", import.meta.url), "utf8");
+const generator = await readFile(new URL("../src/question-generation.ts", import.meta.url), "utf8");
+const edge = await readFile(new URL("../supabase/functions/generate-source-questions/index.ts", import.meta.url), "utf8");
+const styles = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
+const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+
+test("يثبت مرجع عُمان حاكمًا ويضيف مبادئ بناء أسلوبي دولي بلا نسخ", () => {
+  assert.match(policy, /INTERNATIONAL_SCIENCE_QUESTION_STYLE_PRINCIPLES/);
+  assert.match(policy, /مرجع التقويم العُماني هو الحاكم/);
+  assert.match(policy, /لا في نسخ الأسئلة/);
+  assert.match(app, /مواءمة أسلوبية مع الاختبارات الدولية/);
+});
+
+test("يفرض على Gemini أنماط السياق والبيانات والاستقصاء ونقطة لكل درجة", () => {
+  assert.match(generator, /QuestionDesignPattern/);
+  assert.match(generator, /source-grounded-policy-ai-8-cambridge-style/);
+  assert.match(edge, /styleTarget=بيانات/);
+  assert.match(edge, /styleTarget=استقصائي/);
+  assert.match(edge, /markScheme بعدد عناصر يساوي marks/);
+  assert.match(edge, /أخطاء مفاهيمية أو عددية شائعة/);
+});
+
+test("ينظف ورقة الطالب من مراجع المصدر ويضعها في نموذج المعلم", () => {
+  assert.doesNotMatch(app, /class="question-source-note"/);
+  assert.match(app, /نموذج الإجابة وأدلة المصدر/);
+  assert.match(app, /buildPaperLayout/);
+  assert.match(app, /structured-question/);
+  assert.match(app, /paper-stimulus/);
+  assert.match(styles, /structured-question-header/);
+});
+
+test("يرفع إصدار واثق ويحافظ على التوليد الموثق", () => {
+  assert.equal(pkg.version, "0.0.34");
+  assert.match(pkg.description, /المرجع العُماني/);
+  assert.match(pkg.description, /كامبريدج/);
+  assert.match(edge, /sourceSupport: evidence\.text/);
+});

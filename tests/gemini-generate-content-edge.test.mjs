@@ -131,6 +131,8 @@ test("يفرض المخطط ويثبت الدليل عبر معرف مقطع م�
     items: [{
       planItemId: "P-1",
       questionType: "اختيار من متعدد",
+      marks: 1,
+      styleTarget: "مفهومي",
       sourceReferenceId: "R-1",
     }],
     references,
@@ -139,10 +141,14 @@ test("يفرض المخطط ويثبت الدليل عبر معرف مقطع م�
     items: [{
       planItemId: "P-1",
       alternatives: Array.from({ length: 3 }, (_, index) => ({
+        stimulus: "",
         text: `ما العبارة الصحيحة عن الضغط؟ ${index + 1}`,
         options: ["الخيار أ", "الخيار ب", "الخيار ج", "الخيار د"],
         answer: "الخيار أ",
         rationale: "لأنه يوافق العلاقة العلمية الواردة في المصدر.",
+        markScheme: ["اختيار العلاقة العلمية الصحيحة."],
+        questionForm: "مفهومي",
+        workingRequired: false,
         sourceEvidenceId: evidenceIds[0],
         needsReview: false,
       })),
@@ -184,6 +190,7 @@ test("ينفذ مسار generateContent كاملًا باستجابة منظمة
       marks: 1,
       sourceReferenceId: "R-1",
       lessonLabel: "1-1 الضغط",
+      styleTarget: "مفهومي",
     }],
     items: [{
       planItemId: "P-1",
@@ -193,16 +200,21 @@ test("ينفذ مسار generateContent كاملًا باستجابة منظمة
       marks: 1,
       sourceReferenceId: "R-1",
       lessonLabel: "1-1 الضغط",
+      styleTarget: "مفهومي",
     }],
   };
   const generated = {
     items: [{
       planItemId: "P-1",
       alternatives: Array.from({ length: 3 }, (_, index) => ({
+        stimulus: "",
         text: `ما العبارة الصحيحة عن الضغط؟ ${index + 1}`,
         options: ["الخيار أ", "الخيار ب", "الخيار ج", "الخيار د"],
         answer: "الخيار أ",
         rationale: "الإجابة مدعومة بالنص العلمي.",
+        markScheme: ["اختيار العبارة العلمية الصحيحة."],
+        questionForm: "مفهومي",
+        workingRequired: false,
         sourceEvidenceId: "EV-1-1",
         needsReview: false,
       })),
@@ -252,17 +264,21 @@ test("يرفض معرف دليل تابعًا لمرجع آخر بدل قبول 
   const catalog = helpers.buildEvidenceCatalog(references);
   const wrongEvidence = catalog.fragments.find((fragment) => fragment.referenceId === "R-2");
   const request = {
-    items: [{ planItemId: "P-1", questionType: "إجابة قصيرة", sourceReferenceId: "R-1" }],
+    items: [{ planItemId: "P-1", questionType: "إجابة قصيرة", marks: 1, styleTarget: "مفهومي", sourceReferenceId: "R-1" }],
     references,
   };
   const payload = {
     items: [{
       planItemId: "P-1",
       alternatives: Array.from({ length: 3 }, () => ({
+        stimulus: "",
         text: "عرّف الضغط.",
         options: [],
         answer: "القوة المؤثرة عموديًا على وحدة المساحة.",
         rationale: "هذا هو التعريف العلمي.",
+        markScheme: ["ذكر تعريف الضغط بدقة."],
+        questionForm: "مفهومي",
+        workingRequired: false,
         sourceEvidenceId: wrongEvidence.id,
         needsReview: false,
       })),
@@ -278,17 +294,21 @@ test("يضيف الخادم نص الدليل نفسه ويضع علامة مر�
   const references = [{ id: "R-1", content: "الضغط هو القوة المؤثرة عموديًا على وحدة المساحة." }];
   const catalog = helpers.buildEvidenceCatalog(references);
   const request = {
-    items: [{ planItemId: "P-1", questionType: "إجابة قصيرة", sourceReferenceId: "R-1" }],
+    items: [{ planItemId: "P-1", questionType: "إجابة قصيرة", marks: 1, styleTarget: "مفهومي", sourceReferenceId: "R-1" }],
     references,
   };
   const payload = {
     items: [{
       planItemId: "P-1",
       alternatives: Array.from({ length: 3 }, () => ({
+        stimulus: "",
         text: "اكتب اسم كوكب بعيد.",
         options: [],
         answer: "نبتون",
         rationale: "إجابة فلكية.",
+        markScheme: ["ذكر اسم الكوكب."],
+        questionForm: "مفهومي",
+        workingRequired: false,
         sourceEvidenceId: catalog.fragments[0].id,
         needsReview: false,
       })),

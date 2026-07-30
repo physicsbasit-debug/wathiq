@@ -33,6 +33,7 @@ import {
 } from "./question-generation.js";
 import {
   ASSESSMENT_ITEM_WRITING_RULES,
+  INTERNATIONAL_SCIENCE_QUESTION_STYLE_PRINCIPLES,
   SCIENCE_ASSESSMENT_POLICY_DOCUMENT_PATH,
   SCIENCE_ASSESSMENT_POLICY_PUBLISHED,
   SCIENCE_ASSESSMENT_POLICY_TITLE,
@@ -546,7 +547,13 @@ function renderPlanStep(): string {
 
 function renderProposalOptions(options: string[] | undefined): string {
   if (!options?.length) return "";
-  return `<ol class="proposal-options">${options.map((option) => `<li>${escapeHtml(option)}</li>`).join("")}</ol>`;
+  const labels = ["أ", "ب", "ج", "د"];
+  return `<ol class="proposal-options">${options.map((option, index) => `<li><b>${labels[index] ?? index + 1}</b><span>${escapeHtml(option)}</span></li>`).join("")}</ol>`;
+}
+
+function renderMarkScheme(points: string[] | undefined): string {
+  if (!points?.length) return "";
+  return `<div class="proposal-mark-scheme"><strong>نقاط التصحيح (${points.length})</strong><ol>${points.map((point) => `<li>${escapeHtml(point)}</li>`).join("")}</ol></div>`;
 }
 
 function renderPlanItem(item: PlanItem, index: number): string {
@@ -557,27 +564,76 @@ function renderPlanItem(item: PlanItem, index: number): string {
     : "مرجع غير محدد";
   return `<article class="plan-card">
     <header><div class="question-number">${index + 1}</div><div><h3>${item.questionType}</h3><p>${escapeHtml(item.lessonLabel)} · ${escapeHtml(sourceLabel)}</p></div><div class="plan-tags"><span>${item.cognitiveLevel}</span><span>${item.marks} ${item.marks === 1 ? "درجة" : "درجات"}</span></div></header>
-    <div class="proposal-grid">${item.proposals.map((proposal, proposalIndex) => `<label class="proposal-card ${chosen === proposal.id ? "selected" : ""}"><input type="radio" name="proposal-${item.id}" data-plan-id="${item.id}" value="${proposal.id}" ${chosen === proposal.id ? "checked" : ""}/><div class="proposal-top"><span>البديل ${proposalIndex + 1}</span>${proposal.needsReview ? `<b class="review-needed-badge">يحتاج تدقيقًا أدق</b>` : ""}</div><p>${escapeHtml(proposal.text)}</p>${renderProposalOptions(proposal.options)}<details class="proposal-evidence"><summary>الإجابة ودليل المصدر</summary><p class="proposal-answer"><strong>الإجابة:</strong> ${escapeHtml(proposal.answer)}</p>${proposal.rationale ? `<p><strong>سبب الإجابة:</strong> ${escapeHtml(proposal.rationale)}</p>` : ""}${proposal.sourceSupport ? `<blockquote>${escapeHtml(proposal.sourceSupport)}</blockquote>` : ""}</details><span class="choose-label">${chosen === proposal.id ? `${icon("check")} تم الاختيار` : "اختر هذا السؤال"}</span></label>`).join("")}</div>
+    <div class="proposal-grid">${item.proposals.map((proposal, proposalIndex) => `<label class="proposal-card ${chosen === proposal.id ? "selected" : ""}"><input type="radio" name="proposal-${item.id}" data-plan-id="${item.id}" value="${proposal.id}" ${chosen === proposal.id ? "checked" : ""}/><div class="proposal-top"><span>البديل ${proposalIndex + 1}</span><div class="proposal-badges">${proposal.questionForm ? `<b class="question-form-badge">${escapeHtml(proposal.questionForm)}</b>` : ""}${proposal.needsReview ? `<b class="review-needed-badge">يحتاج تدقيقًا أدق</b>` : ""}</div></div>${proposal.stimulus ? `<div class="proposal-stimulus">${escapeHtml(proposal.stimulus)}</div>` : ""}<p>${escapeHtml(proposal.text)}</p>${renderProposalOptions(proposal.options)}<details class="proposal-evidence"><summary>الإجابة ونموذج التصحيح ودليل المصدر</summary><p class="proposal-answer"><strong>الإجابة:</strong> ${escapeHtml(proposal.answer)}</p>${renderMarkScheme(proposal.markScheme)}${proposal.rationale ? `<p><strong>سبب الإجابة:</strong> ${escapeHtml(proposal.rationale)}</p>` : ""}${proposal.sourceSupport ? `<blockquote>${escapeHtml(proposal.sourceSupport)}</blockquote>` : ""}</details><span class="choose-label">${chosen === proposal.id ? `${icon("check")} تم الاختيار` : "اختر هذا السؤال"}</span></label>`).join("")}</div>
     <footer><button class="text-btn" data-regenerate="${item.id}" ${state.questionGenerationBusy ? "disabled" : ""}>${icon("spark")} توليد ثلاثة بدائل جديدة لهذه المفردة</button></footer>
   </article>`;
 }
 
-function renderPaperQuestion(item: PlanItem, proposal: NonNullable<ReturnType<typeof selectedProposal>>, index: number): string {
-  const reference = state.draft.sourceReferences.find((entry) => entry.id === item.sourceReferenceId);
-  const pages = reference
-    ? reference.pageFrom === reference.pageTo ? `ص ${reference.pageFrom}` : `ص ${reference.pageFrom}-${reference.pageTo}`
-    : "مرجع غير محدد";
-  const responseArea = proposal.options?.length
-    ? `<ol class="paper-options">${proposal.options.map((option) => `<li><span></span>${escapeHtml(option)}</li>`).join("")}</ol>`
-    : `<div class="answer-lines">${Array.from({ length: item.questionType === "إجابة طويلة" ? 4 : 2 }, () => "<span></span>").join("")}</div>`;
-  return `<article><div class="paper-question-title"><b>${index + 1})</b><span>${escapeHtml(proposal.text)}</span><strong>[${item.marks}]</strong></div>${responseArea}<p class="question-source-note">مرجع إعداد السؤال: ${escapeHtml(reference?.sourceTitle ?? "المصدر")} · ${pages}</p></article>`;
+type SelectedPaperItem = { item: PlanItem; proposal: NonNullable<ReturnType<typeof selectedProposal>> };
+
+interface PaperLayout {
+  html: string;
+  labels: Map<string, string>;
 }
 
-function renderAnswerKey(selected: Array<{ item: PlanItem; proposal: NonNullable<ReturnType<typeof selectedProposal>> }>): string {
-  return `<details class="answer-key"><summary>نموذج الإجابة وأدلة المصدر</summary>${selected.map(({ item, proposal }, index) => {
+const ARABIC_OPTION_LABELS = ["أ", "ب", "ج", "د"];
+const ARABIC_SUBPART_LABELS = ["أ", "ب", "ج", "د", "هـ", "و", "ز", "ح", "ط", "ي"];
+
+function renderPaperResponseArea(item: PlanItem, proposal: SelectedPaperItem["proposal"]): string {
+  if (proposal.options?.length) {
+    return `<ol class="paper-options">${proposal.options.map((option, index) => `<li><span class="paper-option-circle"></span><b class="paper-option-label">${ARABIC_OPTION_LABELS[index] ?? index + 1}</b><em>${escapeHtml(option)}</em></li>`).join("")}</ol>`;
+  }
+  const lineCount = item.questionType === "إجابة طويلة" ? Math.max(5, item.marks + 2) : Math.max(2, item.marks + 1);
+  return `${proposal.workingRequired ? `<p class="working-note">أظهر خطوات الحل بوضوح.</p>` : ""}<div class="answer-lines">${Array.from({ length: lineCount }, () => "<span></span>").join("")}</div>`;
+}
+
+function renderPaperPrompt(item: PlanItem, proposal: SelectedPaperItem["proposal"], label: string, subpart: boolean): string {
+  return `<div class="${subpart ? "paper-subpart" : "paper-question"}">${proposal.stimulus ? `<div class="paper-stimulus">${escapeHtml(proposal.stimulus)}</div>` : ""}<div class="paper-question-title"><b>${escapeHtml(label)}</b><span>${escapeHtml(proposal.text)}</span><strong>[${item.marks}]</strong></div>${renderPaperResponseArea(item, proposal)}</div>`;
+}
+
+function buildPaperLayout(selected: SelectedPaperItem[]): PaperLayout {
+  const labels = new Map<string, string>();
+  const multipleChoice = selected.filter(({ item }) => item.questionType === "اختيار من متعدد");
+  const constructed = selected.filter(({ item }) => item.questionType !== "اختيار من متعدد");
+  let mainNumber = 1;
+  const parts: string[] = [];
+
+  for (const entry of multipleChoice) {
+    const label = `${mainNumber})`;
+    labels.set(entry.item.id, `${mainNumber}`);
+    parts.push(`<article class="standalone-question">${renderPaperPrompt(entry.item, entry.proposal, label, false)}</article>`);
+    mainNumber += 1;
+  }
+
+  const groups = new Map<string, SelectedPaperItem[]>();
+  for (const entry of constructed) {
+    const key = entry.item.lessonLabel || "مفردات مترابطة";
+    const group = groups.get(key) ?? [];
+    group.push(entry);
+    groups.set(key, group);
+  }
+
+  for (const [lessonLabel, group] of groups) {
+    const groupNumber = mainNumber;
+    const totalMarks = group.reduce((sum, entry) => sum + entry.item.marks, 0);
+    const subparts = group.map((entry, index) => {
+      const subLabel = `(${ARABIC_SUBPART_LABELS[index] ?? index + 1})`;
+      labels.set(entry.item.id, `${groupNumber}${subLabel}`);
+      return renderPaperPrompt(entry.item, entry.proposal, subLabel, true);
+    }).join("");
+    parts.push(`<article class="structured-question"><header class="structured-question-header"><b>${groupNumber})</b><span>اقرأ الموقف أو البيانات الآتية، ثم أجب عن المفردات المرتبطة بدرس: ${escapeHtml(lessonLabel)}.</span><strong>[المجموع: ${totalMarks}]</strong></header>${subparts}</article>`);
+    mainNumber += 1;
+  }
+
+  return { html: parts.join(""), labels };
+}
+
+function renderAnswerKey(selected: SelectedPaperItem[], labels: Map<string, string>): string {
+  return `<details class="answer-key"><summary>نموذج الإجابة وأدلة المصدر</summary>${selected.map(({ item, proposal }) => {
     const reference = state.draft.sourceReferences.find((entry) => entry.id === item.sourceReferenceId);
     const pages = reference ? (reference.pageFrom === reference.pageTo ? `ص ${reference.pageFrom}` : `ص ${reference.pageFrom}-${reference.pageTo}`) : "مرجع غير محدد";
-    return `<article><strong>${index + 1}) ${escapeHtml(proposal.answer)}</strong>${proposal.rationale ? `<p>${escapeHtml(proposal.rationale)}</p>` : ""}<small>${escapeHtml(reference?.sourceTitle ?? "المصدر")} · ${pages}</small>${proposal.sourceSupport ? `<blockquote>${escapeHtml(proposal.sourceSupport)}</blockquote>` : ""}</article>`;
+    const label = labels.get(item.id) ?? "؟";
+    return `<article><div class="answer-key-head"><strong>${escapeHtml(label)}) ${escapeHtml(proposal.answer)}</strong>${proposal.questionForm ? `<span>${escapeHtml(proposal.questionForm)}</span>` : ""}</div>${renderMarkScheme(proposal.markScheme)}${proposal.rationale ? `<p>${escapeHtml(proposal.rationale)}</p>` : ""}<small>${escapeHtml(reference?.sourceTitle ?? "المصدر")} · ${pages}</small>${proposal.sourceSupport ? `<blockquote>${escapeHtml(proposal.sourceSupport)}</blockquote>` : ""}</article>`;
   }).join("")}</details>`;
 }
 
@@ -588,21 +644,22 @@ function renderReviewStep(): string {
     return proposal ? [{ item, proposal }] : [];
   });
   const groundedGeneration = state.draft.generationVersion === SOURCE_GENERATION_VERSION;
+  const paperLayout = buildPaperLayout(selected);
   return `
     <div class="review-layout">
       <section class="paper-preview">
         <header class="paper-header"><div class="ministry-mark">شعار<br/>الخنجر</div><div><strong>سلطنة عُمان</strong><span>وزارة التعليم</span><span>${escapeHtml(state.draft.directorate)}</span><span>${escapeHtml(state.draft.school)}</span></div></header>
         <div class="paper-title"><h2>${escapeHtml(state.draft.title)}</h2><p>${subject} · الصف ${state.draft.grade} · الفصل الدراسي ${escapeHtml(state.draft.semester)} · ${escapeHtml(state.draft.academicYear)}</p></div>
         <div class="student-row"><span>اسم الطالب: ____________________</span><span>التاريخ: ${formatArabicDate(state.draft.examDate)}</span><span>الزمن: ${state.draft.durationMinutes} دقيقة</span></div>
-        <div class="paper-questions">${selected.map(({ item, proposal }, index) => renderPaperQuestion(item, proposal, index)).join("")}</div>
+        <div class="paper-questions">${paperLayout.html}</div>
         <footer class="paper-footer">- 1 -</footer>
       </section>
       <aside class="review-panel">
         <div class="final-check"><h3>حالة المسودة</h3>${checkRow("ارتباط الدروس بالمصدر", state.draft.sourceReferences.length > 0)}${checkRow("مجموع الدرجات", true)}${checkRow("اختيار مفردات الخطة", isPlanComplete(state.draft))}${checkRow("توليد الأسئلة من المصدر", groundedGeneration)}</div>
         <div class="review-summary"><span>الدرجة</span><strong>${state.draft.totalMarks}</strong><span>الأسئلة</span><strong>${state.draft.plan.length}</strong><span>المواصفة</span><strong>معتمدة</strong></div>
-        ${renderAnswerKey(selected)}
+        ${renderAnswerKey(selected, paperLayout.labels)}
         <button class="primary-btn full" data-action="save-now">${icon("save")} حفظ المسودة</button>
-        <p class="muted-note">الأسئلة مولدة من نصوص المصدر مع مرجع صفحة ودليل نصي، لكنها تبقى مسودة تحتاج مراجعة المعلم قبل الاستخدام. التصدير النهائي لم يُفعّل بعد.</p>
+        <p class="muted-note">الأسئلة مولدة من نصوص المصدر وفق قالب عُماني وبناء أسلوبي دولي، لكنها تبقى مسودة تحتاج مراجعة المعلم قبل الاستخدام. تُحفظ مراجع الصفحات وأدلة النص في نموذج المعلم، ولا تظهر في ورقة الطالب. التصدير النهائي لم يُفعّل بعد.</p>
       </aside>
     </div>
     ${renderWizardFooter(4, true)}
@@ -678,6 +735,14 @@ function renderPolicyReference(): string {
         ${renderPolicyRuleCard("إجابة قصيرة", ASSESSMENT_ITEM_WRITING_RULES.shortAnswer)}
         ${renderPolicyRuleCard("إجابة طويلة", ASSESSMENT_ITEM_WRITING_RULES.longAnswer)}
         ${renderPolicyRuleCard("قواعد عامة", ASSESSMENT_ITEM_WRITING_RULES.general)}
+      </div>
+    </section>
+
+    <section class="policy-section">
+      <div class="section-intro"><h2>مواءمة أسلوبية مع الاختبارات الدولية</h2><p>استلهام في بناء السياق والبيانات ونقاط التصحيح، مع بقاء الوثيقة العُمانية المرجع الحاكم وعدم نسخ أسئلة خارجية.</p></div>
+      <div class="policy-rule-grid">
+        ${renderPolicyRuleCard("مبادئ المواءمة", INTERNATIONAL_SCIENCE_QUESTION_STYLE_PRINCIPLES)}
+        ${renderPolicyRuleCard("الناتج داخل واثق", ["مفردات مترابطة تحت سياق أو بيانات مشتركة عند الملاءمة.", "تنوع بين المفاهيم والحساب وقراءة البيانات والاستقصاء والمقارنة.", "نموذج تصحيح بنقطة مستقلة لكل درجة.", "مراجع المصدر للمعلم فقط، وورقة طالب نظيفة."])}
       </div>
     </section>
 
