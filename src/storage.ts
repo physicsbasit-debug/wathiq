@@ -2,6 +2,7 @@ import type { ExamDraft, ExamSourceReference, ExamTitleOption, ManagedSource } f
 import { applyOfficialAssessmentTemplate, createEmptyDraft, toDateInputValue } from "./domain.js";
 import { SCIENCE_ASSESSMENT_POLICY_ID, assessmentTypeForTitle, getOfficialAssessmentSpec, isExamTitleOption } from "./assessment-policy.js";
 import { normalizeManagedSource } from "./source-registry.js";
+import { SOURCE_GENERATION_VERSION } from "./question-generation.js";
 
 const DRAFT_KEY = "wathiq.phase0b.latestDraft";
 const PROFILE_KEY = "wathiq.phase0b.profile";
@@ -102,7 +103,7 @@ export function normalizeExamDraft(value: unknown): ExamDraft | null {
     draft.generationVersion = "";
     draft.generationModel = "";
     draft.generatedAt = "";
-  } else if (draft.currentStep >= 3 && draft.generationVersion !== "source-grounded-policy-ai-4-exam-type-date") {
+  } else if (draft.currentStep >= 3 && draft.generationVersion !== SOURCE_GENERATION_VERSION) {
     draft.currentStep = 2;
     draft.plan = [];
     draft.selectedProposalByPlanItem = {};

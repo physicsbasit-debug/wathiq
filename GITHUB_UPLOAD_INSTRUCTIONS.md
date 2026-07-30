@@ -1,12 +1,12 @@
-# تعليمات رفع Phase 1-B6
+# تعليمات رفع Phase 1-B7
 
 ## اسم الفرع
 
-`phase-1b6-gemini-generate-content-fix`
+`phase-1b7-evidence-anchor-fix`
 
 ## رسالة الحفظ
 
-`fix: use Gemini generateContent structured output`
+`fix: anchor generated questions to server evidence fragments`
 
 ## الخطوات
 
@@ -16,6 +16,7 @@
 4. ادمج الفرع في `main`.
 5. افتح `supabase/functions/generate-source-questions/index.ts` من `main` عبر **Raw**.
 6. الصق الملف كاملًا في وظيفة Supabase الحالية `generate-source-questions` واضغط **Deploy function**.
-7. حدّث واثق بـ `Ctrl + F5` واختبر الاختبار القصير نفسه.
+7. حدّث واثق بـ `Ctrl + F5`.
+8. افتح الاختبار السابق واضغط **التالي**؛ سيكمل المفردات الأربع المتبقية فقط.
 
 لا يوجد SQL جديد، ولا حاجة لتغيير `GEMINI_API_KEY` أو إعادة فهرسة الكتاب.

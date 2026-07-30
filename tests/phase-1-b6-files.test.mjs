@@ -11,7 +11,7 @@ test("تستخدم generateContent الرسمي المتوافق مع Gemini 2.5
   assert.match(edge, /systemInstruction:/);
   assert.match(edge, /contents:\s*\[\{/);
   assert.match(edge, /responseMimeType:\s*"application\/json"/);
-  assert.match(edge, /responseJsonSchema:\s*generationSchema\(request\.items\)/);
+  assert.match(edge, /responseJsonSchema:\s*generationSchema\(request\.items,\s*evidenceCatalog\.fragments\.map/);
   assert.match(edge, /store:\s*false/);
   assert.doesNotMatch(edge, /\/interactions/);
   assert.doesNotMatch(edge, /response_format/);
@@ -37,6 +37,6 @@ test("يقيد مخطط JSON بمعرفات الدفعة وبالمفتاح item
 });
 
 test("يرفع إصدار مولد الأسئلة بعد الإصلاح", () => {
-  assert.match(generator, /source-grounded-policy-ai-6-generate-content/);
-  assert.equal(pkg.version, "0.0.32");
+  assert.match(generator, /source-grounded-policy-ai-(?:6-generate-content|7-evidence-anchors)/);
+  assert.match(pkg.version, /^0\.0\.(?:32|33)$/);
 });

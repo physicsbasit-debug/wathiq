@@ -1,0 +1,30 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { readFile } from "node:fs/promises";
+
+const edge = await readFile(new URL("../supabase/functions/generate-source-questions/index.ts", import.meta.url), "utf8");
+const generator = await readFile(new URL("../src/question-generation.ts", import.meta.url), "utf8");
+const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+
+test("يستبدل الاقتباس الحر بمعرفات أدلة مرقمة يثبتها الخادم", () => {
+  assert.match(edge, /interface EvidenceFragment/);
+  assert.match(edge, /buildEvidenceCatalog/);
+  assert.match(edge, /splitEvidenceFragments/);
+  assert.match(edge, /sourceEvidenceId/);
+  assert.match(edge, /allowedEvidenceIds/);
+  assert.match(edge, /sourceSupport: evidence\.text/);
+  assert.doesNotMatch(edge, /normalizedReference\.includes\(normalizedSupport\)/);
+  assert.doesNotMatch(edge, /تعذر إثبات استناد أحد الأسئلة إلى نص المرجع حرفيًا/);
+});
+
+test("يتحقق أن الدليل المختار ينتمي إلى مرجع المفردة ولا يعطل الدفعة بسبب اختلاف الاقتباس", () => {
+  assert.match(edge, /evidence\.referenceId !== sourceReferenceId/);
+  assert.match(edge, /اختار مولد الأسئلة دليلًا لا ينتمي إلى مرجع المفردة/);
+  assert.match(edge, /needsReview: alternative\.needsReview \|\| weakAffinity/);
+  assert.match(edge, /evidence_catalog_ready/);
+});
+
+test("يرفع إصدار مولد الأسئلة إلى عقد الأدلة المرقمة", () => {
+  assert.match(generator, /source-grounded-policy-ai-7-evidence-anchors/);
+  assert.equal(pkg.version, "0.0.33");
+});

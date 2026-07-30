@@ -12,7 +12,7 @@ import type { OwnerSession } from "./central-source-store.js";
 import type { WathiqRuntimeConfig } from "./runtime-config.js";
 import { SCIENCE_ASSESSMENT_POLICY_ID } from "./assessment-policy.js";
 
-export const SOURCE_GENERATION_VERSION = "source-grounded-policy-ai-6-generate-content";
+export const SOURCE_GENERATION_VERSION = "source-grounded-policy-ai-7-evidence-anchors";
 export const GENERATION_BATCH_SIZE = 2;
 
 export interface QuestionGenerationReference {
