@@ -37,6 +37,6 @@ test("يقيد مخطط JSON بمعرفات الدفعة وبالمفتاح item
 });
 
 test("يرفع إصدار مولد الأسئلة بعد الإصلاح", () => {
-  assert.match(generator, /source-grounded-policy-ai-(?:6-generate-content|7-evidence-anchors|8-cambridge-style)/);
-  assert.match(pkg.version, /^0\.0\.(?:32|33|34)$/);
+  assert.match(generator, /source-grounded-policy-ai-(?:6-generate-content|7-evidence-anchors|8-cambridge-style|9-visual-svg)/);
+  assert.match(pkg.version, /^0\.0\.(?:32|33|34|35)$/);
 });

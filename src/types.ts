@@ -7,6 +7,33 @@ export type ItemDifficulty = "منخفض" | "متوسط" | "مرتفع";
 export type ExamTitleOption = "الاختبار القصير الأول" | "الاختبار القصير الثاني" | "الاختبار النهائي";
 export type AssessmentType = "اختبار قصير رسمي" | "امتحان نهاية الفصل الدراسي";
 export type QuestionDesignPattern = "مفهومي" | "سياقي" | "حسابي" | "بيانات" | "استقصائي" | "مقارنة";
+export type QuestionVisualType = "none" | "line_graph" | "bar_chart" | "pressure_diagram" | "circuit_diagram";
+export type CircuitComponent = "battery" | "switch_open" | "switch_closed" | "lamp" | "resistor" | "ammeter" | "voltmeter";
+
+export interface QuestionVisualPoint {
+  x: number;
+  y: number;
+  label: string;
+}
+
+export interface QuestionVisualSpec {
+  type: QuestionVisualType;
+  title: string;
+  altText: string;
+  xAxisLabel: string;
+  xAxisUnit: string;
+  yAxisLabel: string;
+  yAxisUnit: string;
+  xMin: number;
+  xMax: number;
+  yMin: number;
+  yMax: number;
+  points: QuestionVisualPoint[];
+  labels: string[];
+  values: number[];
+  components: CircuitComponent[];
+  annotations: string[];
+}
 
 export interface LearningOutcome {
   id: string;
@@ -94,6 +121,7 @@ export interface PlanItem {
   questionType: QuestionType;
   marks: number;
   proposals: QuestionProposal[];
+  visual?: QuestionVisualSpec;
   sourceReferenceId?: string;
 }
 

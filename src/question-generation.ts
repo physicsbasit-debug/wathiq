@@ -8,12 +8,15 @@ import type {
   QuestionDesignPattern,
   QuestionProposal,
   QuestionType,
+  QuestionVisualSpec,
+  QuestionVisualType,
 } from "./types.js";
 import type { OwnerSession } from "./central-source-store.js";
 import type { WathiqRuntimeConfig } from "./runtime-config.js";
 import { SCIENCE_ASSESSMENT_POLICY_ID } from "./assessment-policy.js";
+import { parseQuestionVisualSpec } from "./question-visual.js";
 
-export const SOURCE_GENERATION_VERSION = "source-grounded-policy-ai-8-cambridge-style";
+export const SOURCE_GENERATION_VERSION = "source-grounded-policy-ai-9-visual-svg";
 export const GENERATION_BATCH_SIZE = 2;
 
 export interface QuestionGenerationReference {
@@ -34,6 +37,7 @@ export interface QuestionGenerationItem {
   sourceReferenceId: string;
   lessonLabel: string;
   styleTarget: QuestionDesignPattern;
+  visualTarget: QuestionVisualType;
 }
 
 export interface QuestionGenerationRequest {
@@ -64,6 +68,7 @@ export interface GeneratedAlternative {
 
 export interface GeneratedQuestionItem {
   planItemId: string;
+  visual: QuestionVisualSpec;
   alternatives: GeneratedAlternative[];
 }
 
@@ -177,6 +182,7 @@ export function parseQuestionGenerationResponse(
     }
     return {
       planItemId,
+      visual: parseQuestionVisualSpec(itemRecord.visual, expected.visualTarget),
       alternatives: itemRecord.alternatives.map((alternative) => parseAlternative(alternative, expected)),
     };
   });
@@ -196,9 +202,27 @@ export function parseQuestionGenerationResponse(
 export function splitQuestionGenerationBatches<T>(items: readonly T[], batchSize = GENERATION_BATCH_SIZE): T[][] {
   if (!Number.isInteger(batchSize) || batchSize < 1) throw new Error("حجم دفعة التوليد غير صالح.");
   const batches: T[][] = [];
-  for (let index = 0; index < items.length; index += batchSize) {
-    batches.push(items.slice(index, index + batchSize));
+  let current: T[] = [];
+  const isHeavy = (item: T): boolean => {
+    if (typeof item !== "object" || item === null) return false;
+    const record = item as Record<string, unknown>;
+    return record.questionType === "إجابة طويلة"
+      || record.cognitiveLevel === "تطبيق"
+      || record.cognitiveLevel === "استدلال"
+      || (typeof record.marks === "number" && record.marks >= 2)
+      || (typeof record.visualTarget === "string" && record.visualTarget !== "none");
+  };
+  const flush = () => { if (current.length) { batches.push(current); current = []; } };
+  for (const item of items) {
+    if (isHeavy(item)) {
+      flush();
+      batches.push([item]);
+      continue;
+    }
+    current.push(item);
+    if (current.length >= batchSize) flush();
   }
+  flush();
   return batches;
 }
 
@@ -223,10 +247,42 @@ function deriveQuestionDesignPattern(
   return item.questionType === "اختيار من متعدد" && officialIndex % 2 === 1 ? "سياقي" : "مفهومي";
 }
 
+function normalizeVisualText(value: string): string {
+  return value
+    .normalize("NFKC")
+    .replace(/[أإآٱ]/g, "ا")
+    .replace(/ى/g, "ي")
+    .replace(/ة/g, "ه")
+    .toLowerCase();
+}
+
+function deriveQuestionVisualTarget(
+  item: PlanItem,
+  officialIndex: number,
+  subject: string,
+  referenceContent: string,
+): QuestionVisualType {
+  const normalizedSubject = normalizeVisualText(subject);
+  const evidence = normalizeVisualText(`${item.lessonLabel} ${referenceContent}`);
+  if (normalizedSubject.includes("فيزياء")) {
+    if (/(دائره|بطاريه|مصباح|مقاوم|تيار|جهد|مكثف|اميتر|فولتميتر)/u.test(evidence)) {
+      return item.cognitiveLevel === "معرفة" && item.marks === 1 ? "none" : "circuit_diagram";
+    }
+    if (/(ضغط|سائل|عمق|كثافه|طفو)/u.test(evidence) && (item.marks >= 2 || item.cognitiveLevel !== "معرفة")) {
+      return "pressure_diagram";
+    }
+  }
+  if (item.cognitiveLevel === "استدلال" || deriveQuestionDesignPattern(item, officialIndex, subject) === "بيانات") {
+    return officialIndex % 2 === 0 ? "line_graph" : "bar_chart";
+  }
+  return "none";
+}
+
 function generationItem(
   item: PlanItem,
   officialIndex: number,
   subject: string,
+  referenceContent: string,
 ): QuestionGenerationItem {
   if (!item.sourceReferenceId) throw new Error("إحدى مفردات الخطة غير مرتبطة بصفحة مصدر.");
   return {
@@ -238,6 +294,7 @@ function generationItem(
     sourceReferenceId: item.sourceReferenceId,
     lessonLabel: item.lessonLabel,
     styleTarget: deriveQuestionDesignPattern(item, officialIndex, subject),
+    visualTarget: deriveQuestionVisualTarget(item, officialIndex, subject, referenceContent),
   };
 }
 
@@ -280,11 +337,15 @@ export function buildQuestionGenerationRequest(
     subject,
     difficulty,
     references: requestReferences,
-    officialPlanItems: officialPlan.map((item, index) => generationItem(item, index, subject)),
+    officialPlanItems: officialPlan.map((item, index) => {
+      const reference = item.sourceReferenceId ? referenceById.get(item.sourceReferenceId) : undefined;
+      return generationItem(item, index, subject, (reference?.context ?? reference?.excerpt ?? "").trim());
+    }),
     items: requestedPlan.map((item) => {
       const officialIndex = officialIndexById.get(item.id);
       if (officialIndex === undefined) throw new Error("إحدى مفردات الدفعة غير موجودة في الخطة الرسمية.");
-      return generationItem(item, officialIndex, subject);
+      const reference = item.sourceReferenceId ? referenceById.get(item.sourceReferenceId) : undefined;
+      return generationItem(item, officialIndex, subject, (reference?.context ?? reference?.excerpt ?? "").trim());
     }),
   };
 }
@@ -310,7 +371,7 @@ export function applyGeneratedQuestions(
       sourceSupport: alternative.sourceSupport,
       needsReview: alternative.needsReview,
     }));
-    return { ...item, proposals };
+    return { ...item, visual: generated.visual, proposals };
   });
 }
 

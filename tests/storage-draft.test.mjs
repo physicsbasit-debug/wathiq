@@ -103,7 +103,7 @@ test("يحافظ على مرحلة الخطة لمسودة منشأة بالإص
     lessonTopics: ["1-1 الشحنة الكهربائية", "1-2 التأثيرات الكهربائية"],
     sourceReferences: twoLessonReferences(),
     currentStep: 3,
-    generationVersion: "source-grounded-policy-ai-8-cambridge-style",
+    generationVersion: "source-grounded-policy-ai-9-visual-svg",
     plan: [{ id: "plan-1", proposals: [] }],
   });
   assert.ok(draft);

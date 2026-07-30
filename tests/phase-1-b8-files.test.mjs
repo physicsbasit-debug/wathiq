@@ -18,7 +18,7 @@ test("يثبت مرجع عُمان حاكمًا ويضيف مبادئ بناء �
 
 test("يفرض على Gemini أنماط السياق والبيانات والاستقصاء ونقطة لكل درجة", () => {
   assert.match(generator, /QuestionDesignPattern/);
-  assert.match(generator, /source-grounded-policy-ai-8-cambridge-style/);
+  assert.match(generator, /source-grounded-policy-ai-9-visual-svg/);
   assert.match(edge, /styleTarget=بيانات/);
   assert.match(edge, /styleTarget=استقصائي/);
   assert.match(edge, /markScheme بعدد عناصر يساوي marks/);
@@ -35,7 +35,7 @@ test("ينظف ورقة الطالب من مراجع المصدر ويضعها �
 });
 
 test("يرفع إصدار واثق ويحافظ على التوليد الموثق", () => {
-  assert.equal(pkg.version, "0.0.34");
+  assert.match(pkg.version, /^0\.0\.(?:34|35)$/);
   assert.match(pkg.description, /المرجع العُماني/);
   assert.match(pkg.description, /كامبريدج/);
   assert.match(edge, /sourceSupport: evidence\.text/);
