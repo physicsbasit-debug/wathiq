@@ -1,16 +1,10 @@
-Phase 1-C1 — الملفات المعدلة والمضافة
+Phase 1-C1 Fix 2 — changed files
 
-CHANGED_FILES_MANIFEST.txt
 GITHUB_UPLOAD_INSTRUCTIONS.md
 README.md
+docs/PHASE_1_C1_FIX2_TEST_REPORT.md
+docs/PHASE_1_C1_FIX2_ZERO_WASTE_VISUALS.md
 package.json
-docs/PHASE_1_C1_VISUAL_ENGINE.md
-docs/PHASE_1_C1_TEST_REPORT.md
-src/app.ts
-src/question-generation.ts
-src/question-visual.ts
-src/styles.css
-src/types.ts
 supabase/functions/generate-source-questions/index.ts
 tests/gemini-generate-content-edge.test.mjs
 tests/phase-1-a-simple-source-brief.test.mjs
@@ -20,8 +14,5 @@ tests/phase-1-b4-files.test.mjs
 tests/phase-1-b5-files.test.mjs
 tests/phase-1-b6-files.test.mjs
 tests/phase-1-b7-files.test.mjs
-tests/phase-1-b8-files.test.mjs
 tests/phase-1-c1-files.test.mjs
-tests/question-generation.test.mjs
-tests/question-visual.test.mjs
-tests/storage-draft.test.mjs
+tests/phase-1-c1-fix2-files.test.mjs

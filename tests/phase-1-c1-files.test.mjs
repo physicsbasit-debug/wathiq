@@ -11,10 +11,10 @@ const readme = await readFile(new URL("../README.md", import.meta.url), "utf8");
 const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 
 test("يثبت إصدار محرك الرسومات ويعلن نطاقه بوضوح", () => {
-  assert.equal(pkg.version, "0.0.35");
+  assert.equal(pkg.version, "0.0.36");
   assert.match(pkg.description, /SVG/);
   assert.match(readme, /Phase 1-C1/);
-  assert.match(readme, /مواصفة بيانات منظمة/);
+  assert.match(readme, /مواصفة SVG حتمية وآمنة|fixedVisual/);
 });
 
 test("يدعم أربعة قوالب بصرية علمية ولا يقبل SVG حرًا", () => {
@@ -26,13 +26,14 @@ test("يدعم أربعة قوالب بصرية علمية ولا يقبل SVG �
   assert.doesNotMatch(visual, /innerHTML\s*=\s*spec/);
 });
 
-test("يربط الرسم بعقد Gemini ويعيد التحقق منه في الخادم", () => {
+test("يجعل الخادم مالك الرسم ويمنع ضياع السؤال بسبب مواصفة Gemini", () => {
   assert.match(generator, /source-grounded-policy-ai-9-visual-svg/);
   assert.match(generator, /deriveQuestionVisualTarget/);
   assert.match(edge, /visualTarget/);
-  assert.match(edge, /validateQuestionVisualSpec/);
-  assert.match(edge, /مواصفة visual واحدة مشتركة/);
-  assert.match(edge, /لا تضع الإجابة داخل عنوان الرسم/);
+  assert.match(edge, /buildServerOwnedVisualSpec/);
+  assert.match(edge, /fixedVisual/);
+  assert.match(edge, /لا تنشئ visual ولا تعدله ولا تعيده في JSON/);
+  assert.doesNotMatch(edge, /required: \["planItemId", "visual", "alternatives"\]/);
 });
 
 test("يعرض الرسم في البدائل وورقة الطالب ونموذج المعلم ويهيئه للطباعة", () => {
