@@ -3,9 +3,11 @@ import assert from "node:assert/strict";
 import {
   applyGeneratedQuestions,
   buildQuestionGenerationRequest,
+  GENERATION_BATCH_SIZE,
   parseQuestionGenerationResponse,
   QuestionGenerationService,
   SOURCE_GENERATION_VERSION,
+  splitQuestionGenerationBatches,
 } from "../dist/assets/question-generation.js";
 
 function requestItems() {
@@ -15,6 +17,7 @@ function requestItems() {
     cognitiveLevel: "معرفة",
     marks: 1,
     sourceReferenceId: "ref-1",
+    lessonLabel: "1-1 الشحنة الكهربائية",
   }];
 }
 
@@ -31,68 +34,92 @@ function validPayload() {
         needsReview: false,
       })),
     }],
-    model: "gpt-test",
+    model: "gemini-test",
     generatedAt: "2026-07-29T19:00:00.000Z",
   };
 }
 
-test("يبني طلب التوليد من سياق المقطع الكامل لا من المعاينة المختصرة", () => {
-  const plan = [{
-    id: "plan-1",
-    lessonId: "topic-1",
-    lessonLabel: "الشحنة الكهربائية",
-    outcomeId: "outcome-1",
-    outcomeLabel: "فهم الشحنة",
+function planItem(id, lessonLabel, sourceReferenceId) {
+  return {
+    id,
+    lessonId: `lesson-${id}`,
+    lessonLabel,
+    outcomeId: `outcome-${id}`,
+    outcomeLabel: `فهم ${lessonLabel}`,
     cognitiveLevel: "معرفة",
     questionType: "اختيار من متعدد",
     marks: 1,
-    sourceReferenceId: "ref-1",
+    sourceReferenceId,
     proposals: [],
-  }];
+  };
+}
+
+test("يبني طلب الدفعة من سياق المقطع الكامل ومن قائمة الدروس والخطة الرسمية", () => {
+  const requestedPlan = [planItem("plan-1", "1-1 الشحنة الكهربائية", "ref-1")];
+  const officialPlan = [
+    ...requestedPlan,
+    planItem("plan-2", "1-2 التأثيرات الكهربائية", "ref-2"),
+  ];
   const request = buildQuestionGenerationRequest(
-    "الشحنة الكهربائية",
+    "1-1 الشحنة الكهربائية، 1-2 التأثيرات الكهربائية",
+    ["1-1 الشحنة الكهربائية", "1-2 التأثيرات الكهربائية"],
     10,
     "الفيزياء",
     "متوسط",
-    [{
-      id: "ref-1",
-      sourceId: "source-1",
-      sourceTitle: "كتاب الطالب",
-      sourceKind: "كتاب الطالب",
-      pageFrom: 17,
-      pageTo: 17,
-      excerpt: "معاينة قصيرة",
-      context: "الشحنة الكهربائية خاصية فيزيائية للمادة وقد تكون موجبة أو سالبة.",
-      score: 95,
-    }],
-    plan,
+    [
+      {
+        id: "ref-1",
+        sourceId: "source-1",
+        sourceTitle: "كتاب الطالب",
+        sourceKind: "كتاب الطالب",
+        pageFrom: 17,
+        pageTo: 17,
+        excerpt: "معاينة قصيرة",
+        context: "الشحنة الكهربائية خاصية فيزيائية للمادة وقد تكون موجبة أو سالبة.",
+        lessonTopic: "1-1 الشحنة الكهربائية",
+        score: 95,
+      },
+      {
+        id: "ref-2",
+        sourceId: "source-1",
+        sourceTitle: "كتاب الطالب",
+        sourceKind: "كتاب الطالب",
+        pageFrom: 18,
+        pageTo: 18,
+        excerpt: "تأثيرات كهربائية",
+        context: "تتجاذب الشحنات المختلفة وتتنافر الشحنات المتشابهة.",
+        lessonTopic: "1-2 التأثيرات الكهربائية",
+        score: 90,
+      },
+    ],
+    requestedPlan,
+    officialPlan,
   );
+  assert.deepEqual(request.lessons, ["1-1 الشحنة الكهربائية", "1-2 التأثيرات الكهربائية"]);
   assert.equal(request.references.length, 1);
   assert.equal(request.references[0].content, "الشحنة الكهربائية خاصية فيزيائية للمادة وقد تكون موجبة أو سالبة.");
   assert.equal(request.items[0].sourceReferenceId, "ref-1");
+  assert.equal(request.items[0].lessonLabel, "1-1 الشحنة الكهربائية");
+  assert.equal(request.officialPlanItems.length, 2);
   assert.equal(request.assessmentType, "اختبار قصير رسمي");
   assert.equal(request.assessmentPolicyId, "oman-science-assessment-2025-2026");
 });
 
+test("يقسم مفردات التوليد إلى دفعات صغيرة تحفظ ترتيبها", () => {
+  const batches = splitQuestionGenerationBatches([1, 2, 3, 4, 5]);
+  assert.equal(GENERATION_BATCH_SIZE, 2);
+  assert.deepEqual(batches, [[1, 2], [3, 4], [5]]);
+  assert.throws(() => splitQuestionGenerationBatches([1], 0), /حجم دفعة/);
+});
+
 test("يتحقق من ثلاثة بدائل ثم يربطها بخطة الاختبار", () => {
   const parsed = parseQuestionGenerationResponse(validPayload(), requestItems());
-  const plan = [{
-    id: "plan-1",
-    lessonId: "topic-1",
-    lessonLabel: "الشحنة الكهربائية",
-    outcomeId: "outcome-1",
-    outcomeLabel: "فهم الشحنة",
-    cognitiveLevel: "معرفة",
-    questionType: "اختيار من متعدد",
-    marks: 1,
-    sourceReferenceId: "ref-1",
-    proposals: [],
-  }];
+  const plan = [planItem("plan-1", "1-1 الشحنة الكهربائية", "ref-1")];
   const generated = applyGeneratedQuestions(plan, parsed);
   assert.equal(generated[0].proposals.length, 3);
   assert.equal(generated[0].proposals[0].options.length, 4);
   assert.equal(generated[0].proposals[0].answer, "خاصية فيزيائية");
-  assert.equal(SOURCE_GENERATION_VERSION, "source-grounded-policy-ai-2");
+  assert.equal(SOURCE_GENERATION_VERSION, "source-grounded-policy-ai-3-multi-lessons-batched");
 });
 
 test("يرفض سؤال اختيار من متعدد لا تطابق إجابته أحد البدائل", () => {
@@ -104,7 +131,7 @@ test("يرفض سؤال اختيار من متعدد لا تطابق إجابت�
   );
 });
 
-test("يرسل جلسة المالك إلى Edge Function ويقرأ النتيجة المنظمة", async () => {
+test("يرسل جلسة المالك والدرس والخطة الرسمية إلى Edge Function ويقرأ النتيجة", async () => {
   let capturedUrl = "";
   let capturedInit;
   const service = new QuestionGenerationService(
@@ -126,10 +153,12 @@ test("يرسل جلسة المالك إلى Edge Function ويقرأ النتي�
       return new Response(JSON.stringify(validPayload()), { status: 200 });
     },
   );
+  const items = requestItems();
   const response = await service.generate({
     assessmentType: "اختبار قصير رسمي",
     assessmentPolicyId: "oman-science-assessment-2025-2026",
-    topic: "الشحنة الكهربائية",
+    topic: "1-1 الشحنة الكهربائية، 1-2 التأثيرات الكهربائية",
+    lessons: ["1-1 الشحنة الكهربائية", "1-2 التأثيرات الكهربائية"],
     grade: 10,
     subject: "الفيزياء",
     difficulty: "متوسط",
@@ -141,10 +170,14 @@ test("يرسل جلسة المالك إلى Edge Function ويقرأ النتي�
       pageTo: 17,
       content: "الشحنة الكهربائية خاصية فيزيائية للمادة",
     }],
-    items: requestItems(),
+    officialPlanItems: items,
+    items,
   });
   assert.equal(capturedUrl, "https://project.supabase.co/functions/v1/generate-source-questions");
   assert.equal(capturedInit.headers.apikey, "publishable-key");
   assert.equal(capturedInit.headers.Authorization, "Bearer owner-token");
+  const sent = JSON.parse(capturedInit.body);
+  assert.deepEqual(sent.lessons, ["1-1 الشحنة الكهربائية", "1-2 التأثيرات الكهربائية"]);
+  assert.equal(sent.officialPlanItems[0].lessonLabel, "1-1 الشحنة الكهربائية");
   assert.equal(response.items[0].alternatives.length, 3);
 });

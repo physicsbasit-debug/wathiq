@@ -1124,3 +1124,117 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
   .policy-rule-grid { grid-template-columns: 1fr; }
   .policy-heading > a { width: 100%; text-align: center; }
 }
+
+/* Phase 1-B3: multiple lessons and batched generation */
+.lesson-topics-field {
+  border: 1px solid #d6e0ec;
+  border-radius: 16px;
+  background: #f8fbff;
+  padding: 16px;
+}
+
+.lesson-topics-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.lesson-topics-head > div {
+  display: grid;
+  gap: 5px;
+}
+
+.lesson-topics-head > b {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: #e8f0fa;
+  color: var(--navy);
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.lesson-topic-list {
+  display: grid;
+  gap: 10px;
+}
+
+.lesson-topic-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+}
+
+.lesson-topic-number {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: var(--navy);
+  color: #fff;
+  font-size: 13px !important;
+  font-weight: 800;
+}
+
+.lesson-topic-row input {
+  min-height: 44px;
+}
+
+.lesson-remove-btn {
+  min-height: 40px;
+  border: 1px solid #ead4d4;
+  border-radius: 10px;
+  background: #fff;
+  color: #9b3e3e;
+  padding: 8px 12px;
+  font-weight: 700;
+}
+
+.lesson-remove-btn:disabled {
+  opacity: .35;
+  cursor: not-allowed;
+}
+
+.lesson-add-btn {
+  margin-top: 12px;
+  width: fit-content;
+}
+
+.reference-lesson-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  background: #e9f4ed;
+  color: #246346;
+  font-size: 11px;
+  padding: 4px 8px;
+  font-weight: 800;
+  white-space: normal;
+}
+
+@media (max-width: 640px) {
+  .lesson-topics-head {
+    align-items: stretch;
+  }
+
+  .lesson-topic-row {
+    grid-template-columns: 30px minmax(0, 1fr);
+  }
+
+  .lesson-topic-number {
+    width: 30px;
+    height: 30px;
+  }
+
+  .lesson-remove-btn {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .lesson-add-btn {
+    width: 100%;
+  }
+}

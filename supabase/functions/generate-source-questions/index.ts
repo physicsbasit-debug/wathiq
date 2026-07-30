@@ -6,11 +6,12 @@ const GEMINI_API_KEY = requiredEnv("GEMINI_API_KEY");
 const GEMINI_MODEL = Deno.env.get("GEMINI_MODEL")?.trim() || "gemini-2.5-flash";
 const WATHIQ_APP_URL = requiredEnv("WATHIQ_APP_URL");
 const appOrigin = new URL(WATHIQ_APP_URL).origin;
-const MAX_ITEMS = 12;
+const MAX_BATCH_ITEMS = 2;
+const MAX_OFFICIAL_ITEMS = 12;
 const MAX_REFERENCES = 6;
 const MAX_REFERENCE_CHARACTERS = 4_200;
 const MAX_TOTAL_REFERENCE_CHARACTERS = 24_000;
-const GEMINI_TIMEOUT_MS = 55_000;
+const GEMINI_TIMEOUT_MS = 30_000;
 
 const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
@@ -35,16 +36,19 @@ interface GenerationItem {
   cognitiveLevel: CognitiveLevel;
   marks: number;
   sourceReferenceId: string;
+  lessonLabel: string;
 }
 
 interface GenerationRequest {
   assessmentType: "اختبار قصير رسمي";
   assessmentPolicyId: "oman-science-assessment-2025-2026";
   topic: string;
+  lessons: string[];
   grade: number;
   subject: string;
   difficulty: Difficulty;
   references: GenerationReference[];
+  officialPlanItems: GenerationItem[];
   items: GenerationItem[];
 }
 
@@ -116,13 +120,13 @@ async function callGemini(request: GenerationRequest, repairAttempt: boolean): P
         system_instruction: buildSystemInstructions(),
         store: false,
         generation_config: {
-          max_output_tokens: 12_000,
+          max_output_tokens: 7_000,
           temperature: 0.2,
         },
         response_format: {
           type: "text",
           mime_type: "application/json",
-          schema: generationSchema(),
+          schema: generationSchema(request.items.length),
         },
       }),
       signal: controller.signal,
@@ -135,11 +139,7 @@ async function callGemini(request: GenerationRequest, repairAttempt: boolean): P
     }
     const outputText = findGeminiOutputText(payload);
     if (!outputText) throw retryableError("لم يُرجع مولد الأسئلة بيانات قابلة للقراءة.");
-    try {
-      return JSON.parse(outputText) as GeneratedPayload;
-    } catch {
-      throw retryableError("أعاد مولد الأسئلة JSON غير صالح.");
-    }
+    return parseGeneratedJson(outputText);
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
       throw retryableError("تأخر مولد الأسئلة أكثر من المدة المسموحة.");
@@ -150,12 +150,31 @@ async function callGemini(request: GenerationRequest, repairAttempt: boolean): P
   }
 }
 
+function parseGeneratedJson(outputText: string): GeneratedPayload {
+  let text = outputText.trim();
+  if (text.startsWith("```")) {
+    text = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+  }
+  const firstBrace = text.indexOf("{");
+  const lastBrace = text.lastIndexOf("}");
+  if (firstBrace > 0 || lastBrace >= 0 && lastBrace < text.length - 1) {
+    if (firstBrace < 0 || lastBrace <= firstBrace) throw retryableError("أعاد مولد الأسئلة JSON غير مكتمل.");
+    text = text.slice(firstBrace, lastBrace + 1);
+  }
+  try {
+    return JSON.parse(text) as GeneratedPayload;
+  } catch {
+    throw retryableError("أعاد مولد الأسئلة JSON غير صالح أو مبتور.");
+  }
+}
+
 function buildSystemInstructions(): string {
   return [
     "أنت محرر اختبارات علوم مدرسية باللغة العربية لسلطنة عُمان.",
     "التزم بوثيقة تقويم تعلم الطلبة في مواد العلوم للصفوف 5-10، إصدار 2025/2026.",
     "مهمتك إنشاء أسئلة من النصوص المرجعية المرفقة فقط، دون إضافة معلومة علمية من الذاكرة أو الإنترنت.",
-    "أنشئ ثلاثة بدائل مختلفة لكل مفردة خطة مع الحفاظ حرفيًا على نوع السؤال وهدف التقويم والدرجة.",
+    "أنشئ ثلاثة بدائل مختلفة لكل مفردة مرسلة في هذه الدفعة فقط، مع الحفاظ حرفيًا على الدرس ونوع السؤال وهدف التقويم والدرجة.",
+    "لا تخلط بين الدروس؛ كل مفردة مرتبطة باسم درس ومرجع صفحة محددين في الخطة.",
     "مفردة الاختيار من متعدد درجتها واحدة وتقيس هدفًا واحدًا، ولها أربعة بدائل وإجابة صحيحة واحدة فقط.",
     "اجعل مشتتات الاختيار من متعدد مقنعة ومرتبطة بالموضوع لكنها خاطئة تمامًا، ولا تستخدم: جميع ما سبق، لا شيء مما سبق، أو الأول والثاني فقط.",
     "الإجابة القصيرة درجتها درجة أو درجتان، ويجب أن يتناسب مقدار الإجابة مع الدرجة.",
@@ -186,27 +205,39 @@ function buildUserPrompt(request: GenerationRequest, repairAttempt: boolean): st
       assessmentType: request.assessmentType,
       assessmentPolicyId: request.assessmentPolicyId,
       topic: request.topic,
+      lessons: request.lessons,
       grade: request.grade,
       subject: request.subject,
       difficulty: request.difficulty,
     },
     references,
-    planItems: request.items,
+    officialPlanSummary: request.officialPlanItems.map((item) => ({
+      planItemId: item.planItemId,
+      lessonLabel: item.lessonLabel,
+      questionType: item.questionType,
+      cognitiveLevel: item.cognitiveLevel,
+      marks: item.marks,
+    })),
+    batchPlanItems: request.items,
   });
 }
 
-function generationSchema(): Record<string, unknown> {
+function generationSchema(requestedItemCount: number): Record<string, unknown> {
   return {
     type: "object",
     properties: {
       items: {
         type: "array",
+        minItems: requestedItemCount,
+        maxItems: requestedItemCount,
         items: {
           type: "object",
           properties: {
             planItemId: { type: "string" },
             alternatives: {
               type: "array",
+              minItems: 3,
+              maxItems: 3,
               items: {
                 type: "object",
                 properties: {
@@ -236,15 +267,25 @@ function parseGenerationRequest(value: unknown): GenerationRequest {
   const record = requireRecord(value, "طلب إنشاء الأسئلة غير صالح.");
   const assessmentType = requireEnum(record.assessmentType, ["اختبار قصير رسمي"] as const, "نوع التقويم غير صالح.");
   const assessmentPolicyId = requireEnum(record.assessmentPolicyId, ["oman-science-assessment-2025-2026"] as const, "مرجع التقويم غير صالح.");
-  const topic = requireText(record.topic, "موضوع الاختبار غير موجود.", 180);
+  const topic = requireText(record.topic, "موضوع الاختبار غير موجود.", 500);
   const subject = requireText(record.subject, "اسم المادة غير موجود.", 120);
   const grade = requireInteger(record.grade, "الصف الدراسي غير صالح.", 1, 12);
   const difficulty = requireEnum(record.difficulty, ["سهل", "متوسط", "متقدم"] as const, "مستوى الصعوبة غير صالح.");
-  if (!Array.isArray(record.references) || record.references.length < 1 || record.references.length > MAX_REFERENCES) {
-    throw httpError(`يجب إرسال مرجع واحد إلى ${MAX_REFERENCES} مراجع.`, 400);
+  if (!Array.isArray(record.lessons) || record.lessons.length < 2 || record.lessons.length > 5) {
+    throw httpError("يجب إرسال درسين إلى خمسة دروس.", 400);
   }
-  if (!Array.isArray(record.items) || record.items.length < 1 || record.items.length > MAX_ITEMS) {
-    throw httpError(`يجب إرسال مفردة واحدة إلى ${MAX_ITEMS} مفردة.`, 400);
+  const lessons = record.lessons.map((lesson) => requireText(lesson, "اسم أحد الدروس غير موجود.", 180));
+  const lessonKeys = lessons.map(normalizeForEvidence);
+  if (new Set(lessonKeys).size !== lessons.length) throw httpError("توجد دروس مكررة في الطلب.", 400);
+
+  if (!Array.isArray(record.references) || record.references.length < 1 || record.references.length > MAX_REFERENCES) {
+    throw httpError(`يجب إرسال مرجع واحد إلى ${MAX_REFERENCES} مراجع للدفعة.`, 400);
+  }
+  if (!Array.isArray(record.items) || record.items.length < 1 || record.items.length > MAX_BATCH_ITEMS) {
+    throw httpError(`يجب إرسال مفردة واحدة إلى ${MAX_BATCH_ITEMS} مفردتين في الدفعة.`, 400);
+  }
+  if (!Array.isArray(record.officialPlanItems) || record.officialPlanItems.length < 1 || record.officialPlanItems.length > MAX_OFFICIAL_ITEMS) {
+    throw httpError(`خطة الاختبار الرسمية يجب أن تحتوي من مفردة واحدة إلى ${MAX_OFFICIAL_ITEMS} مفردة.`, 400);
   }
 
   let totalReferenceCharacters = 0;
@@ -262,7 +303,7 @@ function parseGenerationRequest(value: unknown): GenerationRequest {
     } satisfies GenerationReference;
   });
   if (totalReferenceCharacters > MAX_TOTAL_REFERENCE_CHARACTERS) {
-    throw httpError("مجموع نصوص المراجع أكبر من الحد المسموح لعملية توليد واحدة.", 413);
+    throw httpError("مجموع نصوص المراجع أكبر من الحد المسموح لدفعة توليد واحدة.", 413);
   }
   const referenceIds = new Set(references.map((reference) => reference.id));
   if (referenceIds.size !== references.length) throw httpError("توجد مراجع مكررة في الطلب.", 400);
@@ -270,23 +311,54 @@ function parseGenerationRequest(value: unknown): GenerationRequest {
     if (reference.pageTo < reference.pageFrom) throw httpError("نطاق صفحات أحد المراجع غير صالح.", 400);
   });
 
-  const items = record.items.map((entry) => {
+  const parsePlanItem = (entry: unknown, requireSentReference: boolean): GenerationItem => {
     const item = requireRecord(entry, "إحدى مفردات الخطة غير صالحة.");
     const sourceReferenceId = requireText(item.sourceReferenceId, "مرجع إحدى المفردات غير موجود.", 220);
-    if (!referenceIds.has(sourceReferenceId)) throw httpError("إحدى مفردات الخطة تشير إلى مرجع غير مرسل.", 400);
+    if (requireSentReference && !referenceIds.has(sourceReferenceId)) {
+      throw httpError("إحدى مفردات الدفعة تشير إلى مرجع غير مرسل.", 400);
+    }
+    const lessonLabel = requireText(item.lessonLabel, "درس إحدى المفردات غير موجود.", 180);
+    if (!lessonKeys.includes(normalizeForEvidence(lessonLabel))) {
+      throw httpError("إحدى مفردات الخطة مرتبطة بدرس غير موجود في قائمة الدروس.", 400);
+    }
     return {
       planItemId: requireText(item.planItemId, "معرف مفردة الخطة غير موجود.", 120),
       questionType: requireEnum(item.questionType, ["اختيار من متعدد", "إجابة قصيرة", "إجابة طويلة"] as const, "نوع السؤال غير صالح."),
       cognitiveLevel: requireEnum(item.cognitiveLevel, ["معرفة", "تطبيق", "استدلال"] as const, "المستوى المعرفي غير صالح."),
       marks: requireInteger(item.marks, "درجة السؤال غير صالحة.", 1, 20),
       sourceReferenceId,
-    } satisfies GenerationItem;
-  });
-  if (new Set(items.map((item) => item.planItemId)).size !== items.length) {
-    throw httpError("توجد مفردات خطة مكررة في الطلب.", 400);
+      lessonLabel,
+    };
+  };
+
+  const officialPlanItems = record.officialPlanItems.map((entry) => parsePlanItem(entry, false));
+  const items = record.items.map((entry) => parsePlanItem(entry, true));
+  if (new Set(officialPlanItems.map((item) => item.planItemId)).size !== officialPlanItems.length) {
+    throw httpError("توجد مفردات مكررة في خطة الاختبار الرسمية.", 400);
   }
-  validateOfficialShortTestPlan(grade, items);
-  return { assessmentType, assessmentPolicyId, topic, grade, subject, difficulty, references, items };
+  if (new Set(items.map((item) => item.planItemId)).size !== items.length) {
+    throw httpError("توجد مفردات مكررة في دفعة التوليد.", 400);
+  }
+  validateOfficialShortTestPlan(grade, officialPlanItems);
+  for (const lessonKey of lessonKeys) {
+    if (!officialPlanItems.some((item) => normalizeForEvidence(item.lessonLabel) === lessonKey)) {
+      throw httpError("خطة الاختبار لا توزع المفردات على جميع الدروس المدخلة.", 400);
+    }
+  }
+
+  const officialById = new Map(officialPlanItems.map((item) => [item.planItemId, item]));
+  for (const item of items) {
+    const official = officialById.get(item.planItemId);
+    if (!official
+      || official.questionType !== item.questionType
+      || official.cognitiveLevel !== item.cognitiveLevel
+      || official.marks !== item.marks
+      || official.sourceReferenceId !== item.sourceReferenceId
+      || normalizeForEvidence(official.lessonLabel) !== normalizeForEvidence(item.lessonLabel)) {
+      throw httpError("دفعة التوليد لا تطابق خطة الاختبار الرسمية.", 400);
+    }
+  }
+  return { assessmentType, assessmentPolicyId, topic, lessons, grade, subject, difficulty, references, officialPlanItems, items };
 }
 
 function validateOfficialShortTestPlan(grade: number, items: GenerationItem[]): void {

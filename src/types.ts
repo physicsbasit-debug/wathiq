@@ -43,6 +43,7 @@ export interface ExamSourceReference {
   pageTo: number;
   excerpt: string;
   context?: string;
+  lessonTopic?: string;
   score: number;
 }
 
@@ -55,6 +56,7 @@ export interface ExamDraft {
   unitId: string;
   lessonIds: string[];
   outcomeIds: string[];
+  lessonTopics: string[];
   topic: string;
   sourceReferences: ExamSourceReference[];
   title: string;
