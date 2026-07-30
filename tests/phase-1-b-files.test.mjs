@@ -34,5 +34,5 @@ test("Edge Function تستخدم Gemini Interactions API ومخطط JSON ومف�
 test("تسجل Supabase الوظيفة الجديدة ويُرفع إصدار واثق", () => {
   assert.match(config, /\[functions\.generate-source-questions\]/);
   assert.match(config, /verify_jwt\s*=\s*false/);
-  assert.equal(pkg.version, "0.0.29");
+  assert.equal(pkg.version, "0.0.30");
 });

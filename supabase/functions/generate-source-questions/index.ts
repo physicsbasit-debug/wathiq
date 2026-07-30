@@ -7,7 +7,7 @@ const GEMINI_MODEL = Deno.env.get("GEMINI_MODEL")?.trim() || "gemini-2.5-flash";
 const WATHIQ_APP_URL = requiredEnv("WATHIQ_APP_URL");
 const appOrigin = new URL(WATHIQ_APP_URL).origin;
 const MAX_BATCH_ITEMS = 2;
-const MAX_OFFICIAL_ITEMS = 12;
+const MAX_OFFICIAL_ITEMS = 40;
 const MAX_REFERENCES = 6;
 const MAX_REFERENCE_CHARACTERS = 4_200;
 const MAX_TOTAL_REFERENCE_CHARACTERS = 24_000;
@@ -20,6 +20,8 @@ const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 type QuestionType = "اختيار من متعدد" | "إجابة قصيرة" | "إجابة طويلة";
 type CognitiveLevel = "معرفة" | "تطبيق" | "استدلال";
 type Difficulty = "سهل" | "متوسط" | "متقدم";
+type ItemDifficulty = "منخفض" | "متوسط" | "مرتفع";
+type AssessmentType = "اختبار قصير رسمي" | "امتحان نهاية الفصل الدراسي";
 
 interface GenerationReference {
   id: string;
@@ -34,13 +36,14 @@ interface GenerationItem {
   planItemId: string;
   questionType: QuestionType;
   cognitiveLevel: CognitiveLevel;
+  difficultyLevel?: ItemDifficulty;
   marks: number;
   sourceReferenceId: string;
   lessonLabel: string;
 }
 
 interface GenerationRequest {
-  assessmentType: "اختبار قصير رسمي";
+  assessmentType: AssessmentType;
   assessmentPolicyId: "oman-science-assessment-2025-2026";
   topic: string;
   lessons: string[];
@@ -173,7 +176,7 @@ function buildSystemInstructions(): string {
     "أنت محرر اختبارات علوم مدرسية باللغة العربية لسلطنة عُمان.",
     "التزم بوثيقة تقويم تعلم الطلبة في مواد العلوم للصفوف 5-10، إصدار 2025/2026.",
     "مهمتك إنشاء أسئلة من النصوص المرجعية المرفقة فقط، دون إضافة معلومة علمية من الذاكرة أو الإنترنت.",
-    "أنشئ ثلاثة بدائل مختلفة لكل مفردة مرسلة في هذه الدفعة فقط، مع الحفاظ حرفيًا على الدرس ونوع السؤال وهدف التقويم والدرجة.",
+    "أنشئ ثلاثة بدائل مختلفة لكل مفردة مرسلة في هذه الدفعة فقط، مع الحفاظ حرفيًا على الدرس ونوع السؤال وهدف التقويم ومستوى الصعوبة والدرجة.",
     "لا تخلط بين الدروس؛ كل مفردة مرتبطة باسم درس ومرجع صفحة محددين في الخطة.",
     "مفردة الاختيار من متعدد درجتها واحدة وتقيس هدفًا واحدًا، ولها أربعة بدائل وإجابة صحيحة واحدة فقط.",
     "اجعل مشتتات الاختيار من متعدد مقنعة ومرتبطة بالموضوع لكنها خاطئة تمامًا، ولا تستخدم: جميع ما سبق، لا شيء مما سبق، أو الأول والثاني فقط.",
@@ -216,6 +219,7 @@ function buildUserPrompt(request: GenerationRequest, repairAttempt: boolean): st
       lessonLabel: item.lessonLabel,
       questionType: item.questionType,
       cognitiveLevel: item.cognitiveLevel,
+      difficultyLevel: item.difficultyLevel ?? null,
       marks: item.marks,
     })),
     batchPlanItems: request.items,
@@ -265,7 +269,7 @@ function generationSchema(requestedItemCount: number): Record<string, unknown> {
 
 function parseGenerationRequest(value: unknown): GenerationRequest {
   const record = requireRecord(value, "طلب إنشاء الأسئلة غير صالح.");
-  const assessmentType = requireEnum(record.assessmentType, ["اختبار قصير رسمي"] as const, "نوع التقويم غير صالح.");
+  const assessmentType = requireEnum(record.assessmentType, ["اختبار قصير رسمي", "امتحان نهاية الفصل الدراسي"] as const, "نوع التقويم غير صالح.");
   const assessmentPolicyId = requireEnum(record.assessmentPolicyId, ["oman-science-assessment-2025-2026"] as const, "مرجع التقويم غير صالح.");
   const topic = requireText(record.topic, "موضوع الاختبار غير موجود.", 500);
   const subject = requireText(record.subject, "اسم المادة غير موجود.", 120);
@@ -325,6 +329,9 @@ function parseGenerationRequest(value: unknown): GenerationRequest {
       planItemId: requireText(item.planItemId, "معرف مفردة الخطة غير موجود.", 120),
       questionType: requireEnum(item.questionType, ["اختيار من متعدد", "إجابة قصيرة", "إجابة طويلة"] as const, "نوع السؤال غير صالح."),
       cognitiveLevel: requireEnum(item.cognitiveLevel, ["معرفة", "تطبيق", "استدلال"] as const, "المستوى المعرفي غير صالح."),
+      ...(item.difficultyLevel === undefined
+        ? {}
+        : { difficultyLevel: requireEnum(item.difficultyLevel, ["منخفض", "متوسط", "مرتفع"] as const, "مستوى صعوبة المفردة غير صالح.") }),
       marks: requireInteger(item.marks, "درجة السؤال غير صالحة.", 1, 20),
       sourceReferenceId,
       lessonLabel,
@@ -339,7 +346,7 @@ function parseGenerationRequest(value: unknown): GenerationRequest {
   if (new Set(items.map((item) => item.planItemId)).size !== items.length) {
     throw httpError("توجد مفردات مكررة في دفعة التوليد.", 400);
   }
-  validateOfficialShortTestPlan(grade, officialPlanItems);
+  validateOfficialAssessmentPlan(assessmentType, grade, officialPlanItems);
   for (const lessonKey of lessonKeys) {
     if (!officialPlanItems.some((item) => normalizeForEvidence(item.lessonLabel) === lessonKey)) {
       throw httpError("خطة الاختبار لا توزع المفردات على جميع الدروس المدخلة.", 400);
@@ -352,6 +359,7 @@ function parseGenerationRequest(value: unknown): GenerationRequest {
     if (!official
       || official.questionType !== item.questionType
       || official.cognitiveLevel !== item.cognitiveLevel
+      || official.difficultyLevel !== item.difficultyLevel
       || official.marks !== item.marks
       || official.sourceReferenceId !== item.sourceReferenceId
       || normalizeForEvidence(official.lessonLabel) !== normalizeForEvidence(item.lessonLabel)) {
@@ -361,13 +369,15 @@ function parseGenerationRequest(value: unknown): GenerationRequest {
   return { assessmentType, assessmentPolicyId, topic, lessons, grade, subject, difficulty, references, officialPlanItems, items };
 }
 
-function validateOfficialShortTestPlan(grade: number, items: GenerationItem[]): void {
+function validateOfficialAssessmentPlan(assessmentType: AssessmentType, grade: number, items: GenerationItem[]): void {
   if (grade < 5 || grade > 10) throw httpError("وثيقة تقويم العلوم الحالية تغطي الصفوف 5-10 فقط.", 400);
   const totalMarks = items.reduce((total, item) => total + item.marks, 0);
   const cognitiveMarks: Record<CognitiveLevel, number> = { معرفة: 0, تطبيق: 0, استدلال: 0 };
+  const difficultyMarks: Record<ItemDifficulty, number> = { منخفض: 0, متوسط: 0, مرتفع: 0 };
   const counts = { mcq: 0, short: 0, long: 0 };
   for (const item of items) {
     cognitiveMarks[item.cognitiveLevel] += item.marks;
+    if (item.difficultyLevel) difficultyMarks[item.difficultyLevel] += item.marks;
     if (item.questionType === "اختيار من متعدد") {
       counts.mcq += 1;
       if (item.marks !== 1) throw httpError("مفردة الاختيار من متعدد يجب أن تكون بدرجة واحدة.", 400);
@@ -379,30 +389,57 @@ function validateOfficialShortTestPlan(grade: number, items: GenerationItem[]): 
       if (grade < 9 || item.marks < 3 || item.marks > 4) throw httpError("مفردة الإجابة الطويلة مسموحة للصفين 9 و10 وبثلاث أو أربع درجات.", 400);
     }
   }
-  const expectedMarks = grade === 10 ? 10 : 15;
+
+  if (assessmentType === "اختبار قصير رسمي") {
+    const expectedMarks = grade === 10 ? 10 : 15;
+    const expectedCognitive = grade === 10
+      ? { معرفة: 4, تطبيق: 4, استدلال: 2 }
+      : { معرفة: 6, تطبيق: 6, استدلال: 3 };
+    const minItems = grade === 10 ? 5 : 8;
+    const maxItems = grade === 10 ? 7 : 12;
+    if (items.length < minItems || items.length > maxItems || totalMarks !== expectedMarks) {
+      throw httpError("خطة الاختبار القصير لا تطابق عدد المفردات أو الدرجة الكلية الرسمية.", 400);
+    }
+    if (cognitiveMarks.معرفة !== expectedCognitive.معرفة || cognitiveMarks.تطبيق !== expectedCognitive.تطبيق || cognitiveMarks.استدلال !== expectedCognitive.استدلال) {
+      throw httpError("توزيع درجات المعرفة والتطبيق والاستدلال لا يطابق 40% و40% و20%.", 400);
+    }
+    if (grade <= 8 && (counts.mcq !== 3 || counts.short < 5 || counts.short > 9 || counts.long !== 0)) {
+      throw httpError("أنواع مفردات الصفوف 5-8 لا تطابق وثيقة التقويم.", 400);
+    }
+    if (grade === 9 && (counts.mcq !== 3 || counts.long !== 1)) {
+      throw httpError("أنواع مفردات الصف التاسع لا تطابق وثيقة التقويم.", 400);
+    }
+    if (grade === 10) {
+      const mcqLevels = items.filter((item) => item.questionType === "اختيار من متعدد").map((item) => item.cognitiveLevel).sort();
+      if (counts.mcq !== 2 || counts.long !== 1 || mcqLevels.join("|") !== ["تطبيق", "معرفة"].sort().join("|")) {
+        throw httpError("اختبار الصف العاشر يحتاج مفردتي اختيار من متعدد للمعرفة والتطبيق ومفردة طويلة واحدة.", 400);
+      }
+    }
+    return;
+  }
+
+  const expectedMarks = grade === 10 ? 60 : 40;
   const expectedCognitive = grade === 10
-    ? { معرفة: 4, تطبيق: 4, استدلال: 2 }
-    : { معرفة: 6, تطبيق: 6, استدلال: 3 };
-  const minItems = grade === 10 ? 5 : 8;
-  const maxItems = grade === 10 ? 7 : 12;
+    ? { معرفة: 24, تطبيق: 24, استدلال: 12 }
+    : { معرفة: 16, تطبيق: 16, استدلال: 8 };
+  const expectedDifficulty = grade === 10
+    ? { منخفض: 24, متوسط: 24, مرتفع: 12 }
+    : { منخفض: 16, متوسط: 16, مرتفع: 8 };
+  const minItems = grade === 10 ? 30 : 25;
+  const maxItems = grade === 10 ? 40 : 35;
+  const expectedMcq = grade === 10 ? 10 : 8;
   if (items.length < minItems || items.length > maxItems || totalMarks !== expectedMarks) {
-    throw httpError("خطة الاختبار لا تطابق عدد المفردات أو الدرجة الكلية الرسمية.", 400);
+    throw httpError("خطة الاختبار النهائي لا تطابق عدد المفردات أو الدرجة الكلية الرسمية.", 400);
   }
   if (cognitiveMarks.معرفة !== expectedCognitive.معرفة || cognitiveMarks.تطبيق !== expectedCognitive.تطبيق || cognitiveMarks.استدلال !== expectedCognitive.استدلال) {
-    throw httpError("توزيع درجات المعرفة والتطبيق والاستدلال لا يطابق 40% و40% و20%.", 400);
+    throw httpError("توزيع أهداف التقويم في الاختبار النهائي لا يطابق 40% و40% و20%.", 400);
   }
-  if (grade <= 8 && (counts.mcq !== 3 || counts.short < 5 || counts.short > 9 || counts.long !== 0)) {
-    throw httpError("أنواع مفردات الصفوف 5-8 لا تطابق وثيقة التقويم.", 400);
+  if (difficultyMarks.منخفض !== expectedDifficulty.منخفض || difficultyMarks.متوسط !== expectedDifficulty.متوسط || difficultyMarks.مرتفع !== expectedDifficulty.مرتفع) {
+    throw httpError("توزيع مستويات الصعوبة في الاختبار النهائي لا يطابق 40% و40% و20%.", 400);
   }
-  if (grade === 9 && (counts.mcq !== 3 || counts.long !== 1)) {
-    throw httpError("أنواع مفردات الصف التاسع لا تطابق وثيقة التقويم.", 400);
-  }
-  if (grade === 10) {
-    const mcqLevels = items.filter((item) => item.questionType === "اختيار من متعدد").map((item) => item.cognitiveLevel).sort();
-    if (counts.mcq !== 2 || counts.long !== 1 || mcqLevels.join("|") !== ["تطبيق", "معرفة"].sort().join("|")) {
-      throw httpError("اختبار الصف العاشر يحتاج مفردتي اختيار من متعدد للمعرفة والتطبيق ومفردة طويلة واحدة.", 400);
-    }
-  }
+  if (counts.mcq !== expectedMcq) throw httpError("عدد مفردات الاختيار من متعدد في الاختبار النهائي غير مطابق.", 400);
+  if (grade <= 8 && counts.long !== 0) throw httpError("الإجابة الطويلة غير مستخدمة في الاختبار النهائي للصفوف 5-8.", 400);
+  if (grade >= 9 && counts.long < 2) throw httpError("الاختبار النهائي للصفين 9 و10 يحتاج مفردتين طويلتين على الأقل.", 400);
 }
 
 function validateGeneratedPayload(payload: GeneratedPayload, request: GenerationRequest): void {

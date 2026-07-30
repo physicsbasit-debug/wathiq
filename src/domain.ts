@@ -1,13 +1,16 @@
 import {
   SCIENCE_ASSESSMENT_POLICY_ID,
+  assessmentTypeForTitle,
   blueprintCounts,
   blueprintMarks,
-  getOfficialShortTestSpec,
+  getOfficialAssessmentSpec,
+  isExamTitleOption,
 } from "./assessment-policy.js";
 import type {
   CognitiveLevel,
   Difficulty,
   ExamDraft,
+  ExamTitleOption,
   PlanItem,
   QuestionCounts,
   QuestionProposal,
@@ -32,6 +35,13 @@ export function getAcademicContext(date = new Date()): { academicYear: string; s
   return { academicYear: `${academicStart}/${academicStart + 1}`, semester };
 }
 
+export function toDateInputValue(date = new Date()): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 export function createEmptyDraft(now = new Date()): ExamDraft {
   const context = getAcademicContext(now);
   return {
@@ -46,8 +56,8 @@ export function createEmptyDraft(now = new Date()): ExamDraft {
     lessonTopics: ["", ""],
     topic: "",
     sourceReferences: [],
-    title: "",
-    examDate: "",
+    title: "الاختبار القصير الأول",
+    examDate: toDateInputValue(now),
     school: "مدرسة الباسط للتعليم الأساسي",
     directorate: "محافظة جنوب الباطنة",
     academicYear: context.academicYear,
@@ -67,9 +77,9 @@ export function createEmptyDraft(now = new Date()): ExamDraft {
   };
 }
 
-export function applyOfficialShortTestTemplate(draft: ExamDraft): ExamDraft {
-  const spec = getOfficialShortTestSpec(draft.grade);
-  draft.assessmentType = "اختبار قصير رسمي";
+export function applyOfficialAssessmentTemplate(draft: ExamDraft): ExamDraft {
+  const spec = getOfficialAssessmentSpec(draft.grade, draft.title);
+  draft.assessmentType = assessmentTypeForTitle(draft.title);
   draft.assessmentPolicyId = SCIENCE_ASSESSMENT_POLICY_ID;
   draft.difficulty = "متوسط";
   if (!spec) return draft;
@@ -82,6 +92,16 @@ export function applyOfficialShortTestTemplate(draft: ExamDraft): ExamDraft {
   draft.generationModel = "";
   draft.generatedAt = "";
   return draft;
+}
+
+export function applyOfficialShortTestTemplate(draft: ExamDraft): ExamDraft {
+  if (draft.title === "الاختبار النهائي") draft.title = "الاختبار القصير الأول";
+  return applyOfficialAssessmentTemplate(draft);
+}
+
+export function setExamTitle(draft: ExamDraft, title: ExamTitleOption): ExamDraft {
+  draft.title = title;
+  return applyOfficialAssessmentTemplate(draft);
 }
 
 
@@ -137,7 +157,7 @@ function countsEqual(left: QuestionCounts, right: Readonly<QuestionCounts>): boo
 
 export function validateExamSetup(draft: ExamDraft): SpecValidation {
   const issues: SpecValidation["issues"] = [];
-  const officialSpec = getOfficialShortTestSpec(draft.grade);
+  const officialSpec = getOfficialAssessmentSpec(draft.grade, draft.title);
   const computedMarks = officialSpec ? blueprintMarks(officialSpec.blueprint) : computeMarks(draft.counts);
 
   if (draft.grade === null) issues.push({ field: "grade", message: "اختر الصف الدراسي." });
@@ -156,8 +176,8 @@ export function validateExamSetup(draft: ExamDraft): SpecValidation {
       issues.push({ field: "sources", message: `لم يرتبط درس «${lesson}» بأي صفحة من المصدر.` });
     }
   }
-  if (!draft.title.trim()) issues.push({ field: "title", message: "أدخل عنوان الاختبار." });
-  if (!draft.examDate) issues.push({ field: "date", message: "اختر تاريخ الاختبار." });
+  if (!isExamTitleOption(draft.title)) issues.push({ field: "title", message: "اختر عنوان الاختبار من القائمة المعتمدة." });
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(draft.examDate)) issues.push({ field: "date", message: "اختر تاريخ الاختبار." });
   if (draft.durationMinutes < 10) issues.push({ field: "duration", message: "الزمن يجب ألا يقل عن 10 دقائق." });
 
   const totalQuestions = draft.counts.mcq + draft.counts.short + draft.counts.long;
@@ -168,7 +188,7 @@ export function validateExamSetup(draft: ExamDraft): SpecValidation {
       issues.push({ field: "policy", message: "المسودة لا تستخدم مرجع تقويم العلوم المعتمد." });
     }
     if (draft.totalMarks !== officialSpec.totalMarks) {
-      issues.push({ field: "marks", message: `الاختبار القصير الرسمي للصف ${draft.grade} درجته ${officialSpec.totalMarks}.` });
+      issues.push({ field: "marks", message: `${draft.title} للصف ${draft.grade} درجته ${officialSpec.totalMarks}.` });
     }
     if (totalQuestions < officialSpec.minItems || totalQuestions > officialSpec.maxItems) {
       issues.push({ field: "counts", message: `عدد المفردات الرسمي للصف ${draft.grade} من ${officialSpec.minItems} إلى ${officialSpec.maxItems}.` });
@@ -240,12 +260,18 @@ export function buildPlan(draft: ExamDraft): PlanItem[] {
   }
   syncDraftTopicFromLessons(draft);
   if (!draft.sourceReferences.length) throw new Error("تعذر بناء الخطة دون مقاطع مصدر مرتبطة.");
-  const officialSpec = getOfficialShortTestSpec(draft.grade);
+  const officialSpec = getOfficialAssessmentSpec(draft.grade, draft.title);
   const entries = officialSpec
-    ? officialSpec.blueprint.map((item) => ({ type: item.questionType, marks: item.marks, level: item.cognitiveLevel }))
+    ? officialSpec.blueprint.map((item) => ({
+      type: item.questionType,
+      marks: item.marks,
+      level: item.cognitiveLevel,
+      difficultyLevel: item.difficultyLevel,
+    }))
     : questionEntries(draft.counts).map((item, index) => ({
       ...item,
       level: cognitiveCycle(draft.difficulty)[index % cognitiveCycle(draft.difficulty).length] ?? "معرفة",
+      difficultyLevel: undefined,
     }));
 
   const referencesByLesson = new Map<string, ExamDraft["sourceReferences"]>();
@@ -279,6 +305,7 @@ export function buildPlan(draft: ExamDraft): PlanItem[] {
       outcomeId: `lesson-${lessonIndex + 1}-outcome-${index + 1}`,
       outcomeLabel: outcomeLabel(entry.level, lesson),
       cognitiveLevel: entry.level,
+      ...(entry.difficultyLevel ? { difficultyLevel: entry.difficultyLevel } : {}),
       questionType: entry.type,
       marks: entry.marks,
       sourceReferenceId: reference.id,
@@ -300,6 +327,6 @@ export function selectedProposal(draft: ExamDraft, item: PlanItem): QuestionProp
 }
 
 export function officialPlanCounts(draft: ExamDraft): QuestionCounts | null {
-  const spec = getOfficialShortTestSpec(draft.grade);
+  const spec = getOfficialAssessmentSpec(draft.grade, draft.title);
   return spec ? blueprintCounts(spec.blueprint) : null;
 }

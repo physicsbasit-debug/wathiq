@@ -1,6 +1,6 @@
 import { MOCK_LIBRARY, MOCK_SOURCES, SUBJECTS } from "./data.js";
 import {
-  applyOfficialShortTestTemplate,
+  applyOfficialAssessmentTemplate,
   buildPlan,
   createEmptyDraft,
   MAX_LESSON_TOPICS,
@@ -8,11 +8,12 @@ import {
   normalizeLessonTopics,
   isPlanComplete,
   selectedProposal,
+  setExamTitle,
   syncDraftTopicFromLessons,
   validateExamSetup,
 } from "./domain.js";
 import { clearDraft, loadDraft, loadProfile, loadSources, saveDraft, saveProfile, saveSources } from "./storage.js";
-import type { ExamDraft, ManagedSource, PlanItem, QuestionCounts, SourceDraft, SourceStatus, SourceExtractionResult, ViewName, WizardStep } from "./types.js";
+import type { ExamDraft, ExamTitleOption, ManagedSource, PlanItem, QuestionCounts, SourceDraft, SourceStatus, SourceExtractionResult, ViewName, WizardStep } from "./types.js";
 import { escapeHtml, formatArabicDate, icon } from "./ui.js";
 import { buildSourceDrivePath, changeSourceStatus, createEmptySourceDraft, createManagedSource, findDuplicateContentSource, findDuplicateSource, sourceSubjectLabel, SOURCE_KINDS, SOURCE_SEMESTERS, validateSourceDraft } from "./source-domain.js";
 import { createRegistryBackup, mergeSourceRegistry, parseRegistryBackup } from "./source-registry.js";
@@ -36,6 +37,9 @@ import {
   SCIENCE_ASSESSMENT_POLICY_PUBLISHED,
   SCIENCE_ASSESSMENT_POLICY_TITLE,
   SCIENCE_ASSESSMENT_POLICY_VERSION,
+  EXAM_TITLE_OPTIONS,
+  getOfficialAssessmentSpec,
+  getOfficialFinalExamSpec,
   getOfficialShortTestSpec,
 } from "./assessment-policy.js";
 
@@ -290,7 +294,7 @@ function renderHome(): string {
     <section class="hero-panel">
       <div class="hero-copy">
         <span class="eyebrow">مرجع تقويم رسمي · توليد موثق من المصدر</span>
-        <h1>أنشئ اختبارك القصير بثقة.</h1>
+        <h1>أنشئ اختبارك بثقة.</h1>
         <p>أربع خطوات واضحة. المصادر والفحوص وجدول المواصفات تعمل في الخلفية، حيث تنتمي التفاصيل المزعجة.</p>
         <div class="hero-actions">
           <button class="primary-btn" data-action="new-exam">${icon("plus")} إنشاء اختبار جديد</button>
@@ -303,7 +307,7 @@ function renderHome(): string {
           <li>${icon("check")} استرجاع المقاطع مع أرقام الصفحات</li>
           <li>${icon("check")} ثلاثة بدائل موثقة لكل مفردة</li>
           <li>${icon("check")} إجابة نموذجية ودليل من نص المصدر</li>
-          <li>${icon("check")} اختبار قصير مطابق لوثيقة تقويم العلوم</li>
+          <li>${icon("check")} اختبار مطابق لوثيقة تقويم العلوم</li>
         </ul>
       </div>
     </section>
@@ -321,7 +325,7 @@ function renderHome(): string {
       </article>
       <article class="action-card">
         <span class="card-icon">${icon("book")}</span>
-        <div><h2>مرجع تقويم العلوم</h2><p>ملخص عملي للوثيقة الرسمية وضوابط بناء الاختبارات القصيرة للصفوف 5-10.</p></div>
+        <div><h2>مرجع تقويم العلوم</h2><p>ملخص عملي للوثيقة الرسمية وضوابط بناء الاختبارات القصيرة والنهائية للصفوف 5-10.</p></div>
         <button class="card-link" data-nav="policy">فتح المرجع ${icon("arrow")}</button>
       </article>
     </section>
@@ -447,11 +451,11 @@ function renderSourceContextSummary(): string {
 
 function renderSetupStep(): string {
   const validation = validateExamSetup(state.draft);
-  const officialSpec = getOfficialShortTestSpec(state.draft.grade);
+  const officialSpec = getOfficialAssessmentSpec(state.draft.grade, state.draft.title);
   const officialSettings = officialSpec ? `
     <section class="official-spec-card">
       <div class="official-spec-head">
-        <div><span class="eyebrow">قالب واثق المتوافق مع الوثيقة</span><h3>اختبار قصير رسمي للصف ${state.draft.grade}</h3><p>${officialSpec.durationLabel} · ${officialSpec.totalMarks} درجات · ${officialSpec.minItems}-${officialSpec.maxItems} مفردات</p></div>
+        <div><span class="eyebrow">قالب واثق المتوافق مع الوثيقة</span><h3>${escapeHtml(state.draft.title)} للصف ${state.draft.grade}</h3><p>${officialSpec.durationLabel} · ${officialSpec.totalMarks} درجات · ${officialSpec.minItems}-${officialSpec.maxItems} مفردات</p></div>
         <button class="text-btn" data-nav="policy">عرض المرجع الكامل</button>
       </div>
       <div class="policy-metric-grid">
@@ -460,10 +464,16 @@ function renderSetupStep(): string {
         <div><span>الاستدلال</span><strong>${officialSpec.cognitiveMarks.استدلال}</strong><small>20%</small></div>
         <div><span>المجموع</span><strong>${officialSpec.totalMarks}</strong><small>درجة</small></div>
       </div>
+      ${officialSpec.difficultyMarks ? `<div class="policy-metric-grid difficulty-metrics">
+        <div><span>منخفض الصعوبة</span><strong>${officialSpec.difficultyMarks.منخفض}</strong><small>40%</small></div>
+        <div><span>متوسط الصعوبة</span><strong>${officialSpec.difficultyMarks.متوسط}</strong><small>40%</small></div>
+        <div><span>مرتفع الصعوبة</span><strong>${officialSpec.difficultyMarks.مرتفع}</strong><small>20%</small></div>
+        <div><span>نوع التقويم</span><strong>نهائي</strong><small>رسمي</small></div>
+      </div>` : ""}
       <div class="official-count-grid">
         ${policyCountCard("اختيار من متعدد", officialSpec.counts.mcq, "درجة واحدة لكل مفردة")}
         ${policyCountCard("إجابة قصيرة", officialSpec.counts.short, "درجة أو درجتان حسب الخطة")}
-        ${policyCountCard("إجابة طويلة", officialSpec.counts.long, officialSpec.counts.long ? "ثلاث درجات في القالب الحالي" : "غير مستخدمة لهذا الصف")}
+        ${policyCountCard("إجابة طويلة", officialSpec.counts.long, officialSpec.counts.long ? "ثلاث أو أربع درجات حسب الخطة" : "غير مستخدمة لهذا الصف")}
       </div>
       <p class="policy-lock-note">اختار واثق عددًا صحيحًا داخل النطاق الرسمي، ثم وزع درجات المفردات لتحقيق 40% معرفة و40% تطبيق و20% استدلال. لا تحتاج إلى ضبط الأعداد يدويًا.</p>
     </section>` : `
@@ -478,10 +488,10 @@ function renderSetupStep(): string {
     </div>`;
 
   return `
-    <div class="section-intro"><h2>إعداد الاختبار القصير</h2><p>${officialSpec ? "طُبقت مواصفات وثيقة تقويم العلوم تلقائيًا. أكمل بيانات المدرسة والتاريخ فقط." : "حدد البيانات الأساسية وأنواع الأسئلة."}</p></div>
+    <div class="section-intro"><h2>إعداد الاختبار</h2><p>${officialSpec ? "اختر عنوان الاختبار، وقد طبّق واثق مواصفاته الرسمية تلقائيًا. أكمل بيانات المدرسة والتاريخ فقط." : "حدد البيانات الأساسية وأنواع الأسئلة."}</p></div>
     ${renderSourceContextSummary()}
     <div class="form-grid two-columns">
-      ${inputField("title-input", "عنوان الاختبار", state.draft.title, "text", "مثال: الاختبار القصير الأول")}
+      ${examTitleSelect()}
       ${inputField("date-input", "تاريخ الاختبار", state.draft.examDate, "date")}
       ${inputField("school-input", "المدرسة", state.draft.school, "text")}
       ${inputField("directorate-input", "المديرية", state.draft.directorate, "text")}
@@ -501,6 +511,10 @@ function renderSetupStep(): string {
 
 function policyCountCard(label: string, count: number, note: string): string {
   return `<div class="policy-count-card"><span>${label}</span><strong>${count}</strong><small>${note}</small></div>`;
+}
+
+function examTitleSelect(): string {
+  return `<label class="field"><span>عنوان الاختبار</span><select id="exam-title-select">${EXAM_TITLE_OPTIONS.map((title) => `<option value="${title}" ${state.draft.title === title ? "selected" : ""}>${title}</option>`).join("")}</select></label>`;
 }
 
 function inputField(id: string, label: string, value: string | number, type: string, placeholder = "", min = ""): string {
@@ -615,7 +629,10 @@ function renderPolicyReference(): string {
   const grades58 = getOfficialShortTestSpec(5);
   const grade9 = getOfficialShortTestSpec(9);
   const grade10 = getOfficialShortTestSpec(10);
-  if (!grades58 || !grade9 || !grade10) throw new Error("تعذر تحميل مرجع تقويم العلوم.");
+  const final58 = getOfficialFinalExamSpec(5);
+  const final9 = getOfficialFinalExamSpec(9);
+  const final10 = getOfficialFinalExamSpec(10);
+  if (!grades58 || !grade9 || !grade10 || !final58 || !final9 || !final10) throw new Error("تعذر تحميل مرجع تقويم العلوم.");
   return `
     <section class="page-heading policy-heading">
       <div><span class="eyebrow">مرجع تنظيمي معتمد</span><h1>مرجع تقويم العلوم</h1><p>${escapeHtml(SCIENCE_ASSESSMENT_POLICY_TITLE)} · إصدار ${escapeHtml(SCIENCE_ASSESSMENT_POLICY_VERSION)} · ${escapeHtml(SCIENCE_ASSESSMENT_POLICY_PUBLISHED)}</p></div>
@@ -623,7 +640,7 @@ function renderPolicyReference(): string {
     </section>
 
     <section class="policy-reference-hero">
-      <div><h2>ما الذي يطبقه واثق الآن؟</h2><p>يستخدم واثق المرجع الرسمي لبناء الاختبار القصير أولًا، ثم يولد الأسئلة من صفحات الكتاب المفهرس. المرجع التقويمي يحدد البنية، والكتاب يحدد المحتوى العلمي.</p></div>
+      <div><h2>ما الذي يطبقه واثق الآن؟</h2><p>يستخدم واثق المرجع الرسمي لبناء الاختبار القصير أو النهائي، ثم يولد الأسئلة من صفحات الكتاب المفهرس. المرجع التقويمي يحدد البنية، والكتاب يحدد المحتوى العلمي.</p></div>
       <div class="policy-reference-badge">5-10<br/><small>الصفوف المشمولة</small></div>
     </section>
 
@@ -642,6 +659,15 @@ function renderPolicyReference(): string {
         ${renderPolicySpecCard("الصفوف 5-8", grades58)}
         ${renderPolicySpecCard("الصف 9", grade9)}
         ${renderPolicySpecCard("الصف 10", grade10)}
+      </div>
+    </section>
+
+    <section class="policy-section">
+      <div class="section-intro"><h2>مواصفات الاختبار النهائي</h2><p>يطبق واثق عددًا ثابتًا صالحًا داخل النطاق الرسمي مع توزيع 40% معرفة و40% تطبيق و20% استدلال، والتوزيع نفسه لمستويات الصعوبة.</p></div>
+      <div class="policy-spec-grid">
+        ${renderPolicySpecCard("الصفوف 5-8", final58)}
+        ${renderPolicySpecCard("الصف 9", final9)}
+        ${renderPolicySpecCard("الصف 10", final10)}
       </div>
     </section>
 
@@ -665,7 +691,7 @@ function renderPolicyReference(): string {
   `;
 }
 
-function renderPolicySpecCard(label: string, spec: NonNullable<ReturnType<typeof getOfficialShortTestSpec>>): string {
+function renderPolicySpecCard(label: string, spec: NonNullable<ReturnType<typeof getOfficialAssessmentSpec>>): string {
   return `<article class="policy-spec-card"><span>${label}</span><h3>${spec.totalMarks} درجات</h3><p>${spec.minItems}-${spec.maxItems} مفردات · ${spec.durationLabel}</p><div><small>قالب واثق المتوافق</small><br/><b>${spec.counts.mcq}</b> اختيار من متعدد <b>${spec.counts.short}</b> قصيرة <b>${spec.counts.long}</b> طويلة</div><ul>${spec.notes.map((note) => `<li>${escapeHtml(note)}</li>`).join("")}</ul></article>`;
 }
 
@@ -1199,13 +1225,10 @@ async function nextStep(): Promise<void> {
     syncDraftTopicFromLessons(state.draft);
     const matched = await prepareSourceContext();
     if (!matched) return;
-    if (!state.draft.title) {
-      const subject = SUBJECTS.find((item) => item.id === state.draft.subjectId)?.label ?? "العلوم";
-      state.draft.title = `اختبار قصير في ${lessons.join(" و")} - ${subject}`;
-    }
     return setStep(2);
   }
   if (step === 2) {
+    syncSetupFieldsFromDom();
     const validation = validateExamSetup(state.draft);
     if (!validation.valid) return showToast("اضبط البيانات المشار إليها قبل المتابعة.");
     const expectedPlan = buildPlan(state.draft);
@@ -1253,6 +1276,7 @@ async function generateQuestionsForPlan(plan: PlanItem[]): Promise<boolean> {
       state.questionGenerationMessage = `جارٍ إنشاء الدفعة ${batchIndex + 1} من ${batches.length}؛ اكتمل ${completedCount} من ${plan.length} مفردات…`;
       render();
       const request = buildQuestionGenerationRequest(
+        state.draft.assessmentType,
         state.draft.topic,
         state.draft.lessonTopics,
         state.draft.grade,
@@ -1301,6 +1325,7 @@ async function regeneratePlanItem(item: PlanItem): Promise<void> {
   render();
   try {
     const request = buildQuestionGenerationRequest(
+      state.draft.assessmentType,
       state.draft.topic,
       state.draft.lessonTopics,
       state.draft.grade,
@@ -1413,7 +1438,7 @@ function bindContentStep(): void {
   const gradeSelect = document.querySelector<HTMLSelectElement>("#grade-select");
   gradeSelect?.addEventListener("change", () => {
     state.draft.grade = gradeSelect.value ? Number(gradeSelect.value) : null;
-    applyOfficialShortTestTemplate(state.draft);
+    applyOfficialAssessmentTemplate(state.draft);
     state.draft.subjectId = "";
     state.draft.lessonTopics = ["", ""];
     state.draft.topic = "";
@@ -1444,19 +1469,43 @@ function bindContentStep(): void {
   });
 }
 
+function syncSetupFieldsFromDom(): void {
+  const dateInput = document.querySelector<HTMLInputElement>("#date-input");
+  if (dateInput?.value) state.draft.examDate = dateInput.value;
+  const schoolInput = document.querySelector<HTMLInputElement>("#school-input");
+  if (schoolInput) state.draft.school = schoolInput.value;
+  const directorateInput = document.querySelector<HTMLInputElement>("#directorate-input");
+  if (directorateInput) state.draft.directorate = directorateInput.value;
+  const academicYearInput = document.querySelector<HTMLInputElement>("#academic-year-input");
+  if (academicYearInput) state.draft.academicYear = academicYearInput.value;
+  const semesterSelect = document.querySelector<HTMLSelectElement>("#semester-select");
+  if (semesterSelect) state.draft.semester = semesterSelect.value;
+}
+
 function bindSetupStep(): void {
-  const inputBindings: Array<[string, keyof Pick<ExamDraft, "title" | "examDate" | "school" | "directorate" | "academicYear">]> = [
-    ["title-input", "title"],
+  document.querySelector<HTMLSelectElement>("#exam-title-select")?.addEventListener("change", (event) => {
+    const title = (event.target as HTMLSelectElement).value as ExamTitleOption;
+    setExamTitle(state.draft, title);
+    state.questionGenerationMessage = "";
+    scheduleSave();
+    render();
+  });
+
+  const inputBindings: Array<[string, keyof Pick<ExamDraft, "examDate" | "school" | "directorate" | "academicYear">]> = [
     ["date-input", "examDate"],
     ["school-input", "school"],
     ["directorate-input", "directorate"],
     ["academic-year-input", "academicYear"],
   ];
   inputBindings.forEach(([id, key]) => {
-    document.querySelector<HTMLInputElement>(`#${id}`)?.addEventListener("input", (event) => {
-      state.draft[key] = (event.target as HTMLInputElement).value;
+    const input = document.querySelector<HTMLInputElement>(`#${id}`);
+    const update = (): void => {
+      state.draft[key] = input?.value ?? "";
       scheduleSave();
-    });
+    };
+    input?.addEventListener("input", update);
+    input?.addEventListener("change", update);
+    input?.addEventListener("blur", update);
   });
 
   document.querySelector<HTMLSelectElement>("#semester-select")?.addEventListener("change", (event) => {
@@ -1509,9 +1558,9 @@ function bindSetupStep(): void {
 }
 
 function applySuggestedCounts(): void {
-  const officialSpec = getOfficialShortTestSpec(state.draft.grade);
+  const officialSpec = getOfficialAssessmentSpec(state.draft.grade, state.draft.title);
   if (officialSpec) {
-    applyOfficialShortTestTemplate(state.draft);
+    applyOfficialAssessmentTemplate(state.draft);
   } else {
     const suggestion = validateExamSetup(state.draft).suggestedCounts;
     if (!suggestion) return;

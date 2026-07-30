@@ -4,7 +4,9 @@ import {
   SCIENCE_ASSESSMENT_POLICY_ID,
   blueprintCognitiveMarks,
   blueprintCounts,
+  blueprintDifficultyMarks,
   blueprintMarks,
+  getOfficialFinalExamSpec,
   getOfficialShortTestSpec,
 } from "../dist/assets/assessment-policy.js";
 
@@ -44,4 +46,31 @@ test("قالب الصف العاشر يلتزم بمفردتي معرفة وتط
   assert.equal(spec.blueprint.filter((item) => item.questionType === "إجابة طويلة").length, 1);
   assert.deepEqual(spec.counts, { mcq: 2, short: 3, long: 1 });
   assert.deepEqual(spec.cognitiveMarks, { معرفة: 4, تطبيق: 4, استدلال: 2 });
+});
+
+
+test("تثبت قوالب الاختبار النهائي الرسمية للصفوف 5-10", () => {
+  for (const grade of [5, 6, 7, 8, 9, 10]) {
+    const spec = getOfficialFinalExamSpec(grade);
+    assert.ok(spec);
+    assert.equal(blueprintMarks(spec.blueprint), spec.totalMarks);
+    assert.deepEqual(blueprintCounts(spec.blueprint), spec.counts);
+    assert.deepEqual(blueprintCognitiveMarks(spec.blueprint), spec.cognitiveMarks);
+    assert.deepEqual(blueprintDifficultyMarks(spec.blueprint), spec.difficultyMarks);
+    assert.ok(spec.blueprint.length >= spec.minItems && spec.blueprint.length <= spec.maxItems);
+    assert.equal(spec.counts.mcq, grade === 10 ? 10 : 8);
+    if (grade <= 8) assert.equal(spec.counts.long, 0);
+    else assert.ok(spec.counts.long >= 2);
+  }
+});
+
+test("قالب الاختبار النهائي للصف العاشر يثبت 60 درجة و34 مفردة", () => {
+  const spec = getOfficialFinalExamSpec(10);
+  assert.ok(spec);
+  assert.equal(spec.totalMarks, 60);
+  assert.equal(spec.defaultDurationMinutes, 120);
+  assert.equal(spec.blueprint.length, 34);
+  assert.deepEqual(spec.counts, { mcq: 10, short: 22, long: 2 });
+  assert.deepEqual(spec.cognitiveMarks, { معرفة: 24, تطبيق: 24, استدلال: 12 });
+  assert.deepEqual(spec.difficultyMarks, { منخفض: 24, متوسط: 24, مرتفع: 12 });
 });

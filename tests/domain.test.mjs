@@ -46,7 +46,7 @@ function completeDraft() {
       score: 78,
     },
   ];
-  draft.title = "اختبار تجريبي";
+  draft.title = "الاختبار القصير الأول";
   draft.examDate = "2026-09-15";
   return draft;
 }
@@ -164,4 +164,33 @@ test("يدعم خمسة دروس ويوزع عليها مفردات الصف ا�
   const plan = buildPlan(draft);
   assert.equal(plan.length, 6);
   assert.deepEqual(new Set(plan.map((item) => item.lessonLabel)), new Set(draft.lessonTopics));
+});
+
+
+test("يضع تاريخ اليوم وعنوان الاختبار القصير الأول تلقائيًا في المسودة الجديدة", () => {
+  const draft = createEmptyDraft(new Date(2026, 6, 30, 9, 0, 0));
+  assert.equal(draft.examDate, "2026-07-30");
+  assert.equal(draft.title, "الاختبار القصير الأول");
+  assert.equal(draft.assessmentType, "اختبار قصير رسمي");
+});
+
+test("يبني قالب الاختبار النهائي للصف العاشر عند اختياره", async () => {
+  const { setExamTitle } = await import("../dist/assets/domain.js");
+  const draft = completeDraft();
+  setExamTitle(draft, "الاختبار النهائي");
+  const validation = validateExamSetup(draft);
+  assert.equal(validation.valid, true);
+  assert.equal(draft.assessmentType, "امتحان نهاية الفصل الدراسي");
+  assert.equal(draft.totalMarks, 60);
+  assert.deepEqual(draft.counts, { mcq: 10, short: 22, long: 2 });
+  const plan = buildPlan(draft);
+  assert.equal(plan.length, 34);
+  assert.equal(plan.reduce((sum, item) => sum + item.marks, 0), 60);
+  assert.deepEqual(
+    plan.reduce((marks, item) => {
+      marks[item.difficultyLevel] += item.marks;
+      return marks;
+    }, { منخفض: 0, متوسط: 0, مرتفع: 0 }),
+    { منخفض: 24, متوسط: 24, مرتفع: 12 },
+  );
 });

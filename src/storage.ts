@@ -1,6 +1,6 @@
-import type { ExamDraft, ExamSourceReference, ManagedSource } from "./types.js";
-import { applyOfficialShortTestTemplate, createEmptyDraft } from "./domain.js";
-import { SCIENCE_ASSESSMENT_POLICY_ID, getOfficialShortTestSpec } from "./assessment-policy.js";
+import type { ExamDraft, ExamSourceReference, ExamTitleOption, ManagedSource } from "./types.js";
+import { applyOfficialAssessmentTemplate, createEmptyDraft, toDateInputValue } from "./domain.js";
+import { SCIENCE_ASSESSMENT_POLICY_ID, assessmentTypeForTitle, getOfficialAssessmentSpec, isExamTitleOption } from "./assessment-policy.js";
 import { normalizeManagedSource } from "./source-registry.js";
 
 const DRAFT_KEY = "wathiq.phase0b.latestDraft";
@@ -53,10 +53,13 @@ export function normalizeExamDraft(value: unknown): ExamDraft | null {
   const candidate = value as Partial<ExamDraft>;
   const base = createEmptyDraft();
   const candidatePolicyId = typeof candidate.assessmentPolicyId === "string" ? candidate.assessmentPolicyId : "";
+  const normalizedTitle: ExamTitleOption = typeof candidate.title === "string" && isExamTitleOption(candidate.title)
+    ? candidate.title
+    : "الاختبار القصير الأول";
   const draft: ExamDraft = {
     ...base,
     ...candidate,
-    assessmentType: "اختبار قصير رسمي",
+    assessmentType: assessmentTypeForTitle(normalizedTitle),
     assessmentPolicyId: candidatePolicyId || base.assessmentPolicyId,
     grade: typeof candidate.grade === "number" ? candidate.grade : null,
     subjectId: typeof candidate.subjectId === "string" ? candidate.subjectId : "",
@@ -68,6 +71,10 @@ export function normalizeExamDraft(value: unknown): ExamDraft | null {
       : (typeof candidate.topic === "string" && candidate.topic.trim() ? [candidate.topic.trim(), ""] : ["", ""]),
     topic: typeof candidate.topic === "string" ? candidate.topic : "",
     sourceReferences: normalizeSourceReferences(candidate.sourceReferences),
+    title: normalizedTitle,
+    examDate: typeof candidate.examDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(candidate.examDate)
+      ? candidate.examDate
+      : toDateInputValue(),
     counts: {
       mcq: typeof candidate.counts?.mcq === "number" ? candidate.counts.mcq : base.counts.mcq,
       short: typeof candidate.counts?.short === "number" ? candidate.counts.short : base.counts.short,
@@ -81,9 +88,9 @@ export function normalizeExamDraft(value: unknown): ExamDraft | null {
     generationModel: typeof candidate.generationModel === "string" ? candidate.generationModel : "",
     generatedAt: typeof candidate.generatedAt === "string" ? candidate.generatedAt : "",
   };
-  const officialSpec = getOfficialShortTestSpec(draft.grade);
+  const officialSpec = getOfficialAssessmentSpec(draft.grade, draft.title);
   const requiresPolicyMigration = Boolean(officialSpec && candidatePolicyId !== SCIENCE_ASSESSMENT_POLICY_ID);
-  if (requiresPolicyMigration) applyOfficialShortTestTemplate(draft);
+  if (requiresPolicyMigration) applyOfficialAssessmentTemplate(draft);
 
   if (draft.lessonTopics.length < 2) draft.lessonTopics = [...draft.lessonTopics, ...Array.from({ length: 2 - draft.lessonTopics.length }, () => "")];
   draft.topic = draft.lessonTopics.map((item) => item.trim()).filter(Boolean).join("، ");
@@ -95,7 +102,7 @@ export function normalizeExamDraft(value: unknown): ExamDraft | null {
     draft.generationVersion = "";
     draft.generationModel = "";
     draft.generatedAt = "";
-  } else if (draft.currentStep >= 3 && draft.generationVersion !== "source-grounded-policy-ai-3-multi-lessons-batched") {
+  } else if (draft.currentStep >= 3 && draft.generationVersion !== "source-grounded-policy-ai-4-exam-type-date") {
     draft.currentStep = 2;
     draft.plan = [];
     draft.selectedProposalByPlanItem = {};
