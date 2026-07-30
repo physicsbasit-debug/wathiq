@@ -6,11 +6,11 @@ const GEMINI_API_KEY = requiredEnv("GEMINI_API_KEY");
 const GEMINI_MODEL = Deno.env.get("GEMINI_MODEL")?.trim() || "gemini-2.5-flash";
 const WATHIQ_APP_URL = requiredEnv("WATHIQ_APP_URL");
 const appOrigin = new URL(WATHIQ_APP_URL).origin;
-const MAX_ITEMS = 15;
+const MAX_ITEMS = 12;
 const MAX_REFERENCES = 6;
 const MAX_REFERENCE_CHARACTERS = 4_200;
 const MAX_TOTAL_REFERENCE_CHARACTERS = 24_000;
-const GEMINI_TIMEOUT_MS = 85_000;
+const GEMINI_TIMEOUT_MS = 55_000;
 
 const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
@@ -38,6 +38,8 @@ interface GenerationItem {
 }
 
 interface GenerationRequest {
+  assessmentType: "اختبار قصير رسمي";
+  assessmentPolicyId: "oman-science-assessment-2025-2026";
   topic: string;
   grade: number;
   subject: string;
@@ -102,7 +104,7 @@ async function callGemini(request: GenerationRequest, repairAttempt: boolean): P
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
   try {
-    const response = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
+    const response = await fetch("https://generativelanguage.googleapis.com/v1/interactions", {
       method: "POST",
       headers: {
         "x-goog-api-key": GEMINI_API_KEY,
@@ -114,7 +116,7 @@ async function callGemini(request: GenerationRequest, repairAttempt: boolean): P
         system_instruction: buildSystemInstructions(),
         store: false,
         generation_config: {
-          max_output_tokens: 20_000,
+          max_output_tokens: 12_000,
           temperature: 0.2,
         },
         response_format: {
@@ -151,14 +153,19 @@ async function callGemini(request: GenerationRequest, repairAttempt: boolean): P
 function buildSystemInstructions(): string {
   return [
     "أنت محرر اختبارات علوم مدرسية باللغة العربية لسلطنة عُمان.",
+    "التزم بوثيقة تقويم تعلم الطلبة في مواد العلوم للصفوف 5-10، إصدار 2025/2026.",
     "مهمتك إنشاء أسئلة من النصوص المرجعية المرفقة فقط، دون إضافة معلومة علمية من الذاكرة أو الإنترنت.",
-    "أنشئ ثلاثة بدائل مختلفة لكل مفردة خطة مع الحفاظ على نوع السؤال والمستوى المعرفي والدرجة.",
-    "للاختيار من متعدد: أربعة بدائل مختلفة، وإجابة صحيحة واحدة فقط، ويجب أن تكون قيمة answer مطابقة حرفيًا لأحد options.",
+    "أنشئ ثلاثة بدائل مختلفة لكل مفردة خطة مع الحفاظ حرفيًا على نوع السؤال وهدف التقويم والدرجة.",
+    "مفردة الاختيار من متعدد درجتها واحدة وتقيس هدفًا واحدًا، ولها أربعة بدائل وإجابة صحيحة واحدة فقط.",
+    "اجعل مشتتات الاختيار من متعدد مقنعة ومرتبطة بالموضوع لكنها خاطئة تمامًا، ولا تستخدم: جميع ما سبق، لا شيء مما سبق، أو الأول والثاني فقط.",
+    "الإجابة القصيرة درجتها درجة أو درجتان، ويجب أن يتناسب مقدار الإجابة مع الدرجة.",
+    "الإجابة الطويلة للصفين 9 و10 فقط ودرجتها ثلاث أو أربع درجات، وتتطلب شرحًا أو تحليلًا أو أدلة أو خطوات حل، لا مجرد سرد أو استرجاع.",
+    "استخدم صياغة عربية قصيرة وواضحة وفعل أمر مناسبًا، وتجنب النفي قدر الإمكان والنفي المزدوج.",
     "للإجابة القصيرة والطويلة: اجعل options مصفوفة فارغة، واكتب إجابة نموذجية قابلة للتصحيح.",
     "اجعل sourceSupport عبارة قصيرة منسوخة حرفيًا من نص المرجع وتدعم السؤال والإجابة.",
     "لا تسأل عن أرقام صفحات أو حقوق نشر أو مقدمة الكتاب إلا إذا كان الموضوع المطلوب عنها صراحة.",
     "إذا كان النص المرجعي ضعيفًا لمفردة معينة، أنشئ سؤالًا بسيطًا على حقيقة صريحة واضبط needsReview=true. لا تخترع.",
-    "الصياغة مناسبة للصف الدراسي، عربية واضحة، ولا تستخدم عبارات مثل: بالرجوع إلى النص أو وفقًا للمصدر داخل نص السؤال.",
+    "لا تستخدم عبارات مثل: بالرجوع إلى النص أو وفقًا للمصدر داخل نص السؤال.",
     "لا تضع شروحًا خارج مخطط JSON المطلوب.",
   ].join("\n");
 }
@@ -176,6 +183,8 @@ function buildUserPrompt(request: GenerationRequest, repairAttempt: boolean): st
       ? "أعد التوليد بدقة أكبر. التزم بعدد البدائل وبالاستناد الحرفي إلى كل مرجع."
       : "أنشئ بدائل الأسئلة الموثقة من المراجع.",
     exam: {
+      assessmentType: request.assessmentType,
+      assessmentPolicyId: request.assessmentPolicyId,
       topic: request.topic,
       grade: request.grade,
       subject: request.subject,
@@ -225,6 +234,8 @@ function generationSchema(): Record<string, unknown> {
 
 function parseGenerationRequest(value: unknown): GenerationRequest {
   const record = requireRecord(value, "طلب إنشاء الأسئلة غير صالح.");
+  const assessmentType = requireEnum(record.assessmentType, ["اختبار قصير رسمي"] as const, "نوع التقويم غير صالح.");
+  const assessmentPolicyId = requireEnum(record.assessmentPolicyId, ["oman-science-assessment-2025-2026"] as const, "مرجع التقويم غير صالح.");
   const topic = requireText(record.topic, "موضوع الاختبار غير موجود.", 180);
   const subject = requireText(record.subject, "اسم المادة غير موجود.", 120);
   const grade = requireInteger(record.grade, "الصف الدراسي غير صالح.", 1, 12);
@@ -274,7 +285,52 @@ function parseGenerationRequest(value: unknown): GenerationRequest {
   if (new Set(items.map((item) => item.planItemId)).size !== items.length) {
     throw httpError("توجد مفردات خطة مكررة في الطلب.", 400);
   }
-  return { topic, grade, subject, difficulty, references, items };
+  validateOfficialShortTestPlan(grade, items);
+  return { assessmentType, assessmentPolicyId, topic, grade, subject, difficulty, references, items };
+}
+
+function validateOfficialShortTestPlan(grade: number, items: GenerationItem[]): void {
+  if (grade < 5 || grade > 10) throw httpError("وثيقة تقويم العلوم الحالية تغطي الصفوف 5-10 فقط.", 400);
+  const totalMarks = items.reduce((total, item) => total + item.marks, 0);
+  const cognitiveMarks: Record<CognitiveLevel, number> = { معرفة: 0, تطبيق: 0, استدلال: 0 };
+  const counts = { mcq: 0, short: 0, long: 0 };
+  for (const item of items) {
+    cognitiveMarks[item.cognitiveLevel] += item.marks;
+    if (item.questionType === "اختيار من متعدد") {
+      counts.mcq += 1;
+      if (item.marks !== 1) throw httpError("مفردة الاختيار من متعدد يجب أن تكون بدرجة واحدة.", 400);
+    } else if (item.questionType === "إجابة قصيرة") {
+      counts.short += 1;
+      if (item.marks < 1 || item.marks > 2) throw httpError("مفردة الإجابة القصيرة يجب أن تكون بدرجة أو درجتين.", 400);
+    } else {
+      counts.long += 1;
+      if (grade < 9 || item.marks < 3 || item.marks > 4) throw httpError("مفردة الإجابة الطويلة مسموحة للصفين 9 و10 وبثلاث أو أربع درجات.", 400);
+    }
+  }
+  const expectedMarks = grade === 10 ? 10 : 15;
+  const expectedCognitive = grade === 10
+    ? { معرفة: 4, تطبيق: 4, استدلال: 2 }
+    : { معرفة: 6, تطبيق: 6, استدلال: 3 };
+  const minItems = grade === 10 ? 5 : 8;
+  const maxItems = grade === 10 ? 7 : 12;
+  if (items.length < minItems || items.length > maxItems || totalMarks !== expectedMarks) {
+    throw httpError("خطة الاختبار لا تطابق عدد المفردات أو الدرجة الكلية الرسمية.", 400);
+  }
+  if (cognitiveMarks.معرفة !== expectedCognitive.معرفة || cognitiveMarks.تطبيق !== expectedCognitive.تطبيق || cognitiveMarks.استدلال !== expectedCognitive.استدلال) {
+    throw httpError("توزيع درجات المعرفة والتطبيق والاستدلال لا يطابق 40% و40% و20%.", 400);
+  }
+  if (grade <= 8 && (counts.mcq !== 3 || counts.short < 5 || counts.short > 9 || counts.long !== 0)) {
+    throw httpError("أنواع مفردات الصفوف 5-8 لا تطابق وثيقة التقويم.", 400);
+  }
+  if (grade === 9 && (counts.mcq !== 3 || counts.long !== 1)) {
+    throw httpError("أنواع مفردات الصف التاسع لا تطابق وثيقة التقويم.", 400);
+  }
+  if (grade === 10) {
+    const mcqLevels = items.filter((item) => item.questionType === "اختيار من متعدد").map((item) => item.cognitiveLevel).sort();
+    if (counts.mcq !== 2 || counts.long !== 1 || mcqLevels.join("|") !== ["تطبيق", "معرفة"].sort().join("|")) {
+      throw httpError("اختبار الصف العاشر يحتاج مفردتي اختيار من متعدد للمعرفة والتطبيق ومفردة طويلة واحدة.", 400);
+    }
+  }
 }
 
 function validateGeneratedPayload(payload: GeneratedPayload, request: GenerationRequest): void {

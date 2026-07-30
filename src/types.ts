@@ -1,4 +1,4 @@
-export type ViewName = "home" | "wizard" | "library" | "admin";
+export type ViewName = "home" | "wizard" | "library" | "policy" | "admin";
 export type WizardStep = 1 | 2 | 3 | 4;
 export type Difficulty = "سهل" | "متوسط" | "متقدم";
 export type QuestionType = "اختيار من متعدد" | "إجابة قصيرة" | "إجابة طويلة";
@@ -48,6 +48,8 @@ export interface ExamSourceReference {
 
 export interface ExamDraft {
   id: string;
+  assessmentType: "اختبار قصير رسمي";
+  assessmentPolicyId: string;
   grade: number | null;
   subjectId: string;
   unitId: string;

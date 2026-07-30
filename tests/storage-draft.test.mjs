@@ -48,3 +48,32 @@ test("يعيد مسودة Phase 1-A ذات الصياغات التجريبية �
   assert.deepEqual(draft.selectedProposalByPlanItem, {});
   assert.equal(draft.generationVersion, "");
 });
+
+test("يرحّل المسودة القديمة إلى قالب التقويم الرسمي للصف العاشر", () => {
+  const draft = normalizeExamDraft({
+    id: "legacy-policy",
+    grade: 10,
+    subjectId: "physics",
+    topic: "الشحنة الكهربائية",
+    title: "اختبار قصير",
+    examDate: "2026-09-15",
+    totalMarks: 20,
+    counts: { mcq: 8, short: 4, long: 1 },
+    sourceReferences: [{
+      id: "source-1:0",
+      sourceId: "source-1",
+      sourceTitle: "كتاب الطالب",
+      sourceKind: "كتاب الطالب",
+      pageFrom: 17,
+      pageTo: 17,
+      excerpt: "الشحنة الكهربائية خاصية فيزيائية.",
+      score: 80,
+    }],
+    currentStep: 2,
+  });
+  assert.ok(draft);
+  assert.equal(draft.assessmentPolicyId, "oman-science-assessment-2025-2026");
+  assert.equal(draft.totalMarks, 10);
+  assert.deepEqual(draft.counts, { mcq: 2, short: 3, long: 1 });
+  assert.deepEqual(draft.plan, []);
+});
