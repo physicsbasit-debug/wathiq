@@ -70,7 +70,11 @@ function optionFromApprovedNode(source, node, unitById) {
         pageStart: node.pageStart,
         pageEnd: node.pageEnd,
         ...(unit ? { unitLabel: unit.title } : {}),
-        origin: node.reviewStatus === "معتمد" ? "approved-structure" : "validated-structure",
+        origin: node.extractionMethod.startsWith("curated:")
+            ? "curated-book-tree"
+            : node.reviewStatus === "معتمد"
+                ? "approved-structure"
+                : "validated-structure",
     };
 }
 function optionFromDetectedHeading(source, heading) {

@@ -14,10 +14,10 @@ const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url
 test("Phase 1-B3 تقبل من درسين إلى خمسة وتربط كل درس بمقاطعه", () => {
   assert.match(domain, /MIN_LESSON_TOPICS\s*=\s*2/);
   assert.match(domain, /MAX_LESSON_TOPICS\s*=\s*5/);
-  assert.match(app, /حدد من درسين إلى خمسة دروس من القائمة المستخرجة من فهرس الكتاب/);
-  assert.match(app, /rankSourceChunks\(lesson, candidates, 2\)/);
+  assert.match(app, /افتح اسم الكتاب، ثم الوحدة، وحدد من درسين إلى خمسة دروس/);
+  assert.match(app, /rankSourceChunks\(query, scopedCandidates, 2\)/);
   assert.match(app, /lessonTopic:\s*lesson/);
-  assert.match(styles, /\.lesson-catalog-list/);
+  assert.match(styles, /\.lesson-book-tree/);
   assert.match(storage, /lessonTopics/);
 });
 
@@ -38,5 +38,5 @@ test("تقوي قراءة JSON من Gemini وتبقي النشر من محرر S
   assert.match(deployment, /محرر Supabase/);
   assert.match(deployment, /GEMINI_API_KEY/);
   assert.doesNotMatch(`${edge}\n${deployment}`, /OPENAI_API_KEY|api\.openai\.com/);
-  assert.match(pkg.version, /^0\.0\.(?:32|33|34|35|36|37|38)$/);
+  assert.match(pkg.version, /^0\.0\.(?:32|33|34|35|36|37|38|39)$/);
 });

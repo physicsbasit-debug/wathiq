@@ -1,6 +1,6 @@
 import type { ManagedSource, SourceStructureNode } from "./types.js";
 
-export type LessonCatalogOrigin = "approved-structure" | "validated-structure" | "detected-heading";
+export type LessonCatalogOrigin = "approved-structure" | "validated-structure" | "curated-book-tree" | "detected-heading";
 
 export interface LessonCatalogOption {
   id: string;
@@ -92,7 +92,11 @@ function optionFromApprovedNode(
     pageStart: node.pageStart,
     pageEnd: node.pageEnd,
     ...(unit ? { unitLabel: unit.title } : {}),
-    origin: node.reviewStatus === "معتمد" ? "approved-structure" : "validated-structure",
+    origin: node.extractionMethod.startsWith("curated:")
+      ? "curated-book-tree"
+      : node.reviewStatus === "معتمد"
+        ? "approved-structure"
+        : "validated-structure",
   };
 }
 

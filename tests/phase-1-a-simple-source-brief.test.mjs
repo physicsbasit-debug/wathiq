@@ -6,10 +6,12 @@ const app = await readFile(new URL("../src/app.ts", import.meta.url), "utf8");
 const domain = await readFile(new URL("../src/domain.ts", import.meta.url), "utf8");
 const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 
-test("مسار المحتوى يستخدم قائمة دروس بسيطة بدل هرم الوحدات التجريبي", () => {
-  assert.match(app, /الدروس الداخلة في الاختبار/);
+test("مسار المحتوى يستخدم شجرة كتاب واضحة بدل الإدخال اليدوي", () => {
+  assert.match(app, /شجرة محتوى الكتاب/);
   assert.match(app, /data-lesson-option-id/);
   assert.match(app, /buildLessonCatalog/);
+  assert.match(app, /lesson-source-tree/);
+  assert.match(app, /lesson-unit-tree/);
   assert.doesNotMatch(app, /data-lesson-topic-index/);
   assert.doesNotMatch(app, /data-action="add-lesson"/);
   assert.doesNotMatch(app, /id="topic-input"/);
@@ -21,7 +23,7 @@ test("مسار المحتوى يستخدم قائمة دروس بسيطة بدل
 test("يبحث عن صفحات كل درس قبل المتابعة", () => {
   assert.match(app, /prepareSourceContext/);
   assert.match(app, /listSourceChunks/);
-  assert.match(app, /rankSourceChunks\(lesson/);
+  assert.match(app, /rankSourceChunks\(query/);
   assert.match(app, /لم يجد واثق صفحات واضحة للدروس/);
   assert.match(app, /lessonTopic:\s*lesson/);
 });
@@ -32,5 +34,5 @@ test("لا يدعي اعتمادًا علميًا نهائيًا ويحفظ مر
   assert.match(domain, /sourceReferenceId/);
   assert.match(domain, /MIN_LESSON_TOPICS\s*=\s*2/);
   assert.match(domain, /MAX_LESSON_TOPICS\s*=\s*5/);
-  assert.match(pkg.version, /^0\.0\.(?:32|33|34|35|36|37|38)$/);
+  assert.match(pkg.version, /^0\.0\.(?:32|33|34|35|36|37|38|39)$/);
 });

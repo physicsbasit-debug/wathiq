@@ -30,6 +30,7 @@ import { extractPdfWithArabicOcr } from "./ocr-indexer.js";
 import { resolveInitialView, viewFromHash, viewHash } from "./navigation.js";
 import { rankSourceChunks, SOURCE_RETRIEVAL_VERSION, type SourceChunkCandidate } from "./source-retrieval.js";
 import { buildLessonCatalog, selectedLessonIds, type LessonCatalogOption } from "./lesson-catalog.js";
+import { buildCuratedBookStructure } from "./book-content-tree.js";
 import {
   applyGeneratedQuestions,
   buildQuestionGenerationRequest,
@@ -419,23 +420,51 @@ function lessonCatalogSelectionKey(): string {
   return [state.draft.grade ?? "", state.draft.subjectId, ...eligibleSourcesForDraft().map((source) => `${source.id}:${source.updatedAt}`)].join("|");
 }
 
+function renderLessonOption(lesson: LessonCatalogOption, selectedLabels: Set<string>, selectedCount: number): string {
+  const checked = selectedLabels.has(lesson.label);
+  const disabled = !checked && selectedCount >= MAX_LESSON_TOPICS;
+  const pages = lesson.pageStart
+    ? `<small>${lesson.pageStart === lesson.pageEnd || !lesson.pageEnd ? `ص ${lesson.pageStart}` : `ص ${lesson.pageStart}-${lesson.pageEnd}`}</small>`
+    : "";
+  return `<label class="lesson-catalog-option ${checked ? "selected" : ""} ${disabled ? "disabled" : ""}"><input type="checkbox" data-lesson-option-id="${escapeHtml(lesson.id)}" ${checked ? "checked" : ""} ${disabled ? "disabled" : ""}/><span><b>${escapeHtml(lesson.code)}</b><strong>${escapeHtml(lesson.title)}</strong>${pages}</span></label>`;
+}
+
 function renderLessonCatalog(): string {
   const selectedLabels = new Set(normalizeLessonTopics(state.draft.lessonTopics));
   const selectedCount = selectedLabels.size;
   if (state.draft.grade === null || !state.draft.subjectId) {
-    return `<div class="lesson-catalog-empty">اختر الصف والمادة، وستظهر دروس الكتاب هنا تلقائيًا.</div>`;
+    return `<div class="lesson-catalog-empty">اختر الصف والمادة، وستظهر شجرة الكتاب هنا تلقائيًا.</div>`;
   }
   if (state.lessonCatalogBusy) {
-    return `<div class="lesson-catalog-empty">جارٍ تجهيز قائمة الدروس من فهرس المصدر…</div>`;
+    return `<div class="lesson-catalog-empty">جارٍ تجهيز شجرة الكتاب والوحدات والدروس…</div>`;
   }
   if (!state.lessonCatalog.length) {
-    return `<div class="lesson-catalog-empty warning">${escapeHtml(state.lessonCatalogMessage || "لم يجد واثق دروسًا مرقمة قابلة للاختيار في المصدر المطابق.")}</div>`;
+    return `<div class="lesson-catalog-empty warning">${escapeHtml(state.lessonCatalogMessage || "لم يجد واثق شجرة دروس موثوقة للمصدر المطابق.")}</div>`;
   }
-  return `<div class="lesson-catalog-list">${state.lessonCatalog.map((lesson) => {
-    const checked = selectedLabels.has(lesson.label);
-    const disabled = !checked && selectedCount >= MAX_LESSON_TOPICS;
-    const pages = lesson.pageStart ? `<small>${lesson.pageStart === lesson.pageEnd || !lesson.pageEnd ? `ص ${lesson.pageStart}` : `ص ${lesson.pageStart}-${lesson.pageEnd}`}</small>` : "";
-    return `<label class="lesson-catalog-option ${checked ? "selected" : ""} ${disabled ? "disabled" : ""}"><input type="checkbox" data-lesson-option-id="${escapeHtml(lesson.id)}" ${checked ? "checked" : ""} ${disabled ? "disabled" : ""}/><span><b>${escapeHtml(lesson.code)}</b><strong>${escapeHtml(lesson.title)}</strong>${pages}</span></label>`;
+
+  const bySource = new Map<string, LessonCatalogOption[]>();
+  state.lessonCatalog.forEach((lesson) => {
+    const group = bySource.get(lesson.sourceId) ?? [];
+    group.push(lesson);
+    bySource.set(lesson.sourceId, group);
+  });
+
+  return `<div class="lesson-book-tree">${[...bySource.entries()].map(([sourceId, lessons], sourceIndex) => {
+    const sourceTitle = lessons[0]?.sourceTitle ?? "كتاب المصدر";
+    const selectedInSource = lessons.some((lesson) => selectedLabels.has(lesson.label));
+    const byUnit = new Map<string, LessonCatalogOption[]>();
+    lessons.forEach((lesson) => {
+      const unitLabel = lesson.unitLabel || "دروس الكتاب";
+      const group = byUnit.get(unitLabel) ?? [];
+      group.push(lesson);
+      byUnit.set(unitLabel, group);
+    });
+    const unitMarkup = [...byUnit.entries()].map(([unitLabel, unitLessons], unitIndex) => {
+      const selectedInUnit = unitLessons.some((lesson) => selectedLabels.has(lesson.label));
+      const shouldOpen = selectedInUnit || (sourceIndex === 0 && unitIndex === 0);
+      return `<details class="lesson-unit-tree" ${shouldOpen ? "open" : ""}><summary><span>${icon("book")}</span><strong>${escapeHtml(unitLabel)}</strong><small>${unitLessons.length} ${unitLessons.length === 1 ? "درس" : "دروس"}</small></summary><div class="lesson-unit-items">${unitLessons.map((lesson) => renderLessonOption(lesson, selectedLabels, selectedCount)).join("")}</div></details>`;
+    }).join("");
+    return `<details class="lesson-source-tree" ${selectedInSource || sourceIndex === 0 ? "open" : ""}><summary><span class="lesson-source-icon">${icon("book")}</span><div><strong>${escapeHtml(sourceTitle)}</strong><small>${byUnit.size} وحدات · ${lessons.length} درسًا</small></div></summary><div class="lesson-source-units" data-source-tree-id="${escapeHtml(sourceId)}">${unitMarkup}</div></details>`;
   }).join("")}</div>`;
 }
 
@@ -444,12 +473,12 @@ function renderContentStep(): string {
   const eligibleSources = eligibleSourcesForDraft();
   const references = state.draft.sourceReferences;
   return `
-    <div class="section-intro"><h2>اختر دروس الاختبار</h2><p>حدد من درسين إلى خمسة دروس من القائمة المستخرجة من فهرس الكتاب. لا كتابة يدوية ولا تخمين.</p></div>
+    <div class="section-intro"><h2>اختر دروس الاختبار</h2><p>افتح اسم الكتاب، ثم الوحدة، وحدد من درسين إلى خمسة دروس. اختيار واحد واضح، بلا كتابة يدوية.</p></div>
     <div class="form-grid two-columns">
       <label class="field"><span>الصف</span><select id="grade-select"><option value="">اختر الصف</option>${[5, 6, 7, 8, 9, 10].map((grade) => `<option value="${grade}" ${state.draft.grade === grade ? "selected" : ""}>الصف ${grade}</option>`).join("")}</select></label>
       <label class="field"><span>المادة</span><select id="subject-select" ${availableSubjects.length === 0 ? "disabled" : ""}><option value="">اختر المادة</option>${availableSubjects.map((item) => `<option value="${item.id}" ${state.draft.subjectId === item.id ? "selected" : ""}>${item.label}</option>`).join("")}</select></label>
       <section class="field full lesson-catalog-field" aria-labelledby="lesson-topics-label">
-        <div class="lesson-topics-head"><div><span id="lesson-topics-label">الدروس الداخلة في الاختبار</span><small>اختر الدروس مباشرة من فهرس المصدر المفهرس.</small></div><b id="lesson-topic-count">${normalizeLessonTopics(state.draft.lessonTopics).length}/${MAX_LESSON_TOPICS}</b></div>
+        <div class="lesson-topics-head"><div><span id="lesson-topics-label">شجرة محتوى الكتاب</span><small>الكتاب ← الوحدات ← الدروس</small></div><b id="lesson-topic-count">${normalizeLessonTopics(state.draft.lessonTopics).length}/${MAX_LESSON_TOPICS}</b></div>
         ${renderLessonCatalog()}
       </section>
     </div>
@@ -1691,8 +1720,22 @@ async function prepareSourceContext(): Promise<boolean> {
     const candidates: SourceChunkCandidate[] = chunkGroups.flatMap(({ source, chunks }) =>
       chunks.map((chunk) => ({ source, chunk })),
     );
+    const catalogByLabel = new Map(state.lessonCatalog.map((lesson) => [lesson.label, lesson]));
     const lessonResults = lessons.map((lesson, lessonIndex) => {
-      const result = rankSourceChunks(lesson, candidates, 2);
+      const catalogLesson = catalogByLabel.get(lesson);
+      const sourceScoped = catalogLesson
+        ? candidates.filter((candidate) => candidate.source.id === catalogLesson.sourceId)
+        : candidates;
+      const pageStart = catalogLesson?.pageStart;
+      const pageScoped = pageStart
+        ? sourceScoped.filter((candidate) => {
+            const pageEnd = catalogLesson?.pageEnd ?? pageStart;
+            return candidate.chunk.pageFrom <= pageEnd && candidate.chunk.pageTo >= pageStart;
+          })
+        : sourceScoped;
+      const scopedCandidates = pageScoped.length ? pageScoped : sourceScoped;
+      const query = catalogLesson ? `${catalogLesson.code} ${catalogLesson.title}` : lesson;
+      const result = rankSourceChunks(query, scopedCandidates, 2);
       return {
         lesson,
         references: result.references.map((reference) => ({
@@ -1707,7 +1750,7 @@ async function prepareSourceContext(): Promise<boolean> {
       state.draft.sourceReferences = [];
       state.draft.sourceRetrievalVersion = "";
       state.sourceRetrievalBusy = false;
-      state.sourceRetrievalMessage = `لم يجد واثق صفحات واضحة للدروس: ${missingLessons.join("، ")}. راجع اختيار الدروس من الفهرس.`;
+      state.sourceRetrievalMessage = `لم يجد واثق صفحات واضحة للدروس: ${missingLessons.join("، ")}. راجع اختيار الدروس من شجرة الكتاب.`;
       render();
       showToast("بعض الدروس لم ترتبط بصفحات من المصدر.");
       return false;
@@ -1751,7 +1794,14 @@ async function loadLessonCatalogForCurrentSelection(force = false): Promise<void
       const loaded = await Promise.all(eligible.map(async (source) => {
         try {
           let nodes = await centralSourceStore.listSourceStructure(source.id);
-          const existingCatalog = buildLessonCatalog([source], new Map([[source.id, nodes]]));
+          let existingCatalog = buildLessonCatalog([source], new Map([[source.id, nodes]]));
+          if (existingCatalog.length < MIN_LESSON_TOPICS) {
+            const curated = buildCuratedBookStructure(source);
+            if (curated.length) {
+              nodes = curated;
+              existingCatalog = buildLessonCatalog([source], new Map([[source.id, nodes]]));
+            }
+          }
           if (existingCatalog.length < MIN_LESSON_TOPICS) {
             const chunks = await centralSourceStore.listSourceChunks(source.id);
             const extracted = extractSourceStructure(
@@ -1778,9 +1828,12 @@ async function loadLessonCatalogForCurrentSelection(force = false): Promise<void
       invalidateSourceAndGeneratedQuestions();
       scheduleSave();
     }
+    const curatedCount = state.lessonCatalog.filter((lesson) => lesson.origin === "curated-book-tree").length;
     state.lessonCatalogMessage = state.lessonCatalog.length
-      ? `تم تجهيز ${state.lessonCatalog.length} درسًا من فهرس المصدر.`
-      : "لم يعثر واثق على دروس مرقمة واضحة في فهرس المصدر. أعد فهرسة المصدر النصية فقط إذا كان الملف قديمًا.";
+      ? curatedCount
+        ? `تم تجهيز شجرة الكتاب المعتمدة: ${state.lessonCatalog.length} درسًا.`
+        : `تم تجهيز شجرة المصدر: ${state.lessonCatalog.length} درسًا.`
+      : "لا توجد شجرة محتوى موثوقة لهذا الكتاب بعد.";
   } finally {
     state.lessonCatalogBusy = false;
     render();
