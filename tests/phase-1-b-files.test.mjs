@@ -17,15 +17,13 @@ test("Phase 1-B يستبدل الصياغات الوهمية بخدمة تولي
   assert.match(generator, /ثلاثة بدائل لكل مفردة/);
 });
 
-test("Edge Function تستخدم Gemini Interactions API ومخطط JSON ومفتاحًا سريًا", () => {
-  assert.match(edge, /generativelanguage\.googleapis\.com\/v1\/interactions/);
+test("Edge Function تستخدم Gemini generateContent ومخطط JSON ومفتاحًا سريًا", () => {
+  assert.match(edge, /generativelanguage\.googleapis\.com\/v1beta\/models\/\$\{encodeURIComponent\(GEMINI_MODEL\)\}:generateContent/);
   assert.match(edge, /GEMINI_API_KEY/);
   assert.match(edge, /x-goog-api-key/);
-  assert.match(edge, /system_instruction/);
-  assert.match(edge, /response_format/);
-  assert.match(edge, /mime_type:\s*"application\/json"/);
-  assert.match(edge, /schema:\s*generationSchema\(request\.items\.length\)/);
-  assert.match(edge, /store:\s*false/);
+  assert.match(edge, /systemInstruction/);
+  assert.match(edge, /responseMimeType:\s*"application\/json"/);
+  assert.match(edge, /responseJsonSchema:\s*generationSchema\(request\.items\)/);
   assert.match(edge, /sourceSupport/);
   assert.match(edge, /admin\.auth\.getUser/);
   assert.doesNotMatch(edge, /OPENAI_API_KEY|api\.openai\.com/);
@@ -34,5 +32,5 @@ test("Edge Function تستخدم Gemini Interactions API ومخطط JSON ومف�
 test("تسجل Supabase الوظيفة الجديدة ويُرفع إصدار واثق", () => {
   assert.match(config, /\[functions\.generate-source-questions\]/);
   assert.match(config, /verify_jwt\s*=\s*false/);
-  assert.equal(pkg.version, "0.0.31");
+  assert.equal(pkg.version, "0.0.32");
 });

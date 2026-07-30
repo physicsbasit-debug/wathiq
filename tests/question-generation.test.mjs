@@ -121,7 +121,7 @@ test("يتحقق من ثلاثة بدائل ثم يربطها بخطة الاخ�
   assert.equal(generated[0].proposals.length, 3);
   assert.equal(generated[0].proposals[0].options.length, 4);
   assert.equal(generated[0].proposals[0].answer, "خاصية فيزيائية");
-  assert.equal(SOURCE_GENERATION_VERSION, "source-grounded-policy-ai-5-gemini-response");
+  assert.equal(SOURCE_GENERATION_VERSION, "source-grounded-policy-ai-6-generate-content");
   assert.equal(parsed.requestId, "WQ-TEST1234");
 });
 

@@ -34,9 +34,9 @@ test("تقوي قراءة JSON من Gemini وتبقي النشر من محرر S
   assert.match(edge, /parseGeneratedJson/);
   assert.match(edge, /```\(\?:json\)\?/);
   assert.match(edge, /JSON غير صالح أو مبتور/);
-  assert.match(edge, /response_format/);
+  assert.match(edge, /responseJsonSchema/);
   assert.match(deployment, /محرر Supabase/);
   assert.match(deployment, /GEMINI_API_KEY/);
   assert.doesNotMatch(`${edge}\n${deployment}`, /OPENAI_API_KEY|api\.openai\.com/);
-  assert.equal(pkg.version, "0.0.31");
+  assert.equal(pkg.version, "0.0.32");
 });

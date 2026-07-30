@@ -28,7 +28,7 @@ test("يبني الاختبار القصير من قالب رسمي لا من أ
 
 test("يثبت الخادم المرجع الرسمي ويستخدم Gemini دون أسرار داخل الملفات", () => {
   assert.match(edge, /assessmentPolicyId/);
-  assert.match(edge, /generativelanguage\.googleapis\.com\/v1\/interactions/);
+  assert.match(edge, /generativelanguage\.googleapis\.com\/v1beta\/models\/.*:generateContent/);
   assert.match(edge, /GEMINI_API_KEY/);
   assert.doesNotMatch(forbidden, /AIza[0-9A-Za-z_-]{20,}|OPENAI_API_KEY|api\.openai\.com/);
 });
