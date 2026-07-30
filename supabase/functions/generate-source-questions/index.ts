@@ -108,7 +108,6 @@ interface ModelGeneratedAlternative {
 
 interface ModelGeneratedItem {
   planItemId: string;
-  visual: QuestionVisualSpec;
   alternatives: ModelGeneratedAlternative[];
 }
 
@@ -167,7 +166,7 @@ Deno.serve(async (req) => {
       lessonCount: request.lessons.length,
     });
     const generated = await generateAndValidate(request, requestId);
-    logStage(requestId, "response_sent", { itemCount: generated.items.length });
+    logStage(requestId, "response_sent", { itemCount: generated.items.length, visualOwner: "server" });
     return json(req, {
       items: generated.items,
       model: GEMINI_MODEL,
@@ -254,7 +253,8 @@ async function callGemini(
         store: false,
         generationConfig: {
           candidateCount: 1,
-          maxOutputTokens: 7_000,
+          maxOutputTokens: generationOutputTokenLimit(request.items),
+          thinkingConfig: { thinkingBudget: generationThinkingBudget(request.items) },
           responseMimeType: "application/json",
           responseJsonSchema: generationSchema(request.items, evidenceCatalog.fragments.map((fragment) => fragment.id)),
         },
@@ -284,6 +284,11 @@ async function callGemini(
       outputCharacters: output.text.length,
       promptTokens: completion.promptTokens,
       outputTokens: completion.outputTokens,
+      totalTokens: completion.totalTokens,
+      thoughtsTokens: completion.thoughtsTokens,
+      cachedTokens: completion.cachedTokens,
+      thinkingBudget: generationThinkingBudget(request.items),
+      visualOwner: "server",
       durationMs: Date.now() - startedAt,
     });
     if (!output.text) {
@@ -372,12 +377,9 @@ function buildSystemInstructions(): string {
     "عند styleTarget=بيانات: قدّم جدولًا نصيًا صغيرًا أو نتائج قياس أو وصف رسم بياني في stimulus، ثم اطلب قراءة نمط أو حسابًا أو استنتاجًا من البيانات.",
     "عند styleTarget=استقصائي: قدّم تجربة أو إجراءً مختصرًا، ثم اسأل عن متغير أو ضبط أو موثوقية أو تفسير نتائج أو تحسين طريقة.",
     "عند styleTarget=مقارنة: حدّد بوضوح الجانبين المطلوبين، واجعل كل فرق أو تشابه نقطة تصحيح مستقلة.",
-    "لكل مفردة يوجد visualTarget محدد مسبقًا. أنشئ مواصفة visual واحدة مشتركة بين البدائل الثلاثة وطابق type حرفيًا مع visualTarget.",
-    "إذا كان visualTarget=none فأعد مواصفة فارغة: type=none، النصوص فارغة، المحاور 0 إلى 1، وجميع المصفوفات فارغة.",
-    "إذا كان visualTarget=line_graph أو bar_chart فأنشئ بيانات صغيرة وواضحة ومحاور معنونة بوحدات المنهج. يجوز استخدام بيانات افتراضية داخل السؤال بشرط أن تكون معطاة صراحة ومتسقة علميًا مع دليل المصدر، وألا تُعرض كحقيقة من الكتاب.",
-    "إذا كان visualTarget=pressure_diagram فاستخدم values=[مستوى السائل النسبي، عمق الجسم النسبي] بين 0 و1، وlabels=[اسم السائل، اسم الجسم].",
-    "إذا كان visualTarget=circuit_diagram فاستخدم components من القيم المعتمدة فقط: battery, switch_open, switch_closed, lamp, resistor, ammeter, voltmeter، واجعل الدائرة تحتوي بطارية وحملًا واحدًا على الأقل.",
-    "لا تضع الإجابة داخل عنوان الرسم أو تسمياته، ولا تضف أسهمًا أو قيمًا تكشف الحل. الرسم تعليمي خطي ثنائي الأبعاد ومناسب للطباعة بالأبيض والأسود.",
+    "لكل مفردة قد يرفق الخادم fixedVisual جاهزًا وحتميًا. لا تنشئ visual ولا تعدله ولا تعيده في JSON؛ ابنِ البدائل الثلاثة بالاعتماد على fixedVisual نفسه.",
+    "إذا كان fixedVisual.type لا يساوي none، فيجب أن يشير متن السؤال أو المطلوب بوضوح إلى الشكل أو الرسم أو البيانات، وأن تكون الإجابة متسقة حرفيًا مع القيم والعناصر الواردة في fixedVisual.",
+    "لا تضف إلى السؤال قيمة بصرية غير موجودة في fixedVisual، ولا تجعل الرسم يكشف الإجابة مباشرة. الرسم مملوك للخادم ومناسب للطباعة بالأبيض والأسود.",
     "مفردة الاختيار من متعدد درجتها واحدة وتقيس هدفًا واحدًا، ولها أربعة بدائل وإجابة صحيحة واحدة فقط.",
     "ابنِ مشتتات الاختيار من متعدد من أخطاء مفاهيمية أو عددية شائعة، واجعلها متجانسة في النوع والوحدة والطول، ولا تستخدم: جميع ما سبق، لا شيء مما سبق، أو الأول والثاني فقط.",
     "الإجابة القصيرة درجتها درجة أو درجتان، ويجب أن يتناسب مقدار الإجابة مع الدرجة وألا تطلب أكثر من نقاط التصحيح المحددة.",
@@ -433,6 +435,7 @@ function buildUserPrompt(request: GenerationRequest, evidenceCatalog: EvidenceCa
     })),
     batchPlanItems: request.items.map((item) => ({
       ...item,
+      fixedVisual: buildServerOwnedVisualSpec(item, request),
       allowedEvidenceIds: (evidenceCatalog.byReferenceId.get(item.sourceReferenceId) ?? []).map((fragment) => fragment.id),
     })),
     outputContract: {
@@ -443,7 +446,7 @@ function buildUserPrompt(request: GenerationRequest, evidenceCatalog: EvidenceCa
       exactPlanItemIds: request.items.map((item) => item.planItemId),
       evidenceRule: "أعد sourceEvidenceId من allowedEvidenceIds الخاصة بالمفردة فقط.",
       styleRule: "اجعل questionForm مطابقًا حرفيًا لـ styleTarget. أعد markScheme بالنقاط point1..point4؛ املأ أول marks نقاط فقط واجعل الباقي فارغًا.",
-      visualRule: "أعد visual مرة واحدة لكل مفردة، واجعل visual.type مطابقًا حرفيًا لـ visualTarget.",
+      visualRule: "لا تعد visual في JSON. استخدم fixedVisual الذي جهزه الخادم كما هو، وأشر إليه بوضوح عندما لا يكون نوعه none.",
     },
   });
 }
@@ -466,47 +469,6 @@ function generationSchema(requestedItems: GenerationItem[], evidenceIds: string[
               type: "string",
               enum: requestedIds,
               description: "المعرف المطابق حرفيًا لإحدى مفردات الدفعة.",
-            },
-            visual: {
-              type: "object",
-              description: "مواصفة رسم SVG تعليمية آمنة ومشتركة بين البدائل الثلاثة.",
-              properties: {
-                type: { type: "string", enum: ["none", "line_graph", "bar_chart", "pressure_diagram", "circuit_diagram"] },
-                title: { type: "string" },
-                altText: { type: "string" },
-                xAxisLabel: { type: "string" },
-                xAxisUnit: { type: "string" },
-                yAxisLabel: { type: "string" },
-                yAxisUnit: { type: "string" },
-                xMin: { type: "number" },
-                xMax: { type: "number" },
-                yMin: { type: "number" },
-                yMax: { type: "number" },
-                points: {
-                  type: "array",
-                  maxItems: 10,
-                  items: {
-                    type: "object",
-                    properties: {
-                      x: { type: "number" },
-                      y: { type: "number" },
-                      label: { type: "string" },
-                    },
-                    required: ["x", "y", "label"],
-                    additionalProperties: false,
-                  },
-                },
-                labels: { type: "array", maxItems: 10, items: { type: "string" } },
-                values: { type: "array", maxItems: 10, items: { type: "number" } },
-                components: {
-                  type: "array",
-                  maxItems: 7,
-                  items: { type: "string", enum: ["battery", "switch_open", "switch_closed", "lamp", "resistor", "ammeter", "voltmeter"] },
-                },
-                annotations: { type: "array", maxItems: 8, items: { type: "string" } },
-              },
-              required: ["type", "title", "altText", "xAxisLabel", "xAxisUnit", "yAxisLabel", "yAxisUnit", "xMin", "xMax", "yMin", "yMax", "points", "labels", "values", "components", "annotations"],
-              additionalProperties: false,
             },
             alternatives: {
               type: "array",
@@ -561,7 +523,7 @@ function generationSchema(requestedItems: GenerationItem[], evidenceIds: string[
               },
             },
           },
-          required: ["planItemId", "visual", "alternatives"],
+          required: ["planItemId", "alternatives"],
           additionalProperties: false,
         },
       },
@@ -855,7 +817,7 @@ function validateAndHydrateGeneratedPayload(
     seen.add(generatedItem.planItemId);
     hydratedItems.push({
       planItemId: generatedItem.planItemId,
-      visual: validateQuestionVisualSpec(generatedItem.visual, requested.visualTarget),
+      visual: buildServerOwnedVisualSpec(requested, request),
       alternatives: generatedItem.alternatives.map((alternative) =>
         validateAndHydrateAlternative(
           alternative,
@@ -875,95 +837,207 @@ function validateAndHydrateGeneratedPayload(
 const VISUAL_TYPES: readonly QuestionVisualType[] = ["none", "line_graph", "bar_chart", "pressure_diagram", "circuit_diagram"];
 const CIRCUIT_COMPONENTS: readonly CircuitComponent[] = ["battery", "switch_open", "switch_closed", "lamp", "resistor", "ammeter", "voltmeter"];
 
-function validateQuestionVisualSpec(value: unknown, expectedType: QuestionVisualType): QuestionVisualSpec {
-  const record = asRecord(value);
-  if (!record || typeof record.type !== "string" || !VISUAL_TYPES.includes(record.type as QuestionVisualType)) {
-    throw retryableError("مواصفة الرسم التعليمي غير صالحة.");
-  }
-  const type = record.type as QuestionVisualType;
-  if (type !== expectedType) throw retryableError("مولد الأسئلة لم يلتزم بنوع الرسم المطلوب.");
-  const text = (key: string, max: number): string => {
-    const raw = record[key];
-    if (typeof raw !== "string") throw retryableError("أحد حقول الرسم النصية غير صالح.");
-    const cleaned = raw.trim().slice(0, max);
-    if (/[<>]/.test(cleaned)) throw retryableError("تسميات الرسم تحتوي محارف غير مسموحة.");
-    return cleaned;
+function emptyVisualSpec(): QuestionVisualSpec {
+  return {
+    type: "none",
+    title: "",
+    altText: "",
+    xAxisLabel: "",
+    xAxisUnit: "",
+    yAxisLabel: "",
+    yAxisUnit: "",
+    xMin: 0,
+    xMax: 1,
+    yMin: 0,
+    yMax: 1,
+    points: [],
+    labels: [],
+    values: [],
+    components: [],
+    annotations: [],
   };
-  const number = (key: string, fallback = 0): number => {
-    const raw = record[key];
-    return typeof raw === "number" && Number.isFinite(raw) ? raw : fallback;
-  };
-  const textArray = (key: string, maxItems: number, maxLength: number): string[] => {
-    const raw = record[key];
-    if (!Array.isArray(raw)) throw retryableError("إحدى مصفوفات الرسم غير صالحة.");
-    return raw.map((entry) => {
-      if (typeof entry !== "string") throw retryableError("إحدى تسميات الرسم غير صالحة.");
-      const cleaned = entry.trim().slice(0, maxLength);
-      if (!cleaned || /[<>]/.test(cleaned)) throw retryableError("إحدى تسميات الرسم فارغة أو غير آمنة.");
-      return cleaned;
-    }).slice(0, maxItems);
-  };
-  const numberArray = (key: string, maxItems: number): number[] => {
-    const raw = record[key];
-    if (!Array.isArray(raw)) throw retryableError("إحدى مصفوفات قيم الرسم غير صالحة.");
-    return raw.map((entry) => {
-      if (typeof entry !== "number" || !Number.isFinite(entry)) throw retryableError("إحدى قيم الرسم غير رقمية.");
-      return entry;
-    }).slice(0, maxItems);
-  };
-  if (!Array.isArray(record.points)) throw retryableError("نقاط الرسم غير صالحة.");
-  const points = record.points.map((entry) => {
-    const point = asRecord(entry);
-    if (!point || typeof point.x !== "number" || !Number.isFinite(point.x) || typeof point.y !== "number" || !Number.isFinite(point.y) || typeof point.label !== "string") {
-      throw retryableError("إحدى نقاط الرسم غير صالحة.");
-    }
-    const label = point.label.trim().slice(0, 40);
-    if (/[<>]/.test(label)) throw retryableError("تسمية إحدى نقاط الرسم غير آمنة.");
-    return { x: point.x, y: point.y, label };
-  }).slice(0, 10);
-  if (!Array.isArray(record.components)) throw retryableError("مكونات الدائرة غير صالحة.");
-  const components = record.components.map((entry) => {
-    if (typeof entry !== "string" || !CIRCUIT_COMPONENTS.includes(entry as CircuitComponent)) {
-      throw retryableError("أحد مكونات الدائرة الكهربائية غير معتمد.");
-    }
-    return entry as CircuitComponent;
-  }).slice(0, 7);
-  const spec: QuestionVisualSpec = {
-    type,
-    title: text("title", 160),
-    altText: text("altText", 240),
-    xAxisLabel: text("xAxisLabel", 60),
-    xAxisUnit: text("xAxisUnit", 24),
-    yAxisLabel: text("yAxisLabel", 60),
-    yAxisUnit: text("yAxisUnit", 24),
-    xMin: number("xMin"),
-    xMax: number("xMax", 1),
-    yMin: number("yMin"),
-    yMax: number("yMax", 1),
-    points,
-    labels: textArray("labels", 10, 80),
-    values: numberArray("values", 10),
-    components,
-    annotations: textArray("annotations", 8, 100),
-  };
-  if (type === "none") return { ...spec, title: "", altText: "", xAxisLabel: "", xAxisUnit: "", yAxisLabel: "", yAxisUnit: "", xMin: 0, xMax: 1, yMin: 0, yMax: 1, points: [], labels: [], values: [], components: [], annotations: [] };
-  if (!spec.title || !spec.altText) throw retryableError("الرسم التعليمي يحتاج عنوانًا ووصفًا بديلًا.");
-  if (type === "line_graph") {
-    if (!spec.xAxisLabel || !spec.yAxisLabel || spec.xMax <= spec.xMin || spec.yMax <= spec.yMin || spec.points.length < 2) throw retryableError("الرسم الخطي غير مكتمل.");
-    if (spec.points.some((point) => point.x < spec.xMin || point.x > spec.xMax || point.y < spec.yMin || point.y > spec.yMax)) throw retryableError("إحدى نقاط الرسم خارج نطاق المحاور.");
-  } else if (type === "bar_chart") {
-    if (!spec.yAxisLabel || spec.yMax <= spec.yMin || spec.labels.length < 2 || spec.labels.length !== spec.values.length) throw retryableError("رسم الأعمدة غير مكتمل.");
-    if (spec.values.some((entry) => entry < spec.yMin || entry > spec.yMax)) throw retryableError("إحدى قيم الأعمدة خارج نطاق المحور.");
-  } else if (type === "pressure_diagram") {
-    const liquidLevel = spec.values[0];
-    const objectDepth = spec.values[1];
-    if (spec.labels.length < 2 || liquidLevel === undefined || objectDepth === undefined || liquidLevel < 0.25 || liquidLevel > 0.9 || objectDepth < 0 || objectDepth > 1) throw retryableError("مخطط الضغط غير مكتمل.");
-  } else if (type === "circuit_diagram") {
-    if (spec.components.length < 2 || !spec.components.includes("battery") || !spec.components.some((entry) => entry === "lamp" || entry === "resistor")) throw retryableError("الدائرة الكهربائية تحتاج بطارية وحملًا صالحًا.");
-  }
-  return spec;
 }
 
+function visualSeed(value: string): number {
+  let hash = 2166136261;
+  for (const character of value) {
+    hash ^= character.codePointAt(0) ?? 0;
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function normalizeVisualContext(value: string): string {
+  return normalizeForEvidence(value);
+}
+
+function referenceForVisual(item: GenerationItem, request: GenerationRequest): GenerationReference | undefined {
+  return request.references.find((reference) => reference.id === item.sourceReferenceId);
+}
+
+function graphProfile(context: string): {
+  title: string;
+  xAxisLabel: string;
+  xAxisUnit: string;
+  yAxisLabel: string;
+  yAxisUnit: string;
+  xValues: number[];
+  yValues: number[];
+} {
+  if (/(ضغط|عمق|سائل|كثاف)/u.test(context)) {
+    return {
+      title: "العلاقة بين العمق والضغط",
+      xAxisLabel: "العمق",
+      xAxisUnit: "m",
+      yAxisLabel: "الضغط",
+      yAxisUnit: "kPa",
+      xValues: [0, 1, 2, 3, 4],
+      yValues: [0, 10, 20, 30, 40],
+    };
+  }
+  if (/(جهد|تيار|مقاوم|كهرب)/u.test(context)) {
+    return {
+      title: "العلاقة بين فرق الجهد وشدة التيار",
+      xAxisLabel: "فرق الجهد",
+      xAxisUnit: "V",
+      yAxisLabel: "شدة التيار",
+      yAxisUnit: "A",
+      xValues: [0, 1, 2, 3, 4],
+      yValues: [0, 0.5, 1, 1.5, 2],
+    };
+  }
+  if (/(حرار|درجه|تبريد|تسخين)/u.test(context)) {
+    return {
+      title: "تغير درجة الحرارة مع الزمن",
+      xAxisLabel: "الزمن",
+      xAxisUnit: "min",
+      yAxisLabel: "درجة الحرارة",
+      yAxisUnit: "°C",
+      xValues: [0, 1, 2, 3, 4],
+      yValues: [20, 30, 42, 51, 58],
+    };
+  }
+  if (/(سرع|مساف|حرك|زمن)/u.test(context)) {
+    return {
+      title: "تغير المسافة مع الزمن",
+      xAxisLabel: "الزمن",
+      xAxisUnit: "s",
+      yAxisLabel: "المسافة",
+      yAxisUnit: "m",
+      xValues: [0, 1, 2, 3, 4],
+      yValues: [0, 2, 4, 6, 8],
+    };
+  }
+  return {
+    title: "نتائج قياسات تجربة",
+    xAxisLabel: "رقم القياس",
+    xAxisUnit: "",
+    yAxisLabel: "القيمة المقاسة",
+    yAxisUnit: "",
+    xValues: [1, 2, 3, 4, 5],
+    yValues: [2, 4, 5, 7, 8],
+  };
+}
+
+function inferLiquidName(context: string): string {
+  if (/زيت/u.test(context)) return "الزيت";
+  if (/(ماء|الماء)/u.test(context)) return "الماء";
+  if (/زئبق/u.test(context)) return "الزئبق";
+  return "السائل";
+}
+
+function buildServerOwnedVisualSpec(item: GenerationItem, request: GenerationRequest): QuestionVisualSpec {
+  if (item.visualTarget === "none") return emptyVisualSpec();
+
+  const reference = referenceForVisual(item, request);
+  const context = normalizeVisualContext(`${request.subject} ${request.topic} ${item.lessonLabel} ${reference?.content ?? ""}`);
+  const seed = visualSeed(`${item.planItemId}|${item.lessonLabel}|${item.visualTarget}`);
+  const titleSuffix = item.lessonLabel ? ` - ${item.lessonLabel}` : "";
+
+  if (item.visualTarget === "pressure_diagram") {
+    const liquid = inferLiquidName(context);
+    const objectDepth = 0.42 + ((seed % 13) / 100);
+    return {
+      ...emptyVisualSpec(),
+      type: "pressure_diagram",
+      title: `جسم داخل ${liquid}${titleSuffix}`,
+      altText: `وعاء يحتوي ${liquid} وجسمًا عند عمق محدد أسفل السطح`,
+      labels: [liquid, "الجسم"],
+      values: [0.74, Math.min(0.62, objectDepth)],
+      annotations: ["سطح السائل", "العمق"],
+    };
+  }
+
+  if (item.visualTarget === "circuit_diagram") {
+    const components: CircuitComponent[] = ["battery", "switch_closed"];
+    components.push(/مقاوم/u.test(context) ? "resistor" : "lamp");
+    return {
+      ...emptyVisualSpec(),
+      type: "circuit_diagram",
+      title: `دائرة كهربائية مبسطة${titleSuffix}`,
+      altText: "دائرة كهربائية مغلقة تحتوي بطارية ومفتاحًا وحملًا كهربائيًا",
+      components,
+      annotations: components.map((component) => ({
+        battery: "بطارية",
+        switch_open: "مفتاح مفتوح",
+        switch_closed: "مفتاح مغلق",
+        lamp: "مصباح",
+        resistor: "مقاومة",
+        ammeter: "أميتر",
+        voltmeter: "فولتميتر",
+      } as Record<CircuitComponent, string>)[component]),
+    };
+  }
+
+  const profile = graphProfile(context);
+  if (item.visualTarget === "line_graph") {
+    const points = profile.xValues.map((x, index) => ({ x, y: profile.yValues[index] ?? 0, label: "" }));
+    const xMax = Math.max(...profile.xValues);
+    const yMax = Math.max(...profile.yValues);
+    return {
+      ...emptyVisualSpec(),
+      type: "line_graph",
+      title: profile.title,
+      altText: `رسم بياني خطي يوضح ${profile.title}`,
+      xAxisLabel: profile.xAxisLabel,
+      xAxisUnit: profile.xAxisUnit,
+      yAxisLabel: profile.yAxisLabel,
+      yAxisUnit: profile.yAxisUnit,
+      xMin: Math.min(0, ...profile.xValues),
+      xMax: xMax > 0 ? xMax : 1,
+      yMin: Math.min(0, ...profile.yValues),
+      yMax: yMax > 0 ? yMax : 1,
+      points,
+      annotations: ["بيانات تجربة افتراضية معطاة في السؤال"],
+    };
+  }
+
+  const barValues = profile.yValues.slice(1, 5);
+  const yMax = Math.max(...barValues);
+  return {
+    ...emptyVisualSpec(),
+    type: "bar_chart",
+    title: `مقارنة نتائج القياس${titleSuffix}`,
+    altText: "رسم أعمدة يقارن أربع نتائج قياس",
+    yAxisLabel: profile.yAxisLabel,
+    yAxisUnit: profile.yAxisUnit,
+    yMin: 0,
+    yMax: yMax > 0 ? Math.ceil(yMax * 1.2) : 10,
+    labels: ["العينة أ", "العينة ب", "العينة ج", "العينة د"],
+    values: barValues,
+    annotations: ["بيانات تجربة افتراضية معطاة في السؤال"],
+  };
+}
+
+function generationThinkingBudget(items: GenerationItem[]): number {
+  const heavy = items.some((item) => item.questionType === "إجابة طويلة" || item.cognitiveLevel === "استدلال" || item.marks >= 3);
+  return heavy ? 768 : 0;
+}
+
+function generationOutputTokenLimit(items: GenerationItem[]): number {
+  const markTotal = items.reduce((sum, item) => sum + item.marks, 0);
+  return Math.min(5_200, Math.max(2_400, 1_900 + (items.length * 450) + (markTotal * 350)));
+}
 
 function normalizeModelMarkScheme(value: unknown, marks: number): string[] {
   if (Array.isArray(value)) {
@@ -1103,6 +1177,9 @@ interface GenerateContentCompletion {
   finishMessage: string;
   promptTokens: number | null;
   outputTokens: number | null;
+  totalTokens: number | null;
+  thoughtsTokens: number | null;
+  cachedTokens: number | null;
 }
 
 function findGenerateContentOutputText(payload: unknown): { text: string; partCount: number } {
@@ -1137,9 +1214,12 @@ function inspectGenerateContentCompletion(payload: unknown): GenerateContentComp
   const usage = asRecord(record.usageMetadata);
   const promptTokens = typeof usage?.promptTokenCount === "number" ? usage.promptTokenCount : null;
   const outputTokens = typeof usage?.candidatesTokenCount === "number" ? usage.candidatesTokenCount : null;
+  const totalTokens = typeof usage?.totalTokenCount === "number" ? usage.totalTokenCount : null;
+  const thoughtsTokens = typeof usage?.thoughtsTokenCount === "number" ? usage.thoughtsTokenCount : null;
+  const cachedTokens = typeof usage?.cachedContentTokenCount === "number" ? usage.cachedContentTokenCount : null;
 
   if (finishReason === "STOP" || finishReason === "FINISH_REASON_UNSPECIFIED") {
-    return { finishReason, finishMessage, promptTokens, outputTokens };
+    return { finishReason, finishMessage, promptTokens, outputTokens, totalTokens, thoughtsTokens, cachedTokens };
   }
   if (finishReason === "MAX_TOKENS" || finishReason === "MALFORMED_RESPONSE" || finishReason === "OTHER") {
     throw retryableError(finishMessage || `لم يكتمل ناتج Gemini (${finishReason}).`);

@@ -33,6 +33,9 @@ async function loadEdgeHelpers() {
     generationSchema,
     buildEvidenceCatalog,
     validateAndHydrateGeneratedPayload,
+    buildServerOwnedVisualSpec,
+    generationThinkingBudget,
+    generationOutputTokenLimit,
     generateAndValidate,
   };\n`;
 
@@ -133,7 +136,8 @@ test("يفرض المخطط ويثبت الدليل عبر معرف مقطع م�
   assert.deepEqual(Array.from(schema.properties.items.items.properties.planItemId.enum), ["P-1"]);
   assert.equal(Array.from(schema.properties.items.items.properties.alternatives.items.properties.sourceEvidenceId.enum).join("|"), Array.from(evidenceIds).join("|"));
   assert.equal(schema.properties.items.minItems, 1);
-  assert.ok(schema.properties.items.items.properties.visual);
+  assert.equal(schema.properties.items.items.properties.visual, undefined);
+  assert.deepEqual(Array.from(schema.properties.items.items.required), ["planItemId", "alternatives"]);
   const markSchemeSchema = schema.properties.items.items.properties.alternatives.items.properties.markScheme;
   assert.equal(markSchemeSchema.type, "object");
   assert.deepEqual(Array.from(markSchemeSchema.required), ["point1", "point2", "point3", "point4"]);
@@ -266,6 +270,8 @@ test("ينفذ مسار generateContent كاملًا باستجابة منظمة
   assert.equal(capturedBody.generationConfig.responseMimeType, "application/json");
   assert.deepEqual(Array.from(capturedBody.generationConfig.responseJsonSchema.required), ["items"]);
   assert.match(capturedBody.contents[0].parts[0].text, /allowedEvidenceIds/);
+  assert.match(capturedBody.contents[0].parts[0].text, /fixedVisual/);
+  assert.equal(capturedBody.generationConfig.thinkingConfig.thinkingBudget, 0);
   assert.match(capturedBody.contents[0].parts[0].text, /EV-1-1/);
   assert.deepEqual(
     Array.from(capturedBody.generationConfig.responseJsonSchema.properties.items.items.properties.planItemId.enum),
@@ -339,26 +345,30 @@ test("يضيف الخادم نص الدليل نفسه ويضع علامة مر�
 });
 
 
-test("يتحقق من مواصفة رسم خطي منظمة ويرفض نقطة خارج المحاور", () => {
-  const refs = [{ id: "R-1", content: "تزداد المسافة بمرور الزمن." }];
-  const catalog = helpers.buildEvidenceCatalog(refs);
-  const request = { items: [{ planItemId: "P-V", questionType: "إجابة قصيرة", marks: 1, styleTarget: "بيانات", visualTarget: "line_graph", sourceReferenceId: "R-1" }], references: refs };
-  const visual = {
-    type: "line_graph", title: "المسافة والزمن", altText: "رسم خطي للمسافة مع الزمن",
-    xAxisLabel: "الزمن", xAxisUnit: "s", yAxisLabel: "المسافة", yAxisUnit: "m",
-    xMin: 0, xMax: 3, yMin: 0, yMax: 6,
-    points: [{ x: 0, y: 0, label: "" }, { x: 1, y: 2, label: "" }, { x: 3, y: 6, label: "" }],
-    labels: [], values: [], components: [], annotations: [],
+test("يبني الخادم الرسم الخطي والضغط بصورة حتمية ولا يقبل من Gemini مواصفة رسم", () => {
+  const request = {
+    subject: "الفيزياء",
+    topic: "الضغط",
+    references: [{ id: "R-1", content: "يزداد الضغط في السائل بزيادة العمق." }],
   };
-  const payload = { items: [{ planItemId: "P-V", visual, alternatives: Array.from({ length: 3 }, () => ({
-    stimulus: "يوضح الرسم العلاقة بين المسافة والزمن.", text: "حدد المسافة عند 1 s.", options: [], answer: "2 m", rationale: "تقرأ القيمة من الرسم.", markScheme: ["قراءة 2 m."], questionForm: "بيانات", workingRequired: false, sourceEvidenceId: catalog.fragments[0].id, needsReview: false,
-  })) }] };
-  const result = helpers.validateAndHydrateGeneratedPayload(payload, request, catalog);
-  assert.equal(result.items[0].visual.type, "line_graph");
-  payload.items[0].visual.points[1].y = 20;
-  assert.throws(() => helpers.validateAndHydrateGeneratedPayload(payload, request, catalog), /خارج نطاق المحاور/);
+  const lineItem = { planItemId: "P-L", visualTarget: "line_graph", sourceReferenceId: "R-1", lessonLabel: "الضغط في السوائل" };
+  const pressureItem = { planItemId: "P-P", visualTarget: "pressure_diagram", sourceReferenceId: "R-1", lessonLabel: "الضغط في السوائل" };
+  const line = helpers.buildServerOwnedVisualSpec(lineItem, request);
+  const pressure = helpers.buildServerOwnedVisualSpec(pressureItem, request);
+  assert.equal(line.type, "line_graph");
+  assert.equal(line.points.length, 5);
+  assert.equal(line.xAxisLabel, "العمق");
+  assert.equal(pressure.type, "pressure_diagram");
+  assert.deepEqual(Array.from(pressure.labels), ["السائل", "الجسم"]);
+  assert.equal(pressure.values.length, 2);
 });
 
+test("يضبط التفكير والإخراج حسب ثقل المفردة بدل استهلاك مفتوح", () => {
+  assert.equal(helpers.generationThinkingBudget([{ questionType: "اختيار من متعدد", cognitiveLevel: "معرفة", marks: 1 }]), 0);
+  assert.equal(helpers.generationThinkingBudget([{ questionType: "إجابة طويلة", cognitiveLevel: "استدلال", marks: 3 }]), 768);
+  assert.ok(helpers.generationOutputTokenLimit([{ marks: 1 }]) < 7000);
+  assert.ok(helpers.generationOutputTokenLimit([{ marks: 4, questionType: "إجابة طويلة" }]) <= 5200);
+});
 
 test("يحوّل خانات نموذج التصحيح الثابتة إلى نقطة مستقلة لكل درجة", () => {
   const references = [{ id: "R-1", content: "تنتقل الشحنة الكهربائية بين الأجسام عند الدلك." }];
