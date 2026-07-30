@@ -134,6 +134,9 @@ test("يفرض المخطط ويثبت الدليل عبر معرف مقطع م�
   assert.equal(Array.from(schema.properties.items.items.properties.alternatives.items.properties.sourceEvidenceId.enum).join("|"), Array.from(evidenceIds).join("|"));
   assert.equal(schema.properties.items.minItems, 1);
   assert.ok(schema.properties.items.items.properties.visual);
+  const markSchemeSchema = schema.properties.items.items.properties.alternatives.items.properties.markScheme;
+  assert.equal(markSchemeSchema.type, "object");
+  assert.deepEqual(Array.from(markSchemeSchema.required), ["point1", "point2", "point3", "point4"]);
   assert.equal(schema.properties.items.maxItems, 1);
 
   const request = {
@@ -354,4 +357,49 @@ test("يتحقق من مواصفة رسم خطي منظمة ويرفض نقطة 
   assert.equal(result.items[0].visual.type, "line_graph");
   payload.items[0].visual.points[1].y = 20;
   assert.throws(() => helpers.validateAndHydrateGeneratedPayload(payload, request, catalog), /خارج نطاق المحاور/);
+});
+
+
+test("يحوّل خانات نموذج التصحيح الثابتة إلى نقطة مستقلة لكل درجة", () => {
+  const references = [{ id: "R-1", content: "تنتقل الشحنة الكهربائية بين الأجسام عند الدلك." }];
+  const catalog = helpers.buildEvidenceCatalog(references);
+  const request = {
+    items: [{ planItemId: "P-M", questionType: "إجابة طويلة", marks: 3, styleTarget: "استقصائي", visualTarget: "none", sourceReferenceId: "R-1" }],
+    references,
+  };
+  const payload = {
+    items: [{
+      planItemId: "P-M",
+      visual: noVisual(),
+      alternatives: Array.from({ length: 3 }, () => ({
+        stimulus: "دُلِك جسمان من مادتين مختلفتين ثم قُرّبا من قصاصات ورق.",
+        text: "فسّر ما يحدث للشحنة، ثم اقترح ملاحظة تدعم تفسيرك.",
+        options: [],
+        answer: "تنتقل إلكترونات من جسم إلى آخر فيصبحان مشحونين، ويُستدل على ذلك بانجذاب قصاصات الورق.",
+        rationale: "يربط التفسير انتقال الإلكترونات بالملاحظة التجريبية.",
+        markScheme: {
+          point1: "ذكر انتقال الإلكترونات بين الجسمين.",
+          point2: "تحديد أن الجسمين يكتسبان شحنتين نتيجة الانتقال.",
+          point3: "ربط انجذاب قصاصات الورق بوجود الشحنة.",
+          point4: "",
+        },
+        questionForm: "استقصائي",
+        workingRequired: false,
+        sourceEvidenceId: catalog.fragments[0].id,
+        needsReview: false,
+      })),
+    }],
+  };
+  const hydrated = helpers.validateAndHydrateGeneratedPayload(payload, request, catalog);
+  assert.deepEqual(Array.from(hydrated.items[0].alternatives[0].markScheme), [
+    "ذكر انتقال الإلكترونات بين الجسمين.",
+    "تحديد أن الجسمين يكتسبان شحنتين نتيجة الانتقال.",
+    "ربط انجذاب قصاصات الورق بوجود الشحنة.",
+  ]);
+
+  payload.items[0].alternatives[0].markScheme.point2 = "";
+  assert.throws(
+    () => helpers.validateAndHydrateGeneratedPayload(payload, request, catalog),
+    /لا يوزع نقطة مستقلة لكل درجة/,
+  );
 });

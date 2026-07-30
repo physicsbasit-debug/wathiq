@@ -86,13 +86,20 @@ interface GenerationRequest {
   items: GenerationItem[];
 }
 
+interface ModelGeneratedMarkSchemeSlots {
+  point1: string;
+  point2: string;
+  point3: string;
+  point4: string;
+}
+
 interface ModelGeneratedAlternative {
   stimulus: string;
   text: string;
   options: string[];
   answer: string;
   rationale: string;
-  markScheme: string[];
+  markScheme: ModelGeneratedMarkSchemeSlots | string[];
   questionForm: QuestionDesignPattern;
   workingRequired: boolean;
   sourceEvidenceId: string;
@@ -378,7 +385,7 @@ function buildSystemInstructions(): string {
     "استخدم أفعال أمر دقيقة مثل: احسب، حدد، صف، قارن، فسر، استنتج، اقترح، برر. لا تستخدم فعلًا أعلى من الدرجة المتاحة.",
     "استخدم صياغة عربية قصيرة وواضحة، وتجنب النفي قدر الإمكان والنفي المزدوج، ولا تضع معلومات غير لازمة للإجابة.",
     "للإجابة القصيرة والطويلة: اجعل options مصفوفة فارغة، واكتب إجابة نموذجية قابلة للتصحيح.",
-    "أعد markScheme بعدد عناصر يساوي marks تمامًا؛ كل عنصر يمثل نقطة مستقلة تستحق درجة واحدة، ولا تستخدم أنصاف الدرجات.",
+    "أعد markScheme ككائن ثابت يحتوي point1 وpoint2 وpoint3 وpoint4. املأ أول عدد من النقاط يساوي marks تمامًا، واجعل النقاط الزائدة سلاسل فارغة. كل نقطة مستخدمة تمثل معيار تصحيح مستقلًا يستحق درجة واحدة، ولا تستخدم أنصاف الدرجات.",
     "أعد stimulus كسلسلة فارغة فقط للسؤال المفهومي المباشر؛ الأنماط السياقية والحسابية والبيانية والاستقصائية تحتاج متنًا أو بيانات واضحة.",
     "لكل بديل اختر sourceEvidenceId واحدًا فقط من allowedEvidenceIds الخاصة بالمفردة نفسها.",
     "لا تنسخ اقتباس المصدر داخل JSON؛ الخادم سيضيف نص الدليل الموثوق من المقطع المختار.",
@@ -435,7 +442,7 @@ function buildUserPrompt(request: GenerationRequest, evidenceCatalog: EvidenceCa
       alternativesPerItem: 3,
       exactPlanItemIds: request.items.map((item) => item.planItemId),
       evidenceRule: "أعد sourceEvidenceId من allowedEvidenceIds الخاصة بالمفردة فقط.",
-      styleRule: "اجعل questionForm مطابقًا حرفيًا لـ styleTarget، وmarkScheme بعدد يساوي marks.",
+      styleRule: "اجعل questionForm مطابقًا حرفيًا لـ styleTarget. أعد markScheme بالنقاط point1..point4؛ املأ أول marks نقاط فقط واجعل الباقي فارغًا.",
       visualRule: "أعد visual مرة واحدة لكل مفردة، واجعل visual.type مطابقًا حرفيًا لـ visualTarget.",
     },
   });
@@ -522,9 +529,16 @@ function generationSchema(requestedItems: GenerationItem[], evidenceIds: string[
                   answer: { type: "string", description: "الإجابة النموذجية الدقيقة." },
                   rationale: { type: "string", description: "تفسير موجز لصحة الإجابة." },
                   markScheme: {
-                    type: "array",
-                    description: "نقطة تصحيح مستقلة لكل درجة مطلوبة.",
-                    items: { type: "string" },
+                    type: "object",
+                    description: "أربع خانات ثابتة لنقاط التصحيح. تُملأ أول marks خانات فقط، وتكون الخانات الزائدة سلاسل فارغة.",
+                    properties: {
+                      point1: { type: "string", description: "معيار الدرجة الأولى، ويجب ألا يكون فارغًا." },
+                      point2: { type: "string", description: "معيار الدرجة الثانية، أو سلسلة فارغة إذا كانت marks أقل من 2." },
+                      point3: { type: "string", description: "معيار الدرجة الثالثة، أو سلسلة فارغة إذا كانت marks أقل من 3." },
+                      point4: { type: "string", description: "معيار الدرجة الرابعة، أو سلسلة فارغة إذا كانت marks أقل من 4." },
+                    },
+                    required: ["point1", "point2", "point3", "point4"],
+                    additionalProperties: false,
                   },
                   questionForm: {
                     type: "string",
@@ -950,6 +964,30 @@ function validateQuestionVisualSpec(value: unknown, expectedType: QuestionVisual
   return spec;
 }
 
+
+function normalizeModelMarkScheme(value: unknown, marks: number): string[] {
+  if (Array.isArray(value)) {
+    const points = value
+      .map((point) => typeof point === "string" ? point.trim() : "")
+      .filter(Boolean);
+    if (points.length < marks) {
+      throw retryableError("نموذج التصحيح لا يوزع نقطة مستقلة لكل درجة.");
+    }
+    return points.slice(0, marks);
+  }
+
+  const record = asRecord(value);
+  if (!record) throw retryableError("نموذج التصحيح لا يطابق البنية المطلوبة.");
+  const slots = ["point1", "point2", "point3", "point4"].map((key) =>
+    typeof record[key] === "string" ? record[key].trim() : ""
+  );
+  const requiredPoints = slots.slice(0, marks);
+  if (requiredPoints.length !== marks || requiredPoints.some((point) => !point)) {
+    throw retryableError("نموذج التصحيح لا يوزع نقطة مستقلة لكل درجة.");
+  }
+  return requiredPoints;
+}
+
 function validateAndHydrateAlternative(
   alternative: ModelGeneratedAlternative,
   questionType: QuestionType,
@@ -966,7 +1004,7 @@ function validateAndHydrateAlternative(
   }
   if (typeof alternative.stimulus !== "string"
     || !Array.isArray(alternative.options)
-    || !Array.isArray(alternative.markScheme)
+    || (!Array.isArray(alternative.markScheme) && !asRecord(alternative.markScheme))
     || typeof alternative.workingRequired !== "boolean"
     || typeof alternative.needsReview !== "boolean") {
     throw retryableError("أحد بدائل الأسئلة لا يطابق البنية المطلوبة.");
@@ -974,10 +1012,7 @@ function validateAndHydrateAlternative(
   if (alternative.questionForm !== requestedStyleTarget) {
     throw retryableError("مولد الأسئلة لم يلتزم بنمط السؤال المحدد في الخطة.");
   }
-  const markScheme = alternative.markScheme.map((point) => typeof point === "string" ? point.trim() : "");
-  if (markScheme.length !== marks || markScheme.some((point) => !point)) {
-    throw retryableError("نموذج التصحيح لا يوزع نقطة مستقلة لكل درجة.");
-  }
+  const markScheme = normalizeModelMarkScheme(alternative.markScheme, marks);
   if (["سياقي", "حسابي", "بيانات", "استقصائي"].includes(alternative.questionForm) && !alternative.stimulus.trim()) {
     throw retryableError("أحد الأسئلة السياقية لا يحتوي متنًا أو بيانات كافية.");
   }
