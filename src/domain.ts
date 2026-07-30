@@ -15,6 +15,9 @@ import type {
   SpecValidation,
 } from "./types.js";
 
+export const MIN_LESSON_TOPICS = 2;
+export const MAX_LESSON_TOPICS = 5;
+
 export const MARKS_BY_TYPE: Readonly<Record<keyof QuestionCounts, number>> = {
   mcq: 1,
   short: 2,
@@ -40,6 +43,7 @@ export function createEmptyDraft(now = new Date()): ExamDraft {
     unitId: "",
     lessonIds: [],
     outcomeIds: [],
+    lessonTopics: ["", ""],
     topic: "",
     sourceReferences: [],
     title: "",
@@ -80,6 +84,45 @@ export function applyOfficialShortTestTemplate(draft: ExamDraft): ExamDraft {
   return draft;
 }
 
+
+export function normalizeLessonTopics(values: readonly string[]): string[] {
+  return values.map((value) => value.trim()).filter(Boolean);
+}
+
+function lessonTopicKey(value: string): string {
+  return value
+    .normalize("NFKC")
+    .replace(/[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]/g, "")
+    .replace(/ـ/g, "")
+    .replace(/[أإآٱ]/g, "ا")
+    .replace(/ى/g, "ي")
+    .replace(/ؤ/g, "و")
+    .replace(/ئ/g, "ي")
+    .replace(/ة/g, "ه")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+export function syncDraftTopicFromLessons(draft: ExamDraft): string {
+  const lessons = normalizeLessonTopics(draft.lessonTopics);
+  draft.topic = lessons.join("، ");
+  return draft.topic;
+}
+
+function uniqueLessonTopics(values: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of normalizeLessonTopics(values)) {
+    const key = lessonTopicKey(value);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    result.push(value);
+  }
+  return result;
+}
+
 export function computeMarks(counts: QuestionCounts): number {
   return (
     counts.mcq * MARKS_BY_TYPE.mcq +
@@ -99,8 +142,20 @@ export function validateExamSetup(draft: ExamDraft): SpecValidation {
 
   if (draft.grade === null) issues.push({ field: "grade", message: "اختر الصف الدراسي." });
   if (!draft.subjectId) issues.push({ field: "subject", message: "اختر المادة." });
-  if (!draft.topic.trim()) issues.push({ field: "topic", message: "اكتب موضوع الاختبار أو اسم الدرس." });
+  const lessonTopics = normalizeLessonTopics(draft.lessonTopics);
+  const uniqueLessons = uniqueLessonTopics(draft.lessonTopics);
+  if (lessonTopics.length < MIN_LESSON_TOPICS || lessonTopics.length > MAX_LESSON_TOPICS) {
+    issues.push({ field: "lessons", message: `أدخل من ${MIN_LESSON_TOPICS} إلى ${MAX_LESSON_TOPICS} دروس داخلة في الاختبار.` });
+  } else if (uniqueLessons.length !== lessonTopics.length) {
+    issues.push({ field: "lessons", message: "لا تكرر الدرس نفسه داخل الاختبار." });
+  }
+  if (!draft.topic.trim()) issues.push({ field: "topic", message: "أدخل الدروس الداخلة في الاختبار." });
   if (draft.sourceReferences.length === 0) issues.push({ field: "sources", message: "لم يرتبط الاختبار بأي صفحة من المصادر المفهرسة." });
+  for (const lesson of uniqueLessons) {
+    if (!draft.sourceReferences.some((reference) => lessonTopicKey(reference.lessonTopic ?? "") === lessonTopicKey(lesson))) {
+      issues.push({ field: "sources", message: `لم يرتبط درس «${lesson}» بأي صفحة من المصدر.` });
+    }
+  }
   if (!draft.title.trim()) issues.push({ field: "title", message: "أدخل عنوان الاختبار." });
   if (!draft.examDate) issues.push({ field: "date", message: "اختر تاريخ الاختبار." });
   if (draft.durationMinutes < 10) issues.push({ field: "duration", message: "الزمن يجب ألا يقل عن 10 دقائق." });
@@ -179,8 +234,11 @@ function outcomeLabel(level: CognitiveLevel, topic: string): string {
 }
 
 export function buildPlan(draft: ExamDraft): PlanItem[] {
-  const topic = draft.topic.trim();
-  if (!topic) throw new Error("تعذر بناء الخطة دون موضوع واضح.");
+  const lessons = uniqueLessonTopics(draft.lessonTopics);
+  if (lessons.length < MIN_LESSON_TOPICS || lessons.length > MAX_LESSON_TOPICS) {
+    throw new Error(`تعذر بناء الخطة: يجب إدخال ${MIN_LESSON_TOPICS}-${MAX_LESSON_TOPICS} دروس مختلفة.`);
+  }
+  syncDraftTopicFromLessons(draft);
   if (!draft.sourceReferences.length) throw new Error("تعذر بناء الخطة دون مقاطع مصدر مرتبطة.");
   const officialSpec = getOfficialShortTestSpec(draft.grade);
   const entries = officialSpec
@@ -190,15 +248,36 @@ export function buildPlan(draft: ExamDraft): PlanItem[] {
       level: cognitiveCycle(draft.difficulty)[index % cognitiveCycle(draft.difficulty).length] ?? "معرفة",
     }));
 
+  const referencesByLesson = new Map<string, ExamDraft["sourceReferences"]>();
+  for (const lesson of lessons) referencesByLesson.set(lessonTopicKey(lesson), []);
+  for (const reference of draft.sourceReferences) {
+    const key = lessonTopicKey(reference.lessonTopic ?? "");
+    const bucket = referencesByLesson.get(key);
+    if (bucket) bucket.push(reference);
+  }
+  for (const lesson of lessons) {
+    if (!(referencesByLesson.get(lessonTopicKey(lesson))?.length)) {
+      throw new Error(`تعذر بناء الخطة لأن درس «${lesson}» غير مرتبط بمصدر مفهرس.`);
+    }
+  }
+
+  const referenceOffsets = new Map<string, number>();
   return entries.map((entry, index) => {
-    const reference = draft.sourceReferences[index % draft.sourceReferences.length];
-    if (!reference) throw new Error("تعذر ربط مفردة الخطة بمصدر مفهرس.");
+    const lessonIndex = index % lessons.length;
+    const lesson = lessons[lessonIndex];
+    if (!lesson) throw new Error("تعذر توزيع مفردات الخطة على الدروس.");
+    const key = lessonTopicKey(lesson);
+    const lessonReferences = referencesByLesson.get(key) ?? [];
+    const offset = referenceOffsets.get(key) ?? 0;
+    const reference = lessonReferences[offset % lessonReferences.length];
+    if (!reference) throw new Error(`تعذر ربط درس «${lesson}» بمقطع مصدر.`);
+    referenceOffsets.set(key, offset + 1);
     return {
       id: `plan-${index + 1}`,
-      lessonId: `topic-${index + 1}`,
-      lessonLabel: topic,
-      outcomeId: `topic-outcome-${index + 1}`,
-      outcomeLabel: outcomeLabel(entry.level, topic),
+      lessonId: `lesson-${lessonIndex + 1}`,
+      lessonLabel: lesson,
+      outcomeId: `lesson-${lessonIndex + 1}-outcome-${index + 1}`,
+      outcomeLabel: outcomeLabel(entry.level, lesson),
       cognitiveLevel: entry.level,
       questionType: entry.type,
       marks: entry.marks,

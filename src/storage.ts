@@ -43,6 +43,7 @@ function normalizeSourceReferences(value: unknown): ExamSourceReference[] {
       score: item.score,
     };
     if (typeof item.context === "string" && item.context.trim()) reference.context = item.context;
+    if (typeof item.lessonTopic === "string" && item.lessonTopic.trim()) reference.lessonTopic = item.lessonTopic.trim();
     return [reference];
   });
 }
@@ -62,6 +63,9 @@ export function normalizeExamDraft(value: unknown): ExamDraft | null {
     unitId: typeof candidate.unitId === "string" ? candidate.unitId : "",
     lessonIds: Array.isArray(candidate.lessonIds) ? candidate.lessonIds.filter((item): item is string => typeof item === "string") : [],
     outcomeIds: Array.isArray(candidate.outcomeIds) ? candidate.outcomeIds.filter((item): item is string => typeof item === "string") : [],
+    lessonTopics: Array.isArray(candidate.lessonTopics)
+      ? candidate.lessonTopics.filter((item): item is string => typeof item === "string").slice(0, 5)
+      : (typeof candidate.topic === "string" && candidate.topic.trim() ? [candidate.topic.trim(), ""] : ["", ""]),
     topic: typeof candidate.topic === "string" ? candidate.topic : "",
     sourceReferences: normalizeSourceReferences(candidate.sourceReferences),
     counts: {
@@ -81,14 +85,17 @@ export function normalizeExamDraft(value: unknown): ExamDraft | null {
   const requiresPolicyMigration = Boolean(officialSpec && candidatePolicyId !== SCIENCE_ASSESSMENT_POLICY_ID);
   if (requiresPolicyMigration) applyOfficialShortTestTemplate(draft);
 
-  if (!draft.topic.trim() || draft.sourceReferences.length === 0) {
+  if (draft.lessonTopics.length < 2) draft.lessonTopics = [...draft.lessonTopics, ...Array.from({ length: 2 - draft.lessonTopics.length }, () => "")];
+  draft.topic = draft.lessonTopics.map((item) => item.trim()).filter(Boolean).join("، ");
+
+  if (draft.lessonTopics.filter((item) => item.trim()).length < 2 || draft.sourceReferences.length === 0) {
     draft.currentStep = 1;
     draft.plan = [];
     draft.selectedProposalByPlanItem = {};
     draft.generationVersion = "";
     draft.generationModel = "";
     draft.generatedAt = "";
-  } else if (draft.currentStep >= 3 && draft.generationVersion !== "source-grounded-policy-ai-2") {
+  } else if (draft.currentStep >= 3 && draft.generationVersion !== "source-grounded-policy-ai-3-multi-lessons-batched") {
     draft.currentStep = 2;
     draft.plan = [];
     draft.selectedProposalByPlanItem = {};

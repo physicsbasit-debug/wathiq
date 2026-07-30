@@ -10,7 +10,8 @@ import type { OwnerSession } from "./central-source-store.js";
 import type { WathiqRuntimeConfig } from "./runtime-config.js";
 import { SCIENCE_ASSESSMENT_POLICY_ID } from "./assessment-policy.js";
 
-export const SOURCE_GENERATION_VERSION = "source-grounded-policy-ai-2";
+export const SOURCE_GENERATION_VERSION = "source-grounded-policy-ai-3-multi-lessons-batched";
+export const GENERATION_BATCH_SIZE = 2;
 
 export interface QuestionGenerationReference {
   id: string;
@@ -27,16 +28,19 @@ export interface QuestionGenerationItem {
   cognitiveLevel: CognitiveLevel;
   marks: number;
   sourceReferenceId: string;
+  lessonLabel: string;
 }
 
 export interface QuestionGenerationRequest {
   assessmentType: "اختبار قصير رسمي";
   assessmentPolicyId: string;
   topic: string;
+  lessons: string[];
   grade: number;
   subject: string;
   difficulty: Difficulty;
   references: QuestionGenerationReference[];
+  officialPlanItems: QuestionGenerationItem[];
   items: QuestionGenerationItem[];
 }
 
@@ -147,16 +151,43 @@ export function parseQuestionGenerationResponse(
   };
 }
 
+export function splitQuestionGenerationBatches<T>(items: readonly T[], batchSize = GENERATION_BATCH_SIZE): T[][] {
+  if (!Number.isInteger(batchSize) || batchSize < 1) throw new Error("حجم دفعة التوليد غير صالح.");
+  const batches: T[][] = [];
+  for (let index = 0; index < items.length; index += batchSize) {
+    batches.push(items.slice(index, index + batchSize));
+  }
+  return batches;
+}
+
+function generationItem(item: PlanItem): QuestionGenerationItem {
+  if (!item.sourceReferenceId) throw new Error("إحدى مفردات الخطة غير مرتبطة بصفحة مصدر.");
+  return {
+    planItemId: item.id,
+    questionType: item.questionType,
+    cognitiveLevel: item.cognitiveLevel,
+    marks: item.marks,
+    sourceReferenceId: item.sourceReferenceId,
+    lessonLabel: item.lessonLabel,
+  };
+}
+
 export function buildQuestionGenerationRequest(
   topic: string,
+  lessons: readonly string[],
   grade: number,
   subject: string,
   difficulty: Difficulty,
   references: ExamSourceReference[],
-  plan: PlanItem[],
+  requestedPlan: PlanItem[],
+  officialPlan: PlanItem[] = requestedPlan,
 ): QuestionGenerationRequest {
+  const normalizedLessons = lessons.map((lesson) => lesson.trim()).filter(Boolean);
+  if (normalizedLessons.length < 2 || normalizedLessons.length > 5) {
+    throw new Error("يجب أن يحتوي الاختبار على درسين إلى خمسة دروس.");
+  }
   const referenceById = new Map(references.map((reference) => [reference.id, reference]));
-  const usedReferenceIds = new Set(plan.map((item) => item.sourceReferenceId).filter((id): id is string => Boolean(id)));
+  const usedReferenceIds = new Set(requestedPlan.map((item) => item.sourceReferenceId).filter((id): id is string => Boolean(id)));
   const requestReferences = [...usedReferenceIds].map((referenceId) => {
     const reference = referenceById.get(referenceId);
     if (!reference) throw new Error("تعذر العثور على مرجع إحدى مفردات الخطة.");
@@ -169,25 +200,17 @@ export function buildQuestionGenerationRequest(
       content: (reference.context ?? reference.excerpt).trim(),
     };
   });
-  const items = plan.map((item) => {
-    if (!item.sourceReferenceId) throw new Error("إحدى مفردات الخطة غير مرتبطة بصفحة مصدر.");
-    return {
-      planItemId: item.id,
-      questionType: item.questionType,
-      cognitiveLevel: item.cognitiveLevel,
-      marks: item.marks,
-      sourceReferenceId: item.sourceReferenceId,
-    };
-  });
   return {
     assessmentType: "اختبار قصير رسمي",
     assessmentPolicyId: SCIENCE_ASSESSMENT_POLICY_ID,
     topic: topic.trim(),
+    lessons: normalizedLessons,
     grade,
     subject,
     difficulty,
     references: requestReferences,
-    items,
+    officialPlanItems: officialPlan.map(generationItem),
+    items: requestedPlan.map(generationItem),
   };
 }
 
@@ -228,7 +251,7 @@ export class QuestionGenerationService {
   async generate(request: QuestionGenerationRequest): Promise<QuestionGenerationResponse> {
     const session = await this.sessionProvider();
     const controller = new AbortController();
-    const timeout = globalThis.setTimeout(() => controller.abort(), 120_000);
+    const timeout = globalThis.setTimeout(() => controller.abort(), 68_000);
     try {
       const response = await this.fetcher(this.endpoint, {
         method: "POST",
@@ -252,7 +275,7 @@ export class QuestionGenerationService {
       return parseQuestionGenerationResponse(payload, request.items);
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
-        throw new Error("تأخر مولد الأسئلة أكثر من 90 ثانية. أعد المحاولة.");
+        throw new Error("تأخرت دفعة توليد الأسئلة أكثر من 65 ثانية. أعد المحاولة؛ لن تُفقد الدفعات المكتملة.");
       }
       throw error;
     } finally {

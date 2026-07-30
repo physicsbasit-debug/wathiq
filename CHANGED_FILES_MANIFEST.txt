@@ -1,11 +1,19 @@
-Wathiq Phase 1-B Fix 1 — Gemini provider
-
-Upload these files to the repository root, preserving folders.
-Branch: fix/phase-1b-gemini-provider
-Commit: fix: use Gemini for source-grounded question generation
-
-Important after merge:
-1) Add GEMINI_API_KEY to Supabase Edge Function secrets.
-2) Optional: GEMINI_MODEL=gemini-2.5-flash
-3) Redeploy generate-source-questions.
-4) Do not add OPENAI_API_KEY.
+README.md
+GITHUB_UPLOAD_INSTRUCTIONS.md
+package.json
+src/types.ts
+src/domain.ts
+src/storage.ts
+src/app.ts
+src/question-generation.ts
+src/styles.css
+supabase/functions/generate-source-questions/index.ts
+tests/domain.test.mjs
+tests/phase-1-a-simple-source-brief.test.mjs
+tests/phase-1-b-files.test.mjs
+tests/question-generation.test.mjs
+tests/storage-draft.test.mjs
+tests/phase-1-b3-files.test.mjs
+docs/PHASE_1_B_DEPLOYMENT.md
+docs/PHASE_1_B3_MULTI_LESSONS_BATCHED_GENERATION.md
+docs/PHASE_1_B3_TEST_REPORT.md

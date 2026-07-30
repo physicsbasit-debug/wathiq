@@ -3,8 +3,12 @@ import {
   applyOfficialShortTestTemplate,
   buildPlan,
   createEmptyDraft,
+  MAX_LESSON_TOPICS,
+  MIN_LESSON_TOPICS,
+  normalizeLessonTopics,
   isPlanComplete,
   selectedProposal,
+  syncDraftTopicFromLessons,
   validateExamSetup,
 } from "./domain.js";
 import { clearDraft, loadDraft, loadProfile, loadSources, saveDraft, saveProfile, saveSources } from "./storage.js";
@@ -24,6 +28,7 @@ import {
   buildQuestionGenerationRequest,
   QuestionGenerationService,
   SOURCE_GENERATION_VERSION,
+  splitQuestionGenerationBatches,
 } from "./question-generation.js";
 import {
   ASSESSMENT_ITEM_WRITING_RULES,
@@ -385,11 +390,15 @@ function renderContentStep(): string {
   );
   const references = state.draft.sourceReferences;
   return `
-    <div class="section-intro"><h2>ما موضوع الاختبار؟</h2><p>ثلاثة حقول فقط. يطابق واثق الموضوع مع الصفحات المفهرسة عند الانتقال للخطوة التالية.</p></div>
+    <div class="section-intro"><h2>ما الدروس الداخلة في الاختبار؟</h2><p>الاختبار القصير الرسمي يغطي من درسين إلى خمسة دروس. يبحث واثق عن صفحات كل درس بصورة مستقلة.</p></div>
     <div class="form-grid two-columns">
       <label class="field"><span>الصف</span><select id="grade-select"><option value="">اختر الصف</option>${[5, 6, 7, 8, 9, 10].map((grade) => `<option value="${grade}" ${state.draft.grade === grade ? "selected" : ""}>الصف ${grade}</option>`).join("")}</select></label>
       <label class="field"><span>المادة</span><select id="subject-select" ${availableSubjects.length === 0 ? "disabled" : ""}><option value="">اختر المادة</option>${availableSubjects.map((item) => `<option value="${item.id}" ${state.draft.subjectId === item.id ? "selected" : ""}>${item.label}</option>`).join("")}</select></label>
-      <label class="field full"><span>موضوع الاختبار أو اسم الدرس</span><input id="topic-input" type="text" value="${escapeHtml(state.draft.topic)}" placeholder="مثال: الشحنة الكهربائية" autocomplete="off"/><small>اكتب عبارة قصيرة وواضحة، ولا تحتاج إلى تحديد الوحدة أو أرقام الصفحات.</small></label>
+      <section class="field full lesson-topics-field" aria-labelledby="lesson-topics-label">
+        <div class="lesson-topics-head"><div><span id="lesson-topics-label">الدروس الداخلة في الاختبار</span><small>أدخل رقم الدرس واسمه كما يظهران في الكتاب، مثل: 1-1 الضغط.</small></div><b id="lesson-topic-count">${normalizeLessonTopics(state.draft.lessonTopics).length}/${MAX_LESSON_TOPICS}</b></div>
+        <div class="lesson-topic-list">${renderLessonTopicRows()}</div>
+        <button type="button" class="secondary-btn lesson-add-btn" data-action="add-lesson" ${state.draft.lessonTopics.length >= MAX_LESSON_TOPICS ? "disabled" : ""}>${icon("plus")} إضافة درس</button>
+      </section>
     </div>
 
     <section class="source-match-card ${references.length ? "ready" : ""}">
@@ -397,27 +406,42 @@ function renderContentStep(): string {
         <span class="source-match-label">المصادر المتاحة</span>
         <h3>${state.draft.grade !== null && state.draft.subjectId ? `${eligibleSources.length} مصدر مفهرس مطابق للصف والمادة` : "اختر الصف والمادة أولًا"}</h3>
         <p>${escapeHtml(state.sourceRetrievalMessage || (references.length
-          ? `تم ربط الموضوع بـ ${references.length} مقطعًا من ${new Set(references.map((reference) => reference.sourceId)).size} مصدر.`
-          : "سيبحث واثق في نص الصفحات عند الضغط على التالي."))}</p>
+          ? `تم ربط الدروس بـ ${references.length} مقطعًا من ${new Set(references.map((reference) => reference.sourceId)).size} مصدر.`
+          : "سيبحث واثق عن صفحات كل درس عند الضغط على التالي."))}</p>
       </div>
-      ${references.length ? `<div class="source-reference-list">${references.slice(0, 4).map(renderSourceReference).join("")}</div>` : ""}
+      ${references.length ? `<div class="source-reference-list">${references.map(renderSourceReference).join("")}</div>` : ""}
     </section>
 
     ${renderWizardFooter(1, !state.sourceRetrievalBusy)}
   `;
 }
 
+function renderLessonTopicRows(): string {
+  return state.draft.lessonTopics.map((lesson, index) => `
+    <div class="lesson-topic-row">
+      <span class="lesson-topic-number">${index + 1}</span>
+      <input data-lesson-topic-index="${index}" type="text" value="${escapeHtml(lesson)}" placeholder="مثال: 1-${index + 1} اسم الدرس" autocomplete="off" aria-label="الدرس ${index + 1}"/>
+      <button type="button" class="lesson-remove-btn" data-action="remove-lesson" data-lesson-index="${index}" ${state.draft.lessonTopics.length <= MIN_LESSON_TOPICS ? "disabled" : ""} aria-label="حذف الدرس ${index + 1}">حذف</button>
+    </div>`).join("");
+}
+
 function renderSourceReference(reference: ExamDraft["sourceReferences"][number]): string {
   const pages = reference.pageFrom === reference.pageTo ? `ص ${reference.pageFrom}` : `ص ${reference.pageFrom}-${reference.pageTo}`;
-  return `<article class="source-reference-item"><div><strong>${escapeHtml(reference.sourceTitle)}</strong><span>${escapeHtml(reference.sourceKind)} · ${pages}</span></div><p>${escapeHtml(reference.excerpt)}</p></article>`;
+  const lesson = reference.lessonTopic ? `<b class="reference-lesson-badge">${escapeHtml(reference.lessonTopic)}</b>` : "";
+  return `<article class="source-reference-item"><div><strong>${escapeHtml(reference.sourceTitle)}</strong><span>${escapeHtml(reference.sourceKind)} · ${pages}</span>${lesson}</div><p>${escapeHtml(reference.excerpt)}</p></article>`;
 }
 
 function renderSourceContextSummary(): string {
   const references = state.draft.sourceReferences;
   if (!references.length) return "";
-  return `<section class="compact-source-summary"><div><span>مرجع الموضوع</span><strong>${references.length} مقاطع مرتبطة</strong></div><div class="compact-source-chips">${references.slice(0, 3).map((reference) => {
+  const primaryByLesson = new Map<string, ExamDraft["sourceReferences"][number]>();
+  for (const reference of references) {
+    const lesson = reference.lessonTopic ?? "درس غير محدد";
+    if (!primaryByLesson.has(lesson)) primaryByLesson.set(lesson, reference);
+  }
+  return `<section class="compact-source-summary"><div><span>مراجع الدروس</span><strong>${primaryByLesson.size} دروس مرتبطة</strong></div><div class="compact-source-chips">${[...primaryByLesson.entries()].map(([lesson, reference]) => {
     const pages = reference.pageFrom === reference.pageTo ? `ص ${reference.pageFrom}` : `ص ${reference.pageFrom}-${reference.pageTo}`;
-    return `<span>${escapeHtml(reference.sourceTitle)} · ${pages}</span>`;
+    return `<span>${escapeHtml(lesson)} · ${pages}</span>`;
   }).join("")}</div></section>`;
 }
 
@@ -498,7 +522,7 @@ function renderPlanStep(): string {
   const selectedCount = Object.keys(state.draft.selectedProposalByPlanItem).length;
   const generationLabel = state.draft.generationModel
     ? `تم التوليد عبر ${state.draft.generationModel} في ${formatArabicDate(state.draft.generatedAt.slice(0, 10))}.`
-    : "تم إنشاء الأسئلة من المقاطع المرتبطة بالموضوع.";
+    : "تم إنشاء الأسئلة من المقاطع المرتبطة بالدروس.";
   return `
     <div class="section-intro inline"><div><h2>اختر سؤالًا واحدًا لكل مفردة</h2><p>${escapeHtml(state.questionGenerationMessage || generationLabel)} راجع الصياغة والإجابة ودليل المصدر قبل الاختيار.</p></div><span class="progress-pill">${selectedCount} من ${state.draft.plan.length}</span></div>
     <div class="plan-stack">${state.draft.plan.map((item, index) => renderPlanItem(item, index)).join("")}</div>
@@ -560,7 +584,7 @@ function renderReviewStep(): string {
         <footer class="paper-footer">- 1 -</footer>
       </section>
       <aside class="review-panel">
-        <div class="final-check"><h3>حالة المسودة</h3>${checkRow("ارتباط الموضوع بالمصدر", state.draft.sourceReferences.length > 0)}${checkRow("مجموع الدرجات", true)}${checkRow("اختيار مفردات الخطة", isPlanComplete(state.draft))}${checkRow("توليد الأسئلة من المصدر", groundedGeneration)}</div>
+        <div class="final-check"><h3>حالة المسودة</h3>${checkRow("ارتباط الدروس بالمصدر", state.draft.sourceReferences.length > 0)}${checkRow("مجموع الدرجات", true)}${checkRow("اختيار مفردات الخطة", isPlanComplete(state.draft))}${checkRow("توليد الأسئلة من المصدر", groundedGeneration)}</div>
         <div class="review-summary"><span>الدرجة</span><strong>${state.draft.totalMarks}</strong><span>الأسئلة</span><strong>${state.draft.plan.length}</strong><span>المواصفة</span><strong>معتمدة</strong></div>
         ${renderAnswerKey(selected)}
         <button class="primary-btn full" data-action="save-now">${icon("save")} حفظ المسودة</button>
@@ -992,6 +1016,27 @@ function bindEvents(): void {
 }
 
 function handleAction(action: string, element: HTMLElement): void {
+  if (action === "add-lesson") {
+    if (state.draft.lessonTopics.length >= MAX_LESSON_TOPICS) return;
+    state.draft.lessonTopics.push("");
+    syncDraftTopicFromLessons(state.draft);
+    invalidateSourceAndGeneratedQuestions();
+    scheduleSave();
+    render();
+    window.setTimeout(() => document.querySelector<HTMLInputElement>(`[data-lesson-topic-index="${state.draft.lessonTopics.length - 1}"]`)?.focus(), 0);
+    return;
+  }
+  if (action === "remove-lesson") {
+    if (state.draft.lessonTopics.length <= MIN_LESSON_TOPICS) return;
+    const index = Number(element.dataset.lessonIndex);
+    if (!Number.isInteger(index) || index < 0 || index >= state.draft.lessonTopics.length) return;
+    state.draft.lessonTopics.splice(index, 1);
+    syncDraftTopicFromLessons(state.draft);
+    invalidateSourceAndGeneratedQuestions();
+    scheduleSave();
+    render();
+    return;
+  }
   if (action === "new-exam") {
     const profile = loadProfile();
     state.draft = createEmptyDraft();
@@ -1125,25 +1170,50 @@ function handleAction(action: string, element: HTMLElement): void {
   if (action === "index-source" && sourceId) { void extractAndIndexSource(sourceId); return; }
 }
 
+function mergeReusablePlan(expected: PlanItem[], existing: PlanItem[]): PlanItem[] {
+  const existingById = new Map(existing.map((item) => [item.id, item]));
+  return expected.map((item) => {
+    const saved = existingById.get(item.id);
+    const sameStructure = saved
+      && saved.lessonLabel === item.lessonLabel
+      && saved.questionType === item.questionType
+      && saved.cognitiveLevel === item.cognitiveLevel
+      && saved.marks === item.marks
+      && saved.sourceReferenceId === item.sourceReferenceId;
+    return sameStructure ? { ...item, proposals: saved.proposals } : item;
+  });
+}
+
+function replacePlanItems(plan: PlanItem[], replacements: PlanItem[]): PlanItem[] {
+  const replacementById = new Map(replacements.map((item) => [item.id, item]));
+  return plan.map((item) => replacementById.get(item.id) ?? item);
+}
+
 async function nextStep(): Promise<void> {
   const step = state.draft.currentStep;
   if (step === 1) {
-    if (state.draft.grade === null || !state.draft.subjectId || !state.draft.topic.trim()) {
-      return showToast("اختر الصف والمادة واكتب موضوع الاختبار.");
+    const lessons = normalizeLessonTopics(state.draft.lessonTopics);
+    if (state.draft.grade === null || !state.draft.subjectId || lessons.length < MIN_LESSON_TOPICS || lessons.length > MAX_LESSON_TOPICS) {
+      return showToast(`اختر الصف والمادة وأدخل من ${MIN_LESSON_TOPICS} إلى ${MAX_LESSON_TOPICS} دروس.`);
     }
+    syncDraftTopicFromLessons(state.draft);
     const matched = await prepareSourceContext();
     if (!matched) return;
     if (!state.draft.title) {
       const subject = SUBJECTS.find((item) => item.id === state.draft.subjectId)?.label ?? "العلوم";
-      state.draft.title = `اختبار قصير في ${state.draft.topic.trim()} - ${subject}`;
+      state.draft.title = `اختبار قصير في ${lessons.join(" و")} - ${subject}`;
     }
     return setStep(2);
   }
   if (step === 2) {
     const validation = validateExamSetup(state.draft);
     if (!validation.valid) return showToast("اضبط البيانات المشار إليها قبل المتابعة.");
-    state.draft.plan = buildPlan(state.draft);
-    state.draft.selectedProposalByPlanItem = {};
+    const expectedPlan = buildPlan(state.draft);
+    state.draft.plan = mergeReusablePlan(expectedPlan, state.draft.plan);
+    const validPlanIds = new Set(state.draft.plan.map((item) => item.id));
+    state.draft.selectedProposalByPlanItem = Object.fromEntries(
+      Object.entries(state.draft.selectedProposalByPlanItem).filter(([planItemId]) => validPlanIds.has(planItemId)),
+    );
     const generated = await generateQuestionsForPlan(state.draft.plan);
     if (!generated) return;
     return setStep(3);
@@ -1167,35 +1237,54 @@ async function generateQuestionsForPlan(plan: PlanItem[]): Promise<boolean> {
     return false;
   }
   const subject = SUBJECTS.find((item) => item.id === state.draft.subjectId)?.label ?? state.draft.subjectId;
+  const pendingItems = plan.filter((item) => item.proposals.length !== 3);
+  if (!pendingItems.length) {
+    state.questionGenerationMessage = `اكتملت ${plan.length} مفردات وحُفظت؛ يمكنك الانتقال إلى الاختيار.`;
+    return true;
+  }
+  const batches = splitQuestionGenerationBatches(pendingItems);
+  let completedCount = plan.length - pendingItems.length;
   state.questionGenerationBusy = true;
-  state.questionGenerationMessage = `جارٍ إنشاء ${plan.length} سؤالًا من صفحات المصدر مع ثلاثة بدائل لكل سؤال…`;
   render();
   try {
-    const request = buildQuestionGenerationRequest(
-      state.draft.topic,
-      state.draft.grade,
-      subject,
-      state.draft.difficulty,
-      state.draft.sourceReferences,
-      plan,
-    );
-    const response = await questionGenerationService.generate(request);
-    state.draft.plan = applyGeneratedQuestions(plan, response);
+    for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
+      const batch = batches[batchIndex];
+      if (!batch) continue;
+      state.questionGenerationMessage = `جارٍ إنشاء الدفعة ${batchIndex + 1} من ${batches.length}؛ اكتمل ${completedCount} من ${plan.length} مفردات…`;
+      render();
+      const request = buildQuestionGenerationRequest(
+        state.draft.topic,
+        state.draft.lessonTopics,
+        state.draft.grade,
+        subject,
+        state.draft.difficulty,
+        state.draft.sourceReferences,
+        batch,
+        state.draft.plan,
+      );
+      const response = await questionGenerationService.generate(request);
+      const replacements = applyGeneratedQuestions(batch, response);
+      state.draft.plan = replacePlanItems(state.draft.plan, replacements);
+      state.draft.generationVersion = SOURCE_GENERATION_VERSION;
+      state.draft.generationModel = response.model;
+      state.draft.generatedAt = response.generatedAt;
+      completedCount += batch.length;
+      scheduleSave();
+    }
     state.draft.selectedProposalByPlanItem = {};
-    state.draft.generationVersion = SOURCE_GENERATION_VERSION;
-    state.draft.generationModel = response.model;
-    state.draft.generatedAt = response.generatedAt;
     state.questionGenerationBusy = false;
-    state.questionGenerationMessage = `تم إنشاء ${state.draft.plan.length} سؤالًا موثقًا؛ اختر البديل الأنسب لكل مفردة.`;
+    state.questionGenerationMessage = `تم إنشاء ${state.draft.plan.length} مفردات موثقة على دفعات؛ اختر البديل الأنسب لكل مفردة.`;
     scheduleSave();
+    render();
     return true;
   } catch (error) {
     state.questionGenerationBusy = false;
-    const message = error instanceof Error ? error.message : "تعذر إنشاء الأسئلة من المصدر.";
-    invalidateGeneratedQuestions();
-    state.questionGenerationMessage = message;
+    const completed = state.draft.plan.filter((item) => item.proposals.length === 3).length;
+    const detail = error instanceof Error ? error.message : "تعذر إنشاء الأسئلة من المصدر.";
+    state.questionGenerationMessage = `${detail} تم الاحتفاظ بـ ${completed} من ${state.draft.plan.length} مفردات مكتملة؛ اضغط التالي لإكمال الباقي فقط.`;
+    scheduleSave();
     render();
-    showToast(message);
+    showToast(detail);
     return false;
   }
 }
@@ -1213,11 +1302,13 @@ async function regeneratePlanItem(item: PlanItem): Promise<void> {
   try {
     const request = buildQuestionGenerationRequest(
       state.draft.topic,
+      state.draft.lessonTopics,
       state.draft.grade,
       subject,
       state.draft.difficulty,
       state.draft.sourceReferences,
       [item],
+      state.draft.plan,
     );
     const response = await questionGenerationService.generate(request);
     const [replacement] = applyGeneratedQuestions([item], response);
@@ -1247,6 +1338,14 @@ async function prepareSourceContext(): Promise<boolean> {
     showToast(state.sourceRetrievalMessage);
     return false;
   }
+  const lessons = normalizeLessonTopics(state.draft.lessonTopics);
+  if (lessons.length < MIN_LESSON_TOPICS || lessons.length > MAX_LESSON_TOPICS) {
+    state.sourceRetrievalMessage = `أدخل من ${MIN_LESSON_TOPICS} إلى ${MAX_LESSON_TOPICS} دروس قبل البحث في المصادر.`;
+    render();
+    showToast(state.sourceRetrievalMessage);
+    return false;
+  }
+  syncDraftTopicFromLessons(state.draft);
   const eligible = state.sources.filter((source) =>
     source.grade === state.draft.grade &&
     source.subjectId === state.draft.subjectId &&
@@ -1263,7 +1362,7 @@ async function prepareSourceContext(): Promise<boolean> {
 
   invalidateGeneratedQuestions();
   state.sourceRetrievalBusy = true;
-  state.sourceRetrievalMessage = "جارٍ مطابقة الموضوع مع صفحات المصادر…";
+  state.sourceRetrievalMessage = `جارٍ مطابقة ${lessons.length} دروس مع صفحات المصادر…`;
   render();
   try {
     const chunkGroups = await Promise.all(eligible.map(async (source) => ({
@@ -1273,17 +1372,32 @@ async function prepareSourceContext(): Promise<boolean> {
     const candidates: SourceChunkCandidate[] = chunkGroups.flatMap(({ source, chunks }) =>
       chunks.map((chunk) => ({ source, chunk })),
     );
-    const result = rankSourceChunks(state.draft.topic, candidates, 6);
-    state.draft.sourceReferences = result.references;
-    state.sourceRetrievalBusy = false;
-    if (!result.references.length) {
-      state.sourceRetrievalMessage = "لم يجد واثق تطابقًا واضحًا للموضوع داخل الصفحات المفهرسة. جرّب اسمًا أقصر أو مصطلحًا واردًا في الكتاب.";
+    const lessonResults = lessons.map((lesson, lessonIndex) => {
+      const result = rankSourceChunks(lesson, candidates, 2);
+      return {
+        lesson,
+        references: result.references.map((reference) => ({
+          ...reference,
+          id: `${reference.id}:lesson-${lessonIndex + 1}`,
+          lessonTopic: lesson,
+        })),
+      };
+    });
+    const missingLessons = lessonResults.filter((result) => result.references.length === 0).map((result) => result.lesson);
+    if (missingLessons.length) {
+      state.draft.sourceReferences = [];
+      state.sourceRetrievalBusy = false;
+      state.sourceRetrievalMessage = `لم يجد واثق صفحات واضحة للدروس: ${missingLessons.join("، ")}. اكتب رقم الدرس واسمه كما يردان في الكتاب.`;
       render();
-      showToast("لم يُعثر على صفحات مطابقة للموضوع.");
+      showToast("بعض الدروس لم ترتبط بصفحات من المصدر.");
       return false;
     }
-    state.sourceRetrievalMessage = `تم العثور على ${result.references.length} مقطعًا مناسبًا من ${result.matchedSourceCount} مصدر.`;
+    state.draft.sourceReferences = lessonResults.flatMap((result) => result.references);
+    state.sourceRetrievalBusy = false;
+    const matchedSources = new Set(state.draft.sourceReferences.map((reference) => reference.sourceId)).size;
+    state.sourceRetrievalMessage = `تم ربط ${lessons.length} دروس بـ ${state.draft.sourceReferences.length} مقاطع من ${matchedSources} مصدر.`;
     scheduleSave();
+    render();
     return true;
   } catch (error) {
     state.sourceRetrievalBusy = false;
@@ -1301,6 +1415,7 @@ function bindContentStep(): void {
     state.draft.grade = gradeSelect.value ? Number(gradeSelect.value) : null;
     applyOfficialShortTestTemplate(state.draft);
     state.draft.subjectId = "";
+    state.draft.lessonTopics = ["", ""];
     state.draft.topic = "";
     invalidateSourceAndGeneratedQuestions();
     scheduleSave();
@@ -1315,10 +1430,17 @@ function bindContentStep(): void {
     render();
   });
 
-  document.querySelector<HTMLInputElement>("#topic-input")?.addEventListener("input", (event) => {
-    state.draft.topic = (event.target as HTMLInputElement).value;
-    invalidateSourceAndGeneratedQuestions();
-    scheduleSave();
+  document.querySelectorAll<HTMLInputElement>("[data-lesson-topic-index]").forEach((input) => {
+    input.addEventListener("input", () => {
+      const index = Number(input.dataset.lessonTopicIndex);
+      if (!Number.isInteger(index) || index < 0 || index >= state.draft.lessonTopics.length) return;
+      state.draft.lessonTopics[index] = input.value;
+      syncDraftTopicFromLessons(state.draft);
+      invalidateSourceAndGeneratedQuestions();
+      const count = document.querySelector<HTMLElement>("#lesson-topic-count");
+      if (count) count.textContent = `${normalizeLessonTopics(state.draft.lessonTopics).length}/${MAX_LESSON_TOPICS}`;
+      scheduleSave();
+    });
   });
 }
 
