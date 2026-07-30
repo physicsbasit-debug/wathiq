@@ -79,6 +79,14 @@ async function loadEdgeHelpers() {
 }
 
 const { helpers, sandbox } = await loadEdgeHelpers();
+function noVisual() {
+  return {
+    type: "none", title: "", altText: "", xAxisLabel: "", xAxisUnit: "",
+    yAxisLabel: "", yAxisUnit: "", xMin: 0, xMax: 1, yMin: 0, yMax: 1,
+    points: [], labels: [], values: [], components: [], annotations: [],
+  };
+}
+
 
 test("يجمع generateContent جميع أجزاء النص ثم يحلل JSON ذي المفتاح items", () => {
   const result = helpers.findGenerateContentOutputText({
@@ -120,11 +128,12 @@ test("يفرض المخطط ويثبت الدليل عبر معرف مقطع م�
   const references = [{ id: "R-1", content: "مقدمة. ينشأ الضغط عندما تؤثر قوة في مساحة محددة. نهاية." }];
   const catalog = helpers.buildEvidenceCatalog(references);
   const evidenceIds = catalog.fragments.map((fragment) => fragment.id);
-  const schema = helpers.generationSchema([{ planItemId: "P-1" }], evidenceIds);
+  const schema = helpers.generationSchema([{ planItemId: "P-1", visualTarget: "none" }], evidenceIds);
   assert.deepEqual(Array.from(schema.required), ["items"]);
   assert.deepEqual(Array.from(schema.properties.items.items.properties.planItemId.enum), ["P-1"]);
   assert.equal(Array.from(schema.properties.items.items.properties.alternatives.items.properties.sourceEvidenceId.enum).join("|"), Array.from(evidenceIds).join("|"));
   assert.equal(schema.properties.items.minItems, 1);
+  assert.ok(schema.properties.items.items.properties.visual);
   assert.equal(schema.properties.items.maxItems, 1);
 
   const request = {
@@ -133,6 +142,7 @@ test("يفرض المخطط ويثبت الدليل عبر معرف مقطع م�
       questionType: "اختيار من متعدد",
       marks: 1,
       styleTarget: "مفهومي",
+      visualTarget: "none",
       sourceReferenceId: "R-1",
     }],
     references,
@@ -140,6 +150,7 @@ test("يفرض المخطط ويثبت الدليل عبر معرف مقطع م�
   const payload = {
     items: [{
       planItemId: "P-1",
+      visual: noVisual(),
       alternatives: Array.from({ length: 3 }, (_, index) => ({
         stimulus: "",
         text: `ما العبارة الصحيحة عن الضغط؟ ${index + 1}`,
@@ -191,6 +202,7 @@ test("ينفذ مسار generateContent كاملًا باستجابة منظمة
       sourceReferenceId: "R-1",
       lessonLabel: "1-1 الضغط",
       styleTarget: "مفهومي",
+      visualTarget: "none",
     }],
     items: [{
       planItemId: "P-1",
@@ -201,11 +213,13 @@ test("ينفذ مسار generateContent كاملًا باستجابة منظمة
       sourceReferenceId: "R-1",
       lessonLabel: "1-1 الضغط",
       styleTarget: "مفهومي",
+      visualTarget: "none",
     }],
   };
   const generated = {
     items: [{
       planItemId: "P-1",
+      visual: noVisual(),
       alternatives: Array.from({ length: 3 }, (_, index) => ({
         stimulus: "",
         text: `ما العبارة الصحيحة عن الضغط؟ ${index + 1}`,
@@ -264,12 +278,13 @@ test("يرفض معرف دليل تابعًا لمرجع آخر بدل قبول 
   const catalog = helpers.buildEvidenceCatalog(references);
   const wrongEvidence = catalog.fragments.find((fragment) => fragment.referenceId === "R-2");
   const request = {
-    items: [{ planItemId: "P-1", questionType: "إجابة قصيرة", marks: 1, styleTarget: "مفهومي", sourceReferenceId: "R-1" }],
+    items: [{ planItemId: "P-1", questionType: "إجابة قصيرة", marks: 1, styleTarget: "مفهومي", visualTarget: "none", sourceReferenceId: "R-1" }],
     references,
   };
   const payload = {
     items: [{
       planItemId: "P-1",
+      visual: noVisual(),
       alternatives: Array.from({ length: 3 }, () => ({
         stimulus: "",
         text: "عرّف الضغط.",
@@ -294,12 +309,13 @@ test("يضيف الخادم نص الدليل نفسه ويضع علامة مر�
   const references = [{ id: "R-1", content: "الضغط هو القوة المؤثرة عموديًا على وحدة المساحة." }];
   const catalog = helpers.buildEvidenceCatalog(references);
   const request = {
-    items: [{ planItemId: "P-1", questionType: "إجابة قصيرة", marks: 1, styleTarget: "مفهومي", sourceReferenceId: "R-1" }],
+    items: [{ planItemId: "P-1", questionType: "إجابة قصيرة", marks: 1, styleTarget: "مفهومي", visualTarget: "none", sourceReferenceId: "R-1" }],
     references,
   };
   const payload = {
     items: [{
       planItemId: "P-1",
+      visual: noVisual(),
       alternatives: Array.from({ length: 3 }, () => ({
         stimulus: "",
         text: "اكتب اسم كوكب بعيد.",
@@ -317,4 +333,25 @@ test("يضيف الخادم نص الدليل نفسه ويضع علامة مر�
   const hydrated = helpers.validateAndHydrateGeneratedPayload(payload, request, catalog);
   assert.equal(hydrated.items[0].alternatives[0].sourceSupport, catalog.fragments[0].text);
   assert.equal(hydrated.items[0].alternatives[0].needsReview, true);
+});
+
+
+test("يتحقق من مواصفة رسم خطي منظمة ويرفض نقطة خارج المحاور", () => {
+  const refs = [{ id: "R-1", content: "تزداد المسافة بمرور الزمن." }];
+  const catalog = helpers.buildEvidenceCatalog(refs);
+  const request = { items: [{ planItemId: "P-V", questionType: "إجابة قصيرة", marks: 1, styleTarget: "بيانات", visualTarget: "line_graph", sourceReferenceId: "R-1" }], references: refs };
+  const visual = {
+    type: "line_graph", title: "المسافة والزمن", altText: "رسم خطي للمسافة مع الزمن",
+    xAxisLabel: "الزمن", xAxisUnit: "s", yAxisLabel: "المسافة", yAxisUnit: "m",
+    xMin: 0, xMax: 3, yMin: 0, yMax: 6,
+    points: [{ x: 0, y: 0, label: "" }, { x: 1, y: 2, label: "" }, { x: 3, y: 6, label: "" }],
+    labels: [], values: [], components: [], annotations: [],
+  };
+  const payload = { items: [{ planItemId: "P-V", visual, alternatives: Array.from({ length: 3 }, () => ({
+    stimulus: "يوضح الرسم العلاقة بين المسافة والزمن.", text: "حدد المسافة عند 1 s.", options: [], answer: "2 m", rationale: "تقرأ القيمة من الرسم.", markScheme: ["قراءة 2 m."], questionForm: "بيانات", workingRequired: false, sourceEvidenceId: catalog.fragments[0].id, needsReview: false,
+  })) }] };
+  const result = helpers.validateAndHydrateGeneratedPayload(payload, request, catalog);
+  assert.equal(result.items[0].visual.type, "line_graph");
+  payload.items[0].visual.points[1].y = 20;
+  assert.throws(() => helpers.validateAndHydrateGeneratedPayload(payload, request, catalog), /خارج نطاق المحاور/);
 });

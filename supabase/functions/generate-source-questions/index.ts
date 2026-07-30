@@ -24,6 +24,33 @@ type Difficulty = "سهل" | "متوسط" | "متقدم";
 type ItemDifficulty = "منخفض" | "متوسط" | "مرتفع";
 type AssessmentType = "اختبار قصير رسمي" | "امتحان نهاية الفصل الدراسي";
 type QuestionDesignPattern = "مفهومي" | "سياقي" | "حسابي" | "بيانات" | "استقصائي" | "مقارنة";
+type QuestionVisualType = "none" | "line_graph" | "bar_chart" | "pressure_diagram" | "circuit_diagram";
+type CircuitComponent = "battery" | "switch_open" | "switch_closed" | "lamp" | "resistor" | "ammeter" | "voltmeter";
+
+interface QuestionVisualPoint {
+  x: number;
+  y: number;
+  label: string;
+}
+
+interface QuestionVisualSpec {
+  type: QuestionVisualType;
+  title: string;
+  altText: string;
+  xAxisLabel: string;
+  xAxisUnit: string;
+  yAxisLabel: string;
+  yAxisUnit: string;
+  xMin: number;
+  xMax: number;
+  yMin: number;
+  yMax: number;
+  points: QuestionVisualPoint[];
+  labels: string[];
+  values: number[];
+  components: CircuitComponent[];
+  annotations: string[];
+}
 
 interface GenerationReference {
   id: string;
@@ -43,6 +70,7 @@ interface GenerationItem {
   sourceReferenceId: string;
   lessonLabel: string;
   styleTarget: QuestionDesignPattern;
+  visualTarget: QuestionVisualType;
 }
 
 interface GenerationRequest {
@@ -73,6 +101,7 @@ interface ModelGeneratedAlternative {
 
 interface ModelGeneratedItem {
   planItemId: string;
+  visual: QuestionVisualSpec;
   alternatives: ModelGeneratedAlternative[];
 }
 
@@ -95,6 +124,7 @@ interface GeneratedAlternative {
 
 interface GeneratedItem {
   planItemId: string;
+  visual: QuestionVisualSpec;
   alternatives: GeneratedAlternative[];
 }
 
@@ -335,6 +365,12 @@ function buildSystemInstructions(): string {
     "عند styleTarget=بيانات: قدّم جدولًا نصيًا صغيرًا أو نتائج قياس أو وصف رسم بياني في stimulus، ثم اطلب قراءة نمط أو حسابًا أو استنتاجًا من البيانات.",
     "عند styleTarget=استقصائي: قدّم تجربة أو إجراءً مختصرًا، ثم اسأل عن متغير أو ضبط أو موثوقية أو تفسير نتائج أو تحسين طريقة.",
     "عند styleTarget=مقارنة: حدّد بوضوح الجانبين المطلوبين، واجعل كل فرق أو تشابه نقطة تصحيح مستقلة.",
+    "لكل مفردة يوجد visualTarget محدد مسبقًا. أنشئ مواصفة visual واحدة مشتركة بين البدائل الثلاثة وطابق type حرفيًا مع visualTarget.",
+    "إذا كان visualTarget=none فأعد مواصفة فارغة: type=none، النصوص فارغة، المحاور 0 إلى 1، وجميع المصفوفات فارغة.",
+    "إذا كان visualTarget=line_graph أو bar_chart فأنشئ بيانات صغيرة وواضحة ومحاور معنونة بوحدات المنهج. يجوز استخدام بيانات افتراضية داخل السؤال بشرط أن تكون معطاة صراحة ومتسقة علميًا مع دليل المصدر، وألا تُعرض كحقيقة من الكتاب.",
+    "إذا كان visualTarget=pressure_diagram فاستخدم values=[مستوى السائل النسبي، عمق الجسم النسبي] بين 0 و1، وlabels=[اسم السائل، اسم الجسم].",
+    "إذا كان visualTarget=circuit_diagram فاستخدم components من القيم المعتمدة فقط: battery, switch_open, switch_closed, lamp, resistor, ammeter, voltmeter، واجعل الدائرة تحتوي بطارية وحملًا واحدًا على الأقل.",
+    "لا تضع الإجابة داخل عنوان الرسم أو تسمياته، ولا تضف أسهمًا أو قيمًا تكشف الحل. الرسم تعليمي خطي ثنائي الأبعاد ومناسب للطباعة بالأبيض والأسود.",
     "مفردة الاختيار من متعدد درجتها واحدة وتقيس هدفًا واحدًا، ولها أربعة بدائل وإجابة صحيحة واحدة فقط.",
     "ابنِ مشتتات الاختيار من متعدد من أخطاء مفاهيمية أو عددية شائعة، واجعلها متجانسة في النوع والوحدة والطول، ولا تستخدم: جميع ما سبق، لا شيء مما سبق، أو الأول والثاني فقط.",
     "الإجابة القصيرة درجتها درجة أو درجتان، ويجب أن يتناسب مقدار الإجابة مع الدرجة وألا تطلب أكثر من نقاط التصحيح المحددة.",
@@ -386,6 +422,7 @@ function buildUserPrompt(request: GenerationRequest, evidenceCatalog: EvidenceCa
       difficultyLevel: item.difficultyLevel ?? null,
       marks: item.marks,
       styleTarget: item.styleTarget,
+      visualTarget: item.visualTarget,
     })),
     batchPlanItems: request.items.map((item) => ({
       ...item,
@@ -399,6 +436,7 @@ function buildUserPrompt(request: GenerationRequest, evidenceCatalog: EvidenceCa
       exactPlanItemIds: request.items.map((item) => item.planItemId),
       evidenceRule: "أعد sourceEvidenceId من allowedEvidenceIds الخاصة بالمفردة فقط.",
       styleRule: "اجعل questionForm مطابقًا حرفيًا لـ styleTarget، وmarkScheme بعدد يساوي marks.",
+      visualRule: "أعد visual مرة واحدة لكل مفردة، واجعل visual.type مطابقًا حرفيًا لـ visualTarget.",
     },
   });
 }
@@ -421,6 +459,47 @@ function generationSchema(requestedItems: GenerationItem[], evidenceIds: string[
               type: "string",
               enum: requestedIds,
               description: "المعرف المطابق حرفيًا لإحدى مفردات الدفعة.",
+            },
+            visual: {
+              type: "object",
+              description: "مواصفة رسم SVG تعليمية آمنة ومشتركة بين البدائل الثلاثة.",
+              properties: {
+                type: { type: "string", enum: ["none", "line_graph", "bar_chart", "pressure_diagram", "circuit_diagram"] },
+                title: { type: "string" },
+                altText: { type: "string" },
+                xAxisLabel: { type: "string" },
+                xAxisUnit: { type: "string" },
+                yAxisLabel: { type: "string" },
+                yAxisUnit: { type: "string" },
+                xMin: { type: "number" },
+                xMax: { type: "number" },
+                yMin: { type: "number" },
+                yMax: { type: "number" },
+                points: {
+                  type: "array",
+                  maxItems: 10,
+                  items: {
+                    type: "object",
+                    properties: {
+                      x: { type: "number" },
+                      y: { type: "number" },
+                      label: { type: "string" },
+                    },
+                    required: ["x", "y", "label"],
+                    additionalProperties: false,
+                  },
+                },
+                labels: { type: "array", maxItems: 10, items: { type: "string" } },
+                values: { type: "array", maxItems: 10, items: { type: "number" } },
+                components: {
+                  type: "array",
+                  maxItems: 7,
+                  items: { type: "string", enum: ["battery", "switch_open", "switch_closed", "lamp", "resistor", "ammeter", "voltmeter"] },
+                },
+                annotations: { type: "array", maxItems: 8, items: { type: "string" } },
+              },
+              required: ["type", "title", "altText", "xAxisLabel", "xAxisUnit", "yAxisLabel", "yAxisUnit", "xMin", "xMax", "yMin", "yMax", "points", "labels", "values", "components", "annotations"],
+              additionalProperties: false,
             },
             alternatives: {
               type: "array",
@@ -468,7 +547,7 @@ function generationSchema(requestedItems: GenerationItem[], evidenceIds: string[
               },
             },
           },
-          required: ["planItemId", "alternatives"],
+          required: ["planItemId", "visual", "alternatives"],
           additionalProperties: false,
         },
       },
@@ -547,6 +626,7 @@ function parseGenerationRequest(value: unknown): GenerationRequest {
       sourceReferenceId,
       lessonLabel,
       styleTarget: requireEnum(item.styleTarget, ["مفهومي", "سياقي", "حسابي", "بيانات", "استقصائي", "مقارنة"] as const, "نمط بناء السؤال غير صالح."),
+      visualTarget: requireEnum(item.visualTarget, ["none", "line_graph", "bar_chart", "pressure_diagram", "circuit_diagram"] as const, "نوع الرسم التعليمي غير صالح."),
     };
   };
 
@@ -575,6 +655,7 @@ function parseGenerationRequest(value: unknown): GenerationRequest {
       || official.marks !== item.marks
       || official.sourceReferenceId !== item.sourceReferenceId
       || official.styleTarget !== item.styleTarget
+      || official.visualTarget !== item.visualTarget
       || normalizeForEvidence(official.lessonLabel) !== normalizeForEvidence(item.lessonLabel)) {
       throw httpError("دفعة التوليد لا تطابق خطة الاختبار الرسمية.", 400);
     }
@@ -760,6 +841,7 @@ function validateAndHydrateGeneratedPayload(
     seen.add(generatedItem.planItemId);
     hydratedItems.push({
       planItemId: generatedItem.planItemId,
+      visual: validateQuestionVisualSpec(generatedItem.visual, requested.visualTarget),
       alternatives: generatedItem.alternatives.map((alternative) =>
         validateAndHydrateAlternative(
           alternative,
@@ -774,6 +856,98 @@ function validateAndHydrateGeneratedPayload(
   }
   if (seen.size !== requestedById.size) throw retryableError("مولد الأسئلة لم يُعد جميع مفردات الخطة.");
   return { items: hydratedItems };
+}
+
+const VISUAL_TYPES: readonly QuestionVisualType[] = ["none", "line_graph", "bar_chart", "pressure_diagram", "circuit_diagram"];
+const CIRCUIT_COMPONENTS: readonly CircuitComponent[] = ["battery", "switch_open", "switch_closed", "lamp", "resistor", "ammeter", "voltmeter"];
+
+function validateQuestionVisualSpec(value: unknown, expectedType: QuestionVisualType): QuestionVisualSpec {
+  const record = asRecord(value);
+  if (!record || typeof record.type !== "string" || !VISUAL_TYPES.includes(record.type as QuestionVisualType)) {
+    throw retryableError("مواصفة الرسم التعليمي غير صالحة.");
+  }
+  const type = record.type as QuestionVisualType;
+  if (type !== expectedType) throw retryableError("مولد الأسئلة لم يلتزم بنوع الرسم المطلوب.");
+  const text = (key: string, max: number): string => {
+    const raw = record[key];
+    if (typeof raw !== "string") throw retryableError("أحد حقول الرسم النصية غير صالح.");
+    const cleaned = raw.trim().slice(0, max);
+    if (/[<>]/.test(cleaned)) throw retryableError("تسميات الرسم تحتوي محارف غير مسموحة.");
+    return cleaned;
+  };
+  const number = (key: string, fallback = 0): number => {
+    const raw = record[key];
+    return typeof raw === "number" && Number.isFinite(raw) ? raw : fallback;
+  };
+  const textArray = (key: string, maxItems: number, maxLength: number): string[] => {
+    const raw = record[key];
+    if (!Array.isArray(raw)) throw retryableError("إحدى مصفوفات الرسم غير صالحة.");
+    return raw.map((entry) => {
+      if (typeof entry !== "string") throw retryableError("إحدى تسميات الرسم غير صالحة.");
+      const cleaned = entry.trim().slice(0, maxLength);
+      if (!cleaned || /[<>]/.test(cleaned)) throw retryableError("إحدى تسميات الرسم فارغة أو غير آمنة.");
+      return cleaned;
+    }).slice(0, maxItems);
+  };
+  const numberArray = (key: string, maxItems: number): number[] => {
+    const raw = record[key];
+    if (!Array.isArray(raw)) throw retryableError("إحدى مصفوفات قيم الرسم غير صالحة.");
+    return raw.map((entry) => {
+      if (typeof entry !== "number" || !Number.isFinite(entry)) throw retryableError("إحدى قيم الرسم غير رقمية.");
+      return entry;
+    }).slice(0, maxItems);
+  };
+  if (!Array.isArray(record.points)) throw retryableError("نقاط الرسم غير صالحة.");
+  const points = record.points.map((entry) => {
+    const point = asRecord(entry);
+    if (!point || typeof point.x !== "number" || !Number.isFinite(point.x) || typeof point.y !== "number" || !Number.isFinite(point.y) || typeof point.label !== "string") {
+      throw retryableError("إحدى نقاط الرسم غير صالحة.");
+    }
+    const label = point.label.trim().slice(0, 40);
+    if (/[<>]/.test(label)) throw retryableError("تسمية إحدى نقاط الرسم غير آمنة.");
+    return { x: point.x, y: point.y, label };
+  }).slice(0, 10);
+  if (!Array.isArray(record.components)) throw retryableError("مكونات الدائرة غير صالحة.");
+  const components = record.components.map((entry) => {
+    if (typeof entry !== "string" || !CIRCUIT_COMPONENTS.includes(entry as CircuitComponent)) {
+      throw retryableError("أحد مكونات الدائرة الكهربائية غير معتمد.");
+    }
+    return entry as CircuitComponent;
+  }).slice(0, 7);
+  const spec: QuestionVisualSpec = {
+    type,
+    title: text("title", 160),
+    altText: text("altText", 240),
+    xAxisLabel: text("xAxisLabel", 60),
+    xAxisUnit: text("xAxisUnit", 24),
+    yAxisLabel: text("yAxisLabel", 60),
+    yAxisUnit: text("yAxisUnit", 24),
+    xMin: number("xMin"),
+    xMax: number("xMax", 1),
+    yMin: number("yMin"),
+    yMax: number("yMax", 1),
+    points,
+    labels: textArray("labels", 10, 80),
+    values: numberArray("values", 10),
+    components,
+    annotations: textArray("annotations", 8, 100),
+  };
+  if (type === "none") return { ...spec, title: "", altText: "", xAxisLabel: "", xAxisUnit: "", yAxisLabel: "", yAxisUnit: "", xMin: 0, xMax: 1, yMin: 0, yMax: 1, points: [], labels: [], values: [], components: [], annotations: [] };
+  if (!spec.title || !spec.altText) throw retryableError("الرسم التعليمي يحتاج عنوانًا ووصفًا بديلًا.");
+  if (type === "line_graph") {
+    if (!spec.xAxisLabel || !spec.yAxisLabel || spec.xMax <= spec.xMin || spec.yMax <= spec.yMin || spec.points.length < 2) throw retryableError("الرسم الخطي غير مكتمل.");
+    if (spec.points.some((point) => point.x < spec.xMin || point.x > spec.xMax || point.y < spec.yMin || point.y > spec.yMax)) throw retryableError("إحدى نقاط الرسم خارج نطاق المحاور.");
+  } else if (type === "bar_chart") {
+    if (!spec.yAxisLabel || spec.yMax <= spec.yMin || spec.labels.length < 2 || spec.labels.length !== spec.values.length) throw retryableError("رسم الأعمدة غير مكتمل.");
+    if (spec.values.some((entry) => entry < spec.yMin || entry > spec.yMax)) throw retryableError("إحدى قيم الأعمدة خارج نطاق المحور.");
+  } else if (type === "pressure_diagram") {
+    const liquidLevel = spec.values[0];
+    const objectDepth = spec.values[1];
+    if (spec.labels.length < 2 || liquidLevel === undefined || objectDepth === undefined || liquidLevel < 0.25 || liquidLevel > 0.9 || objectDepth < 0 || objectDepth > 1) throw retryableError("مخطط الضغط غير مكتمل.");
+  } else if (type === "circuit_diagram") {
+    if (spec.components.length < 2 || !spec.components.includes("battery") || !spec.components.some((entry) => entry === "lamp" || entry === "resistor")) throw retryableError("الدائرة الكهربائية تحتاج بطارية وحملًا صالحًا.");
+  }
+  return spec;
 }
 
 function validateAndHydrateAlternative(

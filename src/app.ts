@@ -15,6 +15,7 @@ import {
 import { clearDraft, loadDraft, loadProfile, loadSources, saveDraft, saveProfile, saveSources } from "./storage.js";
 import type { ExamDraft, ExamTitleOption, ManagedSource, PlanItem, QuestionCounts, SourceDraft, SourceStatus, SourceExtractionResult, ViewName, WizardStep } from "./types.js";
 import { escapeHtml, formatArabicDate, icon } from "./ui.js";
+import { questionVisualTypeLabel, renderQuestionVisualSvg } from "./question-visual.js";
 import { buildSourceDrivePath, changeSourceStatus, createEmptySourceDraft, createManagedSource, findDuplicateContentSource, findDuplicateSource, sourceSubjectLabel, SOURCE_KINDS, SOURCE_SEMESTERS, validateSourceDraft } from "./source-domain.js";
 import { createRegistryBackup, mergeSourceRegistry, parseRegistryBackup } from "./source-registry.js";
 import { CentralSourceStore } from "./central-source-store.js";
@@ -556,6 +557,11 @@ function renderMarkScheme(points: string[] | undefined): string {
   return `<div class="proposal-mark-scheme"><strong>نقاط التصحيح (${points.length})</strong><ol>${points.map((point) => `<li>${escapeHtml(point)}</li>`).join("")}</ol></div>`;
 }
 
+function renderPlanVisual(item: PlanItem, compact = false): string {
+  if (!item.visual || item.visual.type === "none") return "";
+  return `<section class="plan-shared-visual ${compact ? "compact" : ""}"><div class="visual-heading"><strong>${escapeHtml(questionVisualTypeLabel(item.visual.type))}</strong><span>رسم آمن مولّد من مواصفة منظمة، لا صورة حرة.</span></div>${renderQuestionVisualSvg(item.visual)}</section>`;
+}
+
 function renderPlanItem(item: PlanItem, index: number): string {
   const chosen = state.draft.selectedProposalByPlanItem[item.id];
   const reference = state.draft.sourceReferences.find((entry) => entry.id === item.sourceReferenceId);
@@ -564,6 +570,7 @@ function renderPlanItem(item: PlanItem, index: number): string {
     : "مرجع غير محدد";
   return `<article class="plan-card">
     <header><div class="question-number">${index + 1}</div><div><h3>${item.questionType}</h3><p>${escapeHtml(item.lessonLabel)} · ${escapeHtml(sourceLabel)}</p></div><div class="plan-tags"><span>${item.cognitiveLevel}</span><span>${item.marks} ${item.marks === 1 ? "درجة" : "درجات"}</span></div></header>
+    ${renderPlanVisual(item)}
     <div class="proposal-grid">${item.proposals.map((proposal, proposalIndex) => `<label class="proposal-card ${chosen === proposal.id ? "selected" : ""}"><input type="radio" name="proposal-${item.id}" data-plan-id="${item.id}" value="${proposal.id}" ${chosen === proposal.id ? "checked" : ""}/><div class="proposal-top"><span>البديل ${proposalIndex + 1}</span><div class="proposal-badges">${proposal.questionForm ? `<b class="question-form-badge">${escapeHtml(proposal.questionForm)}</b>` : ""}${proposal.needsReview ? `<b class="review-needed-badge">يحتاج تدقيقًا أدق</b>` : ""}</div></div>${proposal.stimulus ? `<div class="proposal-stimulus">${escapeHtml(proposal.stimulus)}</div>` : ""}<p>${escapeHtml(proposal.text)}</p>${renderProposalOptions(proposal.options)}<details class="proposal-evidence"><summary>الإجابة ونموذج التصحيح ودليل المصدر</summary><p class="proposal-answer"><strong>الإجابة:</strong> ${escapeHtml(proposal.answer)}</p>${renderMarkScheme(proposal.markScheme)}${proposal.rationale ? `<p><strong>سبب الإجابة:</strong> ${escapeHtml(proposal.rationale)}</p>` : ""}${proposal.sourceSupport ? `<blockquote>${escapeHtml(proposal.sourceSupport)}</blockquote>` : ""}</details><span class="choose-label">${chosen === proposal.id ? `${icon("check")} تم الاختيار` : "اختر هذا السؤال"}</span></label>`).join("")}</div>
     <footer><button class="text-btn" data-regenerate="${item.id}" ${state.questionGenerationBusy ? "disabled" : ""}>${icon("spark")} توليد ثلاثة بدائل جديدة لهذه المفردة</button></footer>
   </article>`;
@@ -588,7 +595,7 @@ function renderPaperResponseArea(item: PlanItem, proposal: SelectedPaperItem["pr
 }
 
 function renderPaperPrompt(item: PlanItem, proposal: SelectedPaperItem["proposal"], label: string, subpart: boolean): string {
-  return `<div class="${subpart ? "paper-subpart" : "paper-question"}">${proposal.stimulus ? `<div class="paper-stimulus">${escapeHtml(proposal.stimulus)}</div>` : ""}<div class="paper-question-title"><b>${escapeHtml(label)}</b><span>${escapeHtml(proposal.text)}</span><strong>[${item.marks}]</strong></div>${renderPaperResponseArea(item, proposal)}</div>`;
+  return `<div class="${subpart ? "paper-subpart" : "paper-question"}">${renderPlanVisual(item, true)}${proposal.stimulus ? `<div class="paper-stimulus">${escapeHtml(proposal.stimulus)}</div>` : ""}<div class="paper-question-title"><b>${escapeHtml(label)}</b><span>${escapeHtml(proposal.text)}</span><strong>[${item.marks}]</strong></div>${renderPaperResponseArea(item, proposal)}</div>`;
 }
 
 function buildPaperLayout(selected: SelectedPaperItem[]): PaperLayout {
@@ -633,7 +640,7 @@ function renderAnswerKey(selected: SelectedPaperItem[], labels: Map<string, stri
     const reference = state.draft.sourceReferences.find((entry) => entry.id === item.sourceReferenceId);
     const pages = reference ? (reference.pageFrom === reference.pageTo ? `ص ${reference.pageFrom}` : `ص ${reference.pageFrom}-${reference.pageTo}`) : "مرجع غير محدد";
     const label = labels.get(item.id) ?? "؟";
-    return `<article><div class="answer-key-head"><strong>${escapeHtml(label)}) ${escapeHtml(proposal.answer)}</strong>${proposal.questionForm ? `<span>${escapeHtml(proposal.questionForm)}</span>` : ""}</div>${renderMarkScheme(proposal.markScheme)}${proposal.rationale ? `<p>${escapeHtml(proposal.rationale)}</p>` : ""}<small>${escapeHtml(reference?.sourceTitle ?? "المصدر")} · ${pages}</small>${proposal.sourceSupport ? `<blockquote>${escapeHtml(proposal.sourceSupport)}</blockquote>` : ""}</article>`;
+    return `<article><div class="answer-key-head"><strong>${escapeHtml(label)}) ${escapeHtml(proposal.answer)}</strong>${proposal.questionForm ? `<span>${escapeHtml(proposal.questionForm)}</span>` : ""}</div>${renderPlanVisual(item, true)}${renderMarkScheme(proposal.markScheme)}${proposal.rationale ? `<p>${escapeHtml(proposal.rationale)}</p>` : ""}<small>${escapeHtml(reference?.sourceTitle ?? "المصدر")} · ${pages}</small>${proposal.sourceSupport ? `<blockquote>${escapeHtml(proposal.sourceSupport)}</blockquote>` : ""}</article>`;
   }).join("")}</details>`;
 }
 
@@ -644,6 +651,7 @@ function renderReviewStep(): string {
     return proposal ? [{ item, proposal }] : [];
   });
   const groundedGeneration = state.draft.generationVersion === SOURCE_GENERATION_VERSION;
+  const visualItems = state.draft.plan.filter((item) => item.visual && item.visual.type !== "none");
   const paperLayout = buildPaperLayout(selected);
   return `
     <div class="review-layout">
@@ -655,7 +663,7 @@ function renderReviewStep(): string {
         <footer class="paper-footer">- 1 -</footer>
       </section>
       <aside class="review-panel">
-        <div class="final-check"><h3>حالة المسودة</h3>${checkRow("ارتباط الدروس بالمصدر", state.draft.sourceReferences.length > 0)}${checkRow("مجموع الدرجات", true)}${checkRow("اختيار مفردات الخطة", isPlanComplete(state.draft))}${checkRow("توليد الأسئلة من المصدر", groundedGeneration)}</div>
+        <div class="final-check"><h3>حالة المسودة</h3>${checkRow("ارتباط الدروس بالمصدر", state.draft.sourceReferences.length > 0)}${checkRow("مجموع الدرجات", true)}${checkRow("اختيار مفردات الخطة", isPlanComplete(state.draft))}${checkRow("توليد الأسئلة من المصدر", groundedGeneration)}${checkRow(`العناصر البصرية (${visualItems.length})`, true)}</div>
         <div class="review-summary"><span>الدرجة</span><strong>${state.draft.totalMarks}</strong><span>الأسئلة</span><strong>${state.draft.plan.length}</strong><span>المواصفة</span><strong>معتمدة</strong></div>
         ${renderAnswerKey(selected, paperLayout.labels)}
         <button class="primary-btn full" data-action="save-now">${icon("save")} حفظ المسودة</button>

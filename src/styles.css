@@ -1279,3 +1279,52 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
   .structured-question { break-inside: avoid; }
   .answer-key { break-before: page; }
 }
+
+/* Phase 1-C1: structured SVG visual question engine */
+.plan-shared-visual {
+  margin: 14px 0;
+  padding: 12px;
+  border: 1px solid #d6e0eb;
+  border-radius: 14px;
+  background: #fbfcfe;
+}
+.plan-shared-visual.compact {
+  margin: 8px 28px 12px;
+  padding: 8px;
+  background: #fff;
+  break-inside: avoid;
+}
+.visual-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.visual-heading strong { color: var(--navy-deep); font-size: 12px; }
+.visual-heading span { color: var(--muted); font-size: 10px; }
+.question-visual { margin: 0 auto; max-width: 680px; }
+.question-visual svg { display: block; width: 100%; height: auto; max-height: 360px; font-family: "Tahoma", "Arial", sans-serif; direction: ltr; }
+.question-visual figcaption { margin-top: 5px; color: #5a687a; font-size: 10px; line-height: 1.5; text-align: center; }
+.qv-title { font-size: 16px; font-weight: 800; fill: #172b45; direction: rtl; unicode-bidi: plaintext; }
+.qv-axis, .qv-component, .qv-wire, .qv-vessel, .qv-depth, .qv-surface { fill: none; stroke: #182536; stroke-width: 2; }
+.qv-grid { stroke: #d9dee5; stroke-width: 1; }
+.qv-tick, .qv-value, .qv-category, .qv-axis-label, .qv-point-label, .qv-annotation, .qv-liquid-label, .qv-symbol-label { fill: #26384e; font-size: 11px; }
+.qv-axis-label { font-size: 12px; font-weight: 700; direction: rtl; unicode-bidi: plaintext; }
+.qv-category, .qv-annotation, .qv-liquid-label, .qv-point-label { direction: rtl; unicode-bidi: plaintext; }
+.qv-line { fill: none; stroke: #122f54; stroke-width: 2.5; }
+.qv-point, .qv-node { fill: #fff; stroke: #122f54; stroke-width: 2; }
+.qv-bar { fill: #dbe4ef; stroke: #172b45; stroke-width: 1.5; }
+.qv-liquid { fill: #eef2f6; stroke: none; }
+.qv-object { fill: #fff; stroke: #172b45; stroke-width: 2; }
+.qv-object-label { fill: #172b45; font-size: 9px; direction: rtl; unicode-bidi: plaintext; }
+.qv-component-fill { fill: #fff; stroke: #182536; stroke-width: 2; }
+.qv-meter { fill: #182536; font-size: 18px; font-weight: 800; }
+
+@media (max-width: 720px) {
+  .visual-heading { display: grid; }
+  .plan-shared-visual.compact { margin-inline: 8px; }
+}
+
+@media print {
+  .plan-shared-visual { background: #fff; border-color: #888; padding: 6px; }
+  .visual-heading { display: none; }
+  .question-visual svg { max-height: 300px; }
+  .question-visual figcaption { color: #222; }
+  .qv-grid { stroke: #bbb; }
+  .qv-bar, .qv-liquid { fill: #eee; }
+}

@@ -10,6 +10,15 @@ import {
   splitQuestionGenerationBatches,
 } from "../dist/assets/question-generation.js";
 
+
+function noVisual() {
+  return {
+    type: "none", title: "", altText: "", xAxisLabel: "", xAxisUnit: "",
+    yAxisLabel: "", yAxisUnit: "", xMin: 0, xMax: 1, yMin: 0, yMax: 1,
+    points: [], labels: [], values: [], components: [], annotations: [],
+  };
+}
+
 function requestItems() {
   return [{
     planItemId: "plan-1",
@@ -19,6 +28,7 @@ function requestItems() {
     sourceReferenceId: "ref-1",
     lessonLabel: "1-1 الشحنة الكهربائية",
     styleTarget: "مفهومي",
+    visualTarget: "none",
   }];
 }
 
@@ -26,6 +36,7 @@ function validPayload() {
   return {
     items: [{
       planItemId: "plan-1",
+      visual: noVisual(),
       alternatives: [1, 2, 3].map((index) => ({
         stimulus: "",
         text: `ما العبارة الصحيحة عن الشحنة الكهربائية؟ ${index}`,
@@ -108,6 +119,7 @@ test("يبني طلب الدفعة من سياق المقطع الكامل وم�
   assert.equal(request.items[0].sourceReferenceId, "ref-1");
   assert.equal(request.items[0].lessonLabel, "1-1 الشحنة الكهربائية");
   assert.equal(request.items[0].styleTarget, "مفهومي");
+  assert.equal(request.items[0].visualTarget, "none");
   assert.equal(request.officialPlanItems.length, 2);
   assert.equal(request.assessmentType, "اختبار قصير رسمي");
   assert.equal(request.assessmentPolicyId, "oman-science-assessment-2025-2026");
@@ -125,11 +137,12 @@ test("يتحقق من ثلاثة بدائل ثم يربطها بخطة الاخ�
   const plan = [planItem("plan-1", "1-1 الشحنة الكهربائية", "ref-1")];
   const generated = applyGeneratedQuestions(plan, parsed);
   assert.equal(generated[0].proposals.length, 3);
+  assert.equal(generated[0].visual.type, "none");
   assert.equal(generated[0].proposals[0].options.length, 4);
   assert.equal(generated[0].proposals[0].answer, "خاصية فيزيائية");
   assert.equal(generated[0].proposals[0].questionForm, "مفهومي");
   assert.deepEqual(generated[0].proposals[0].markScheme, ["تحديد العبارة العلمية الصحيحة."]);
-  assert.equal(SOURCE_GENERATION_VERSION, "source-grounded-policy-ai-8-cambridge-style");
+  assert.equal(SOURCE_GENERATION_VERSION, "source-grounded-policy-ai-9-visual-svg");
   assert.equal(parsed.requestId, "WQ-TEST1234");
 });
 
@@ -280,4 +293,44 @@ test("يوزع مفردات الفيزياء على أنماط بناء متنو
   assert.deepEqual(request.items.map((item) => item.styleTarget), [
     "مفهومي", "بيانات", "مقارنة", "مفهومي", "بيانات", "حسابي",
   ]);
+});
+
+
+test("يختار رسومًا منظمة للأسئلة البيانية والضغط والدوائر", () => {
+  const base = {
+    lessonId: "lesson-visual", outcomeId: "outcome-visual", outcomeLabel: "تطبيق المفهوم",
+    proposals: [], questionType: "إجابة قصيرة", marks: 2, cognitiveLevel: "تطبيق",
+  };
+  const cases = [
+    { id: "v1", lessonLabel: "الضغط في السوائل", sourceReferenceId: "r1" },
+    { id: "v2", lessonLabel: "الدوائر الكهربائية", sourceReferenceId: "r2" },
+    { id: "v3", lessonLabel: "قراءة البيانات", sourceReferenceId: "r3", cognitiveLevel: "استدلال" },
+  ].map((item) => ({ ...base, ...item }));
+  const refs = [
+    { id: "r1", sourceId: "s", sourceTitle: "كتاب", sourceKind: "كتاب الطالب", pageFrom: 1, pageTo: 1, excerpt: "يتغير الضغط في السائل مع العمق.", score: 90 },
+    { id: "r2", sourceId: "s", sourceTitle: "كتاب", sourceKind: "كتاب الطالب", pageFrom: 2, pageTo: 2, excerpt: "تتكون الدائرة من بطارية ومصباح ومقاومة.", score: 90 },
+    { id: "r3", sourceId: "s", sourceTitle: "كتاب", sourceKind: "كتاب الطالب", pageFrom: 3, pageTo: 3, excerpt: "تعرض النتائج في رسم بياني.", score: 90 },
+  ];
+  const request = buildQuestionGenerationRequest("اختبار قصير رسمي", "موضوعان", ["الضغط في السوائل", "الدوائر الكهربائية"], 10, "الفيزياء", "متوسط", refs, cases.slice(0, 2), cases.slice(0, 2));
+  assert.deepEqual(request.items.map((item) => item.visualTarget), ["pressure_diagram", "circuit_diagram"]);
+});
+
+test("يفصل المفردات الثقيلة أو البصرية في دفعات مستقلة", () => {
+  const items = [
+    { id: 1, marks: 1, visualTarget: "none" },
+    { id: 2, marks: 1, visualTarget: "none" },
+    { id: 3, marks: 1, visualTarget: "line_graph" },
+    { id: 4, marks: 2, visualTarget: "none" },
+  ];
+  assert.deepEqual(splitQuestionGenerationBatches(items).map((batch) => batch.map((item) => item.id)), [[1, 2], [3], [4]]);
+});
+
+
+test("يفصل مفردات التطبيق البصرية المحتملة في طلبات مستقلة", () => {
+  const items = [
+    { id: 1, questionType: "اختيار من متعدد", cognitiveLevel: "معرفة", marks: 1 },
+    { id: 2, questionType: "اختيار من متعدد", cognitiveLevel: "تطبيق", marks: 1 },
+    { id: 3, questionType: "اختيار من متعدد", cognitiveLevel: "معرفة", marks: 1 },
+  ];
+  assert.deepEqual(splitQuestionGenerationBatches(items).map((batch) => batch.map((item) => item.id)), [[1], [2], [3]]);
 });
