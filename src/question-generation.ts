@@ -12,7 +12,7 @@ import type { OwnerSession } from "./central-source-store.js";
 import type { WathiqRuntimeConfig } from "./runtime-config.js";
 import { SCIENCE_ASSESSMENT_POLICY_ID } from "./assessment-policy.js";
 
-export const SOURCE_GENERATION_VERSION = "source-grounded-policy-ai-4-exam-type-date";
+export const SOURCE_GENERATION_VERSION = "source-grounded-policy-ai-5-gemini-response";
 export const GENERATION_BATCH_SIZE = 2;
 
 export interface QuestionGenerationReference {
@@ -65,6 +65,7 @@ export interface QuestionGenerationResponse {
   items: GeneratedQuestionItem[];
   model: string;
   generatedAt: string;
+  requestId: string;
 }
 
 type FetchLike = typeof fetch;
@@ -81,10 +82,15 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 function errorMessage(payload: unknown, fallback: string): string {
   const record = asRecord(payload);
   if (!record) return fallback;
+  let message = fallback;
   for (const key of ["error", "message", "detail"]) {
-    if (typeof record[key] === "string" && record[key]) return record[key] as string;
+    if (typeof record[key] === "string" && record[key]) {
+      message = record[key] as string;
+      break;
+    }
   }
-  return fallback;
+  const requestId = typeof record.requestId === "string" ? record.requestId.trim() : "";
+  return requestId ? `${message} رمز التتبع: ${requestId}` : message;
 }
 
 function parseAlternative(value: unknown, questionType: QuestionType): GeneratedAlternative {
@@ -151,6 +157,7 @@ export function parseQuestionGenerationResponse(
     generatedAt: typeof record.generatedAt === "string" && record.generatedAt.trim()
       ? record.generatedAt.trim()
       : new Date().toISOString(),
+    requestId: typeof record.requestId === "string" ? record.requestId.trim() : "",
   };
 }
 

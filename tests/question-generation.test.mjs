@@ -36,6 +36,7 @@ function validPayload() {
     }],
     model: "gemini-test",
     generatedAt: "2026-07-29T19:00:00.000Z",
+    requestId: "WQ-TEST1234",
   };
 }
 
@@ -120,7 +121,8 @@ test("يتحقق من ثلاثة بدائل ثم يربطها بخطة الاخ�
   assert.equal(generated[0].proposals.length, 3);
   assert.equal(generated[0].proposals[0].options.length, 4);
   assert.equal(generated[0].proposals[0].answer, "خاصية فيزيائية");
-  assert.equal(SOURCE_GENERATION_VERSION, "source-grounded-policy-ai-4-exam-type-date");
+  assert.equal(SOURCE_GENERATION_VERSION, "source-grounded-policy-ai-5-gemini-response");
+  assert.equal(parsed.requestId, "WQ-TEST1234");
 });
 
 test("يرفض سؤال اختيار من متعدد لا تطابق إجابته أحد البدائل", () => {
@@ -181,4 +183,49 @@ test("يرسل جلسة المالك والدرس والخطة الرسمية إ
   assert.deepEqual(sent.lessons, ["1-1 الشحنة الكهربائية", "1-2 التأثيرات الكهربائية"]);
   assert.equal(sent.officialPlanItems[0].lessonLabel, "1-1 الشحنة الكهربائية");
   assert.equal(response.items[0].alternatives.length, 3);
+});
+
+
+test("يعرض رمز تتبع Edge Function عند فشل دفعة التوليد", async () => {
+  const service = new QuestionGenerationService(
+    {
+      supabaseUrl: "https://project.supabase.co",
+      supabasePublishableKey: "publishable-key",
+      googleOAuthClientId: "",
+    },
+    async () => ({
+      accessToken: "owner-token",
+      refreshToken: "refresh",
+      expiresAt: Date.now() + 60_000,
+      userId: "owner",
+      email: "owner@example.com",
+    }),
+    async () => new Response(JSON.stringify({
+      error: "أعاد مولد الأسئلة JSON غير صالح أو مبتور.",
+      requestId: "WQ-A1B2C3D4",
+    }), { status: 502 }),
+  );
+  const items = requestItems();
+  await assert.rejects(
+    () => service.generate({
+      assessmentType: "اختبار قصير رسمي",
+      assessmentPolicyId: "oman-science-assessment-2025-2026",
+      topic: "1-1 الشحنة الكهربائية، 1-2 التأثيرات الكهربائية",
+      lessons: ["1-1 الشحنة الكهربائية", "1-2 التأثيرات الكهربائية"],
+      grade: 10,
+      subject: "الفيزياء",
+      difficulty: "متوسط",
+      references: [{
+        id: "ref-1",
+        sourceTitle: "كتاب الطالب",
+        sourceKind: "كتاب الطالب",
+        pageFrom: 17,
+        pageTo: 17,
+        content: "الشحنة الكهربائية خاصية فيزيائية للمادة",
+      }],
+      officialPlanItems: items,
+      items,
+    }),
+    /WQ-A1B2C3D4/,
+  );
 });

@@ -12,6 +12,7 @@ const MAX_REFERENCES = 6;
 const MAX_REFERENCE_CHARACTERS = 4_200;
 const MAX_TOTAL_REFERENCE_CHARACTERS = 24_000;
 const GEMINI_TIMEOUT_MS = 30_000;
+const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1/interactions";
 
 const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
@@ -75,27 +76,41 @@ interface GeneratedPayload {
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders(req) });
-  if (req.method !== "POST") return json(req, { error: "هذه الخدمة تقبل POST فقط." }, 405);
+  const requestId = createRequestId();
+  if (req.method !== "POST") return json(req, { error: "هذه الخدمة تقبل POST فقط.", requestId }, 405);
 
+  logStage(requestId, "request_received");
   try {
     await requireUser(req);
+    logStage(requestId, "authentication_passed");
     const request = parseGenerationRequest(await req.json());
-    const generated = await generateAndValidate(request);
+    logStage(requestId, "payload_validated", {
+      itemCount: request.items.length,
+      referenceCount: request.references.length,
+      lessonCount: request.lessons.length,
+    });
+    const generated = await generateAndValidate(request, requestId);
+    logStage(requestId, "response_sent", { itemCount: generated.items.length });
     return json(req, {
       items: generated.items,
       model: GEMINI_MODEL,
       generatedAt: new Date().toISOString(),
+      requestId,
     });
   } catch (error) {
-    return json(req, { error: errorMessage(error) }, errorStatus(error));
+    logStage(requestId, "request_failed", {
+      status: errorStatus(error),
+      message: errorMessage(error),
+    });
+    return json(req, { error: errorMessage(error), requestId }, errorStatus(error));
   }
 });
 
-async function generateAndValidate(request: GenerationRequest): Promise<GeneratedPayload> {
+async function generateAndValidate(request: GenerationRequest, requestId: string): Promise<GeneratedPayload> {
   let lastError: unknown = null;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     try {
-      const payload = await callGemini(request, attempt > 1);
+      const payload = await callGemini(request, attempt > 1, requestId, attempt);
       validateGeneratedPayload(payload, request);
       return payload;
     } catch (error) {
@@ -107,11 +122,23 @@ async function generateAndValidate(request: GenerationRequest): Promise<Generate
   throw lastError instanceof Error ? lastError : new Error("تعذر إنشاء أسئلة صالحة من المصدر.");
 }
 
-async function callGemini(request: GenerationRequest, repairAttempt: boolean): Promise<GeneratedPayload> {
+async function callGemini(
+  request: GenerationRequest,
+  repairAttempt: boolean,
+  requestId: string,
+  attempt: number,
+): Promise<GeneratedPayload> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
+  const startedAt = Date.now();
+  logStage(requestId, "gemini_request_started", {
+    attempt,
+    repairAttempt,
+    itemCount: request.items.length,
+    referenceCount: request.references.length,
+  });
   try {
-    const response = await fetch("https://generativelanguage.googleapis.com/v1/interactions", {
+    const response = await fetch(GEMINI_API_URL, {
       method: "POST",
       headers: {
         "x-goog-api-key": GEMINI_API_KEY,
@@ -124,7 +151,6 @@ async function callGemini(request: GenerationRequest, repairAttempt: boolean): P
         store: false,
         generation_config: {
           max_output_tokens: 7_000,
-          temperature: 0.2,
         },
         response_format: {
           type: "text",
@@ -137,12 +163,28 @@ async function callGemini(request: GenerationRequest, repairAttempt: boolean): P
     const payload = await response.json() as unknown;
     if (!response.ok) {
       const message = geminiError(payload, `تعذر الاتصال بمولد الأسئلة (${response.status}).`);
+      logStage(requestId, "gemini_http_failed", {
+        attempt,
+        status: response.status,
+        durationMs: Date.now() - startedAt,
+      });
       if (response.status >= 500 || response.status === 429) throw retryableError(message);
       throw httpError(message, 400);
     }
-    const outputText = findGeminiOutputText(payload);
-    if (!outputText) throw retryableError("لم يُرجع مولد الأسئلة بيانات قابلة للقراءة.");
-    return parseGeneratedJson(outputText);
+    assertCompletedGeminiInteraction(payload);
+    const output = findGeminiOutputText(payload);
+    logStage(requestId, "gemini_response_received", {
+      attempt,
+      interactionStatus: geminiInteractionStatus(payload),
+      textPartCount: output.partCount,
+      outputCharacters: output.text.length,
+      durationMs: Date.now() - startedAt,
+    });
+    if (!output.text) {
+      const stepError = geminiModelOutputError(payload);
+      throw retryableError(stepError || "لم يُرجع مولد الأسئلة بيانات قابلة للقراءة.");
+    }
+    return parseGeneratedJson(output.text);
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
       throw retryableError("تأخر مولد الأسئلة أكثر من المدة المسموحة.");
@@ -154,21 +196,61 @@ async function callGemini(request: GenerationRequest, repairAttempt: boolean): P
 }
 
 function parseGeneratedJson(outputText: string): GeneratedPayload {
-  let text = outputText.trim();
-  if (text.startsWith("```")) {
-    text = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+  const original = outputText.replace(/^\uFEFF/, "").trim();
+  const candidates = [original, stripMarkdownFence(original)];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    try {
+      return JSON.parse(candidate) as GeneratedPayload;
+    } catch {
+      // ننتقل إلى استخراج أول كائن JSON متوازن بدل قص النص عند آخر قوس عشوائي.
+    }
   }
-  const firstBrace = text.indexOf("{");
-  const lastBrace = text.lastIndexOf("}");
-  if (firstBrace > 0 || lastBrace >= 0 && lastBrace < text.length - 1) {
-    if (firstBrace < 0 || lastBrace <= firstBrace) throw retryableError("أعاد مولد الأسئلة JSON غير مكتمل.");
-    text = text.slice(firstBrace, lastBrace + 1);
+
+  const extracted = extractFirstJsonObject(stripMarkdownFence(original));
+  if (!extracted) {
+    if (original.includes("{")) throw retryableError("أعاد مولد الأسئلة JSON غير مكتمل.");
+    throw retryableError("أعاد مولد الأسئلة JSON غير صالح أو مبتور.");
   }
   try {
-    return JSON.parse(text) as GeneratedPayload;
+    return JSON.parse(extracted) as GeneratedPayload;
   } catch {
     throw retryableError("أعاد مولد الأسئلة JSON غير صالح أو مبتور.");
   }
+}
+
+function stripMarkdownFence(value: string): string {
+  const text = value.trim();
+  if (!text.startsWith("```")) return text;
+  return text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "").trim();
+}
+
+function extractFirstJsonObject(value: string): string | null {
+  const start = value.indexOf("{");
+  if (start < 0) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < value.length; index += 1) {
+    const character = value[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === '"') inString = false;
+      continue;
+    }
+    if (character === '"') {
+      inString = true;
+      continue;
+    }
+    if (character === "{") depth += 1;
+    else if (character === "}") {
+      depth -= 1;
+      if (depth === 0) return value.slice(start, index + 1);
+      if (depth < 0) return null;
+    }
+  }
+  return null;
 }
 
 function buildSystemInstructions(): string {
@@ -511,20 +593,55 @@ function normalizeForEvidence(value: string): string {
     .toLowerCase();
 }
 
-function findGeminiOutputText(payload: unknown): string {
+function findGeminiOutputText(payload: unknown): { text: string; partCount: number } {
   const record = asRecord(payload);
-  if (!record) return "";
-  if (typeof record.output_text === "string" && record.output_text.trim()) return record.output_text;
-  if (!Array.isArray(record.steps)) return "";
+  if (!record) return { text: "", partCount: 0 };
+  if (typeof record.output_text === "string" && record.output_text.trim()) {
+    return { text: record.output_text, partCount: 1 };
+  }
+  if (!Array.isArray(record.steps)) return { text: "", partCount: 0 };
+  const textParts: string[] = [];
   for (const step of record.steps) {
     const stepRecord = asRecord(step);
     if (stepRecord?.type !== "model_output" || !Array.isArray(stepRecord.content)) continue;
     for (const content of stepRecord.content) {
       const contentRecord = asRecord(content);
-      if (contentRecord?.type === "text" && typeof contentRecord.text === "string" && contentRecord.text.trim()) {
-        return contentRecord.text;
+      if (contentRecord?.type === "text" && typeof contentRecord.text === "string" && contentRecord.text) {
+        textParts.push(contentRecord.text);
       }
     }
+  }
+  return { text: textParts.join(""), partCount: textParts.length };
+}
+
+function geminiInteractionStatus(payload: unknown): string {
+  const record = asRecord(payload);
+  return typeof record?.status === "string" ? record.status : "unknown";
+}
+
+function assertCompletedGeminiInteraction(payload: unknown): void {
+  const status = geminiInteractionStatus(payload);
+  if (status === "completed" || status === "unknown") return;
+  const statusMessages: Record<string, string> = {
+    incomplete: "أوقف Gemini الاستجابة قبل اكتمال JSON.",
+    budget_exceeded: "تجاوز Gemini ميزانية الرموز قبل اكتمال الاستجابة.",
+    failed: "فشل Gemini في إكمال الاستجابة.",
+    cancelled: "ألغى Gemini الاستجابة قبل اكتمالها.",
+    requires_action: "أعاد Gemini استجابة تتطلب إجراء غير متوقع.",
+    in_progress: "ما زالت استجابة Gemini قيد التنفيذ.",
+    queued: "تأخرت استجابة Gemini في قائمة الانتظار.",
+  };
+  throw retryableError(statusMessages[status] || `أعاد Gemini حالة غير مكتملة: ${status}.`);
+}
+
+function geminiModelOutputError(payload: unknown): string {
+  const record = asRecord(payload);
+  if (!record || !Array.isArray(record.steps)) return "";
+  for (const step of record.steps) {
+    const stepRecord = asRecord(step);
+    if (stepRecord?.type !== "model_output") continue;
+    const error = asRecord(stepRecord.error);
+    if (typeof error?.message === "string" && error.message.trim()) return error.message.trim();
   }
   return "";
 }
@@ -587,6 +704,14 @@ function corsHeaders(req: Request): HeadersInit {
 
 function json(req: Request, payload: unknown, status = 200): Response {
   return Response.json(payload, { status, headers: corsHeaders(req) });
+}
+
+function createRequestId(): string {
+  return `WQ-${crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase()}`;
+}
+
+function logStage(requestId: string, stage: string, details: Record<string, unknown> = {}): void {
+  console.log(JSON.stringify({ requestId, stage, ...details }));
 }
 
 function requiredEnv(name: string): string {

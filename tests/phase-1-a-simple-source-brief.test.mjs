@@ -31,5 +31,5 @@ test("لا يدعي اعتمادًا علميًا نهائيًا ويحفظ مر
   assert.match(domain, /sourceReferenceId/);
   assert.match(domain, /MIN_LESSON_TOPICS\s*=\s*2/);
   assert.match(domain, /MAX_LESSON_TOPICS\s*=\s*5/);
-  assert.equal(pkg.version, "0.0.30");
+  assert.equal(pkg.version, "0.0.31");
 });
