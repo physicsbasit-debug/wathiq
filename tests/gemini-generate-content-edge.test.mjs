@@ -31,7 +31,8 @@ async function loadEdgeHelpers() {
     inspectGenerateContentCompletion,
     parseGeneratedJson,
     generationSchema,
-    validateGeneratedPayload,
+    buildEvidenceCatalog,
+    validateAndHydrateGeneratedPayload,
     generateAndValidate,
   };\n`;
 
@@ -115,21 +116,24 @@ test("يتعامل مع finishReason قبل قبول استجابة Gemini", () 
   );
 });
 
-test("يفرض المخطط والبنية الدلالية الكاملة لمفردة مولدة", () => {
-  const schema = helpers.generationSchema([{ planItemId: "P-1" }]);
+test("يفرض المخطط ويثبت الدليل عبر معرف مقطع موثوق", () => {
+  const references = [{ id: "R-1", content: "مقدمة. ينشأ الضغط عندما تؤثر قوة في مساحة محددة. نهاية." }];
+  const catalog = helpers.buildEvidenceCatalog(references);
+  const evidenceIds = catalog.fragments.map((fragment) => fragment.id);
+  const schema = helpers.generationSchema([{ planItemId: "P-1" }], evidenceIds);
   assert.deepEqual(Array.from(schema.required), ["items"]);
   assert.deepEqual(Array.from(schema.properties.items.items.properties.planItemId.enum), ["P-1"]);
+  assert.equal(Array.from(schema.properties.items.items.properties.alternatives.items.properties.sourceEvidenceId.enum).join("|"), Array.from(evidenceIds).join("|"));
   assert.equal(schema.properties.items.minItems, 1);
   assert.equal(schema.properties.items.maxItems, 1);
 
-  const sourceSupport = "ينشأ الضغط عندما تؤثر قوة في مساحة محددة";
   const request = {
     items: [{
       planItemId: "P-1",
       questionType: "اختيار من متعدد",
       sourceReferenceId: "R-1",
     }],
-    references: [{ id: "R-1", content: `مقدمة. ${sourceSupport}. نهاية.` }],
+    references,
   };
   const payload = {
     items: [{
@@ -139,15 +143,16 @@ test("يفرض المخطط والبنية الدلالية الكاملة لم�
         options: ["الخيار أ", "الخيار ب", "الخيار ج", "الخيار د"],
         answer: "الخيار أ",
         rationale: "لأنه يوافق العلاقة العلمية الواردة في المصدر.",
-        sourceSupport,
+        sourceEvidenceId: evidenceIds[0],
         needsReview: false,
       })),
     }],
   };
 
-  assert.doesNotThrow(() => helpers.validateGeneratedPayload(payload, request));
+  const hydrated = helpers.validateAndHydrateGeneratedPayload(payload, request, catalog);
+  assert.equal(hydrated.items[0].alternatives[0].sourceSupport, catalog.fragments[0].text);
   assert.throws(
-    () => helpers.validateGeneratedPayload({ alternatives: [] }, request),
+    () => helpers.validateAndHydrateGeneratedPayload({ alternatives: [] }, request, catalog),
     /بنية الأسئلة المولدة غير صالحة/,
   );
 });
@@ -198,7 +203,7 @@ test("ينفذ مسار generateContent كاملًا باستجابة منظمة
         options: ["الخيار أ", "الخيار ب", "الخيار ج", "الخيار د"],
         answer: "الخيار أ",
         rationale: "الإجابة مدعومة بالنص العلمي.",
-        sourceSupport,
+        sourceEvidenceId: "EV-1-1",
         needsReview: false,
       })),
     }],
@@ -226,12 +231,70 @@ test("ينفذ مسار generateContent كاملًا باستجابة منظمة
 
   const result = await helpers.generateAndValidate(request, "WQ-UNITTEST");
   assert.equal(result.items.length, 1);
+  assert.match(result.items[0].alternatives[0].sourceSupport, /ينشأ الضغط/);
   assert.match(capturedUrl, /v1beta\/models\/gemini-2\.5-flash:generateContent$/);
   assert.equal(capturedBody.store, false);
   assert.equal(capturedBody.generationConfig.responseMimeType, "application/json");
   assert.deepEqual(Array.from(capturedBody.generationConfig.responseJsonSchema.required), ["items"]);
+  assert.match(capturedBody.contents[0].parts[0].text, /allowedEvidenceIds/);
+  assert.match(capturedBody.contents[0].parts[0].text, /EV-1-1/);
   assert.deepEqual(
     Array.from(capturedBody.generationConfig.responseJsonSchema.properties.items.items.properties.planItemId.enum),
     ["P-1"],
   );
+});
+
+test("يرفض معرف دليل تابعًا لمرجع آخر بدل قبول استناد مزيف", () => {
+  const references = [
+    { id: "R-1", content: "الضغط هو القوة المؤثرة عموديًا على وحدة المساحة." },
+    { id: "R-2", content: "تنتقل الحرارة من الجسم الأعلى حرارة إلى الجسم الأقل حرارة." },
+  ];
+  const catalog = helpers.buildEvidenceCatalog(references);
+  const wrongEvidence = catalog.fragments.find((fragment) => fragment.referenceId === "R-2");
+  const request = {
+    items: [{ planItemId: "P-1", questionType: "إجابة قصيرة", sourceReferenceId: "R-1" }],
+    references,
+  };
+  const payload = {
+    items: [{
+      planItemId: "P-1",
+      alternatives: Array.from({ length: 3 }, () => ({
+        text: "عرّف الضغط.",
+        options: [],
+        answer: "القوة المؤثرة عموديًا على وحدة المساحة.",
+        rationale: "هذا هو التعريف العلمي.",
+        sourceEvidenceId: wrongEvidence.id,
+        needsReview: false,
+      })),
+    }],
+  };
+  assert.throws(
+    () => helpers.validateAndHydrateGeneratedPayload(payload, request, catalog),
+    /لا ينتمي إلى مرجع المفردة/,
+  );
+});
+
+test("يضيف الخادم نص الدليل نفسه ويضع علامة مراجعة عند ضعف الارتباط اللفظي", () => {
+  const references = [{ id: "R-1", content: "الضغط هو القوة المؤثرة عموديًا على وحدة المساحة." }];
+  const catalog = helpers.buildEvidenceCatalog(references);
+  const request = {
+    items: [{ planItemId: "P-1", questionType: "إجابة قصيرة", sourceReferenceId: "R-1" }],
+    references,
+  };
+  const payload = {
+    items: [{
+      planItemId: "P-1",
+      alternatives: Array.from({ length: 3 }, () => ({
+        text: "اكتب اسم كوكب بعيد.",
+        options: [],
+        answer: "نبتون",
+        rationale: "إجابة فلكية.",
+        sourceEvidenceId: catalog.fragments[0].id,
+        needsReview: false,
+      })),
+    }],
+  };
+  const hydrated = helpers.validateAndHydrateGeneratedPayload(payload, request, catalog);
+  assert.equal(hydrated.items[0].alternatives[0].sourceSupport, catalog.fragments[0].text);
+  assert.equal(hydrated.items[0].alternatives[0].needsReview, true);
 });

@@ -56,6 +56,24 @@ interface GenerationRequest {
   items: GenerationItem[];
 }
 
+interface ModelGeneratedAlternative {
+  text: string;
+  options: string[];
+  answer: string;
+  rationale: string;
+  sourceEvidenceId: string;
+  needsReview: boolean;
+}
+
+interface ModelGeneratedItem {
+  planItemId: string;
+  alternatives: ModelGeneratedAlternative[];
+}
+
+interface ModelGeneratedPayload {
+  items: ModelGeneratedItem[];
+}
+
 interface GeneratedAlternative {
   text: string;
   options: string[];
@@ -72,6 +90,18 @@ interface GeneratedItem {
 
 interface GeneratedPayload {
   items: GeneratedItem[];
+}
+
+interface EvidenceFragment {
+  id: string;
+  referenceId: string;
+  text: string;
+}
+
+interface EvidenceCatalog {
+  fragments: EvidenceFragment[];
+  byId: Map<string, EvidenceFragment>;
+  byReferenceId: Map<string, EvidenceFragment[]>;
 }
 
 Deno.serve(async (req) => {
@@ -107,16 +137,22 @@ Deno.serve(async (req) => {
 });
 
 async function generateAndValidate(request: GenerationRequest, requestId: string): Promise<GeneratedPayload> {
+  const evidenceCatalog = buildEvidenceCatalog(request.references);
+  logStage(requestId, "evidence_catalog_ready", {
+    fragmentCount: evidenceCatalog.fragments.length,
+    referenceCount: evidenceCatalog.byReferenceId.size,
+  });
   let lastError: unknown = null;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     try {
-      const payload = await callGemini(request, attempt > 1, requestId, attempt);
+      const payload = await callGemini(request, evidenceCatalog, attempt > 1, requestId, attempt);
       try {
-        validateGeneratedPayload(payload, request);
+        const hydrated = validateAndHydrateGeneratedPayload(payload, request, evidenceCatalog);
         logStage(requestId, "questions_validated", {
           attempt,
-          itemCount: payload.items.length,
+          itemCount: hydrated.items.length,
         });
+        return hydrated;
       } catch (validationError) {
         const payloadRecord = asRecord(payload);
         logStage(requestId, "generation_validation_failed", {
@@ -127,7 +163,6 @@ async function generateAndValidate(request: GenerationRequest, requestId: string
         });
         throw validationError;
       }
-      return payload;
     } catch (error) {
       lastError = error;
       if (attempt === 2 || !isRetryableGenerationError(error)) break;
@@ -139,10 +174,11 @@ async function generateAndValidate(request: GenerationRequest, requestId: string
 
 async function callGemini(
   request: GenerationRequest,
+  evidenceCatalog: EvidenceCatalog,
   repairAttempt: boolean,
   requestId: string,
   attempt: number,
-): Promise<GeneratedPayload> {
+): Promise<ModelGeneratedPayload> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
   const startedAt = Date.now();
@@ -166,14 +202,14 @@ async function callGemini(
         },
         contents: [{
           role: "user",
-          parts: [{ text: buildUserPrompt(request, repairAttempt) }],
+          parts: [{ text: buildUserPrompt(request, evidenceCatalog, repairAttempt) }],
         }],
         store: false,
         generationConfig: {
           candidateCount: 1,
           maxOutputTokens: 7_000,
           responseMimeType: "application/json",
-          responseJsonSchema: generationSchema(request.items),
+          responseJsonSchema: generationSchema(request.items, evidenceCatalog.fragments.map((fragment) => fragment.id)),
         },
       }),
       signal: controller.signal,
@@ -217,13 +253,13 @@ async function callGemini(
   }
 }
 
-function parseGeneratedJson(outputText: string): GeneratedPayload {
+function parseGeneratedJson(outputText: string): ModelGeneratedPayload {
   const original = outputText.replace(/^\uFEFF/, "").trim();
   const candidates = [original, stripMarkdownFence(original)];
   for (const candidate of candidates) {
     if (!candidate) continue;
     try {
-      return JSON.parse(candidate) as GeneratedPayload;
+      return JSON.parse(candidate) as ModelGeneratedPayload;
     } catch {
       // ننتقل إلى استخراج أول كائن JSON متوازن بدل قص النص عند آخر قوس عشوائي.
     }
@@ -235,7 +271,7 @@ function parseGeneratedJson(outputText: string): GeneratedPayload {
     throw retryableError("أعاد مولد الأسئلة JSON غير صالح أو مبتور.");
   }
   try {
-    return JSON.parse(extracted) as GeneratedPayload;
+    return JSON.parse(extracted) as ModelGeneratedPayload;
   } catch {
     throw retryableError("أعاد مولد الأسئلة JSON غير صالح أو مبتور.");
   }
@@ -288,7 +324,8 @@ function buildSystemInstructions(): string {
     "الإجابة الطويلة للصفين 9 و10 فقط ودرجتها ثلاث أو أربع درجات، وتتطلب شرحًا أو تحليلًا أو أدلة أو خطوات حل، لا مجرد سرد أو استرجاع.",
     "استخدم صياغة عربية قصيرة وواضحة وفعل أمر مناسبًا، وتجنب النفي قدر الإمكان والنفي المزدوج.",
     "للإجابة القصيرة والطويلة: اجعل options مصفوفة فارغة، واكتب إجابة نموذجية قابلة للتصحيح.",
-    "اجعل sourceSupport عبارة قصيرة منسوخة حرفيًا من نص المرجع وتدعم السؤال والإجابة.",
+    "لكل بديل اختر sourceEvidenceId واحدًا فقط من allowedEvidenceIds الخاصة بالمفردة نفسها.",
+    "لا تنسخ اقتباس المصدر داخل JSON؛ الخادم سيضيف نص الدليل الموثوق من المقطع المختار.",
     "لا تسأل عن أرقام صفحات أو حقوق نشر أو مقدمة الكتاب إلا إذا كان الموضوع المطلوب عنها صراحة.",
     "إذا كان النص المرجعي ضعيفًا لمفردة معينة، أنشئ سؤالًا بسيطًا على حقيقة صريحة واضبط needsReview=true. لا تخترع.",
     "لا تستخدم عبارات مثل: بالرجوع إلى النص أو وفقًا للمصدر داخل نص السؤال.",
@@ -296,18 +333,21 @@ function buildSystemInstructions(): string {
   ].join("\n");
 }
 
-function buildUserPrompt(request: GenerationRequest, repairAttempt: boolean): string {
+function buildUserPrompt(request: GenerationRequest, evidenceCatalog: EvidenceCatalog, repairAttempt: boolean): string {
   const references = request.references.map((reference) => ({
     id: reference.id,
     sourceTitle: reference.sourceTitle,
     sourceKind: reference.sourceKind,
     pages: reference.pageFrom === reference.pageTo ? `${reference.pageFrom}` : `${reference.pageFrom}-${reference.pageTo}`,
-    content: reference.content,
+    evidenceFragments: (evidenceCatalog.byReferenceId.get(reference.id) ?? []).map((fragment) => ({
+      id: fragment.id,
+      text: fragment.text,
+    })),
   }));
   return JSON.stringify({
     task: repairAttempt
-      ? "أعد التوليد بدقة أكبر. التزم بعدد البدائل وبالاستناد الحرفي إلى كل مرجع."
-      : "أنشئ بدائل الأسئلة الموثقة من المراجع.",
+      ? "أعد التوليد بدقة أكبر. التزم بعدد البدائل واختر sourceEvidenceId صالحًا من allowedEvidenceIds لكل مفردة."
+      : "أنشئ بدائل الأسئلة الموثقة من مقاطع الأدلة المحددة.",
     exam: {
       assessmentType: request.assessmentType,
       assessmentPolicyId: request.assessmentPolicyId,
@@ -326,18 +366,22 @@ function buildUserPrompt(request: GenerationRequest, repairAttempt: boolean): st
       difficultyLevel: item.difficultyLevel ?? null,
       marks: item.marks,
     })),
-    batchPlanItems: request.items,
+    batchPlanItems: request.items.map((item) => ({
+      ...item,
+      allowedEvidenceIds: (evidenceCatalog.byReferenceId.get(item.sourceReferenceId) ?? []).map((fragment) => fragment.id),
+    })),
     outputContract: {
       topLevelType: "object",
       requiredTopLevelKey: "items",
       itemCount: request.items.length,
       alternativesPerItem: 3,
       exactPlanItemIds: request.items.map((item) => item.planItemId),
+      evidenceRule: "أعد sourceEvidenceId من allowedEvidenceIds الخاصة بالمفردة فقط.",
     },
   });
 }
 
-function generationSchema(requestedItems: GenerationItem[]): Record<string, unknown> {
+function generationSchema(requestedItems: GenerationItem[], evidenceIds: string[]): Record<string, unknown> {
   const requestedIds = requestedItems.map((item) => item.planItemId);
   return {
     type: "object",
@@ -372,13 +416,14 @@ function generationSchema(requestedItems: GenerationItem[]): Record<string, unkn
                   },
                   answer: { type: "string", description: "الإجابة النموذجية الدقيقة." },
                   rationale: { type: "string", description: "تفسير موجز لصحة الإجابة." },
-                  sourceSupport: {
+                  sourceEvidenceId: {
                     type: "string",
-                    description: "اقتباس قصير منسوخ حرفيًا من المرجع المرسل ويدعم السؤال والإجابة.",
+                    enum: evidenceIds,
+                    description: "معرف مقطع الدليل المختار من allowedEvidenceIds الخاصة بالمفردة.",
                   },
                   needsReview: { type: "boolean" },
                 },
-                required: ["text", "options", "answer", "rationale", "sourceSupport", "needsReview"],
+                required: ["text", "options", "answer", "rationale", "sourceEvidenceId", "needsReview"],
                 additionalProperties: false,
               },
             },
@@ -568,11 +613,99 @@ function validateOfficialAssessmentPlan(assessmentType: AssessmentType, grade: n
   if (grade >= 9 && counts.long < 2) throw httpError("الاختبار النهائي للصفين 9 و10 يحتاج مفردتين طويلتين على الأقل.", 400);
 }
 
-function validateGeneratedPayload(payload: GeneratedPayload, request: GenerationRequest): void {
+function buildEvidenceCatalog(references: GenerationReference[]): EvidenceCatalog {
+  const fragments: EvidenceFragment[] = [];
+  const byReferenceId = new Map<string, EvidenceFragment[]>();
+
+  references.forEach((reference, referenceIndex) => {
+    const referenceFragments = splitEvidenceFragments(reference.content).map((text, fragmentIndex) => ({
+      id: `EV-${referenceIndex + 1}-${fragmentIndex + 1}`,
+      referenceId: reference.id,
+      text,
+    }));
+    if (!referenceFragments.length) {
+      throw httpError("تعذر تجهيز مقاطع دليل صالحة من أحد المراجع.", 400);
+    }
+    fragments.push(...referenceFragments);
+    byReferenceId.set(reference.id, referenceFragments);
+  });
+
+  return {
+    fragments,
+    byId: new Map(fragments.map((fragment) => [fragment.id, fragment])),
+    byReferenceId,
+  };
+}
+
+function splitEvidenceFragments(content: string): string[] {
+  const cleaned = content
+    .replace(/\r/g, "")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  if (!cleaned) return [];
+
+  const sentenceLike: string[] = [];
+  for (const paragraph of cleaned.split(/\n+/u)) {
+    const pieces = paragraph.match(/[^.!؟!؛]+(?:[.!؟!؛]+|$)/gu) ?? [paragraph];
+    for (const piece of pieces) {
+      const trimmed = piece.trim();
+      if (trimmed) sentenceLike.push(...splitLongEvidencePiece(trimmed, 340));
+    }
+  }
+
+  const fragments: string[] = [];
+  let current = "";
+  for (const piece of sentenceLike) {
+    const candidate = current ? `${current} ${piece}` : piece;
+    if (candidate.length <= 340) {
+      current = candidate;
+      if (current.length >= 180) {
+        fragments.push(current.trim());
+        current = "";
+      }
+      continue;
+    }
+    if (current) fragments.push(current.trim());
+    current = piece;
+  }
+  if (current) fragments.push(current.trim());
+
+  if (fragments.length > 1 && fragments.at(-1)!.length < 32) {
+    const tail = fragments.pop()!;
+    const previous = fragments.pop()!;
+    fragments.push(`${previous} ${tail}`.trim());
+  }
+  return fragments.filter((fragment) => normalizeForEvidence(fragment).length >= 12);
+}
+
+function splitLongEvidencePiece(value: string, maxCharacters: number): string[] {
+  if (value.length <= maxCharacters) return [value];
+  const words = value.split(/\s+/u).filter(Boolean);
+  const chunks: string[] = [];
+  let current = "";
+  for (const word of words) {
+    const candidate = current ? `${current} ${word}` : word;
+    if (candidate.length <= maxCharacters) {
+      current = candidate;
+      continue;
+    }
+    if (current) chunks.push(current);
+    current = word;
+  }
+  if (current) chunks.push(current);
+  return chunks;
+}
+
+function validateAndHydrateGeneratedPayload(
+  payload: ModelGeneratedPayload,
+  request: GenerationRequest,
+  evidenceCatalog: EvidenceCatalog,
+): GeneratedPayload {
   if (!payload || !Array.isArray(payload.items)) throw retryableError("بنية الأسئلة المولدة غير صالحة.");
   const requestedById = new Map(request.items.map((item) => [item.planItemId, item]));
-  const referencesById = new Map(request.references.map((reference) => [reference.id, reference]));
   const seen = new Set<string>();
+  const hydratedItems: GeneratedItem[] = [];
 
   for (const generatedItem of payload.items) {
     if (!generatedItem || typeof generatedItem.planItemId !== "string" || seen.has(generatedItem.planItemId)) {
@@ -582,20 +715,26 @@ function validateGeneratedPayload(payload: GeneratedPayload, request: Generation
     if (!requested || !Array.isArray(generatedItem.alternatives) || generatedItem.alternatives.length !== 3) {
       throw retryableError("مولد الأسئلة لم يلتزم بثلاثة بدائل لكل مفردة.");
     }
-    const reference = referencesById.get(requested.sourceReferenceId);
-    if (!reference) throw retryableError("تعذر التحقق من مرجع السؤال المولد.");
     seen.add(generatedItem.planItemId);
-
-    for (const alternative of generatedItem.alternatives) {
-      validateAlternative(alternative, requested.questionType, reference);
-    }
+    hydratedItems.push({
+      planItemId: generatedItem.planItemId,
+      alternatives: generatedItem.alternatives.map((alternative) =>
+        validateAndHydrateAlternative(alternative, requested.questionType, requested.sourceReferenceId, evidenceCatalog)
+      ),
+    });
   }
   if (seen.size !== requestedById.size) throw retryableError("مولد الأسئلة لم يُعد جميع مفردات الخطة.");
+  return { items: hydratedItems };
 }
 
-function validateAlternative(alternative: GeneratedAlternative, questionType: QuestionType, reference: GenerationReference): void {
+function validateAndHydrateAlternative(
+  alternative: ModelGeneratedAlternative,
+  questionType: QuestionType,
+  sourceReferenceId: string,
+  evidenceCatalog: EvidenceCatalog,
+): GeneratedAlternative {
   if (!alternative || typeof alternative !== "object") throw retryableError("أحد بدائل الأسئلة غير صالح.");
-  for (const field of ["text", "answer", "rationale", "sourceSupport"] as const) {
+  for (const field of ["text", "answer", "rationale", "sourceEvidenceId"] as const) {
     if (typeof alternative[field] !== "string" || !alternative[field].trim()) {
       throw retryableError("أحد بدائل الأسئلة يحتوي حقلًا نصيًا فارغًا.");
     }
@@ -614,11 +753,44 @@ function validateAlternative(alternative: GeneratedAlternative, questionType: Qu
   } else if (alternative.options.length !== 0) {
     throw retryableError("سؤال غير موضوعي يحتوي بدائل اختيار من متعدد.");
   }
-  const normalizedSupport = normalizeForEvidence(alternative.sourceSupport);
-  const normalizedReference = normalizeForEvidence(reference.content);
-  if (normalizedSupport.length < 12 || !normalizedReference.includes(normalizedSupport)) {
-    throw retryableError("تعذر إثبات استناد أحد الأسئلة إلى نص المرجع حرفيًا.");
+
+  const evidence = evidenceCatalog.byId.get(alternative.sourceEvidenceId.trim());
+  if (!evidence || evidence.referenceId !== sourceReferenceId) {
+    throw retryableError("اختار مولد الأسئلة دليلًا لا ينتمي إلى مرجع المفردة.");
   }
+  const weakAffinity = !hasEvidenceAffinity(
+    `${alternative.text} ${alternative.answer} ${alternative.rationale}`,
+    evidence.text,
+  );
+  return {
+    text: alternative.text.trim(),
+    options: alternative.options.map((option) => option.trim()),
+    answer: alternative.answer.trim(),
+    rationale: alternative.rationale.trim(),
+    sourceSupport: evidence.text,
+    needsReview: alternative.needsReview || weakAffinity,
+  };
+}
+
+function hasEvidenceAffinity(questionMaterial: string, evidenceText: string): boolean {
+  const stopWords = new Set([
+    "الذي", "التي", "هذا", "هذه", "ذلك", "تلك", "على", "الى", "في", "من", "عن", "مع",
+    "او", "ثم", "ما", "ماذا", "كيف", "لماذا", "هو", "هي", "ان", "كان", "تكون", "يكون",
+    "وفقا", "احد", "احدى", "الاجابه", "السوال", "الصحيحه", "الاتيه", "التاليه",
+  ]);
+  const tokens = (value: string) => new Set(
+    normalizeForEvidence(value)
+      .split(/\s+/u)
+      .filter((token) => token.length >= 3 && !stopWords.has(token)),
+  );
+  const questionTokens = tokens(questionMaterial);
+  const evidenceTokens = tokens(evidenceText);
+  let shared = 0;
+  for (const token of questionTokens) {
+    if (evidenceTokens.has(token)) shared += 1;
+    if (shared >= 2) return true;
+  }
+  return shared >= 1 && (questionTokens.size <= 4 || evidenceTokens.size <= 6);
 }
 
 function normalizeForEvidence(value: string): string {
