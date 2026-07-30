@@ -1,43 +1,30 @@
-# تعليمات رفع Phase 1-C1
+# تعليمات رفع Phase 1-C1 Fix 1
 
 ## اسم الفرع
 
 ```text
-phase-1c1-visual-question-engine
+phase-1c1-fix1-mark-scheme-contract
 ```
 
 ## رسالة الحفظ
 
 ```text
-feat: add structured SVG visual question engine
+fix: stabilize per-mark scoring criteria
 ```
 
-## الرفع والدمج
+## الخطوات
 
-1. أنشئ الفرع من آخر نسخة `main`.
-2. فك حزمة `changed_files_only`.
-3. ارفع محتوياتها إلى **جذر المستودع** مع الاستبدال.
-4. انتظر GitHub Actions حتى تصبح خضراء.
-5. ادمج الفرع في `main`.
-6. انتظر اكتمال نشر GitHub Pages.
+1. أنشئ الفرع بالاسم أعلاه من آخر `main`.
+2. ارفع محتويات حزمة `changed_files_only` إلى جذر المستودع مع الاستبدال.
+3. انتظر GitHub Actions حتى تصبح خضراء.
+4. ادمج الفرع في `main`.
+5. افتح الملف التالي من GitHub عبر **Raw**:
 
-## نشر وظيفة Supabase
+```text
+supabase/functions/generate-source-questions/index.ts
+```
 
-هذه المرحلة تعدل وظيفة التوليد، لذلك بعد الدمج:
-
-1. افتح في GitHub على فرع `main`:
-   `supabase/functions/generate-source-questions/index.ts`
-2. اضغط **Raw** وانسخ الملف كاملًا.
-3. افتح وظيفة `generate-source-questions` في محرر Supabase.
-4. استبدل الكود القديم كاملًا.
-5. اضغط **Deploy function**.
-
-لا تضف SQL، ولا تغيّر `GEMINI_API_KEY`، ولا تعِد فهرسة الكتب.
-
-## الاختبار الفعلي
-
-1. نفّذ `Ctrl + F5` بعد اكتمال النشر.
-2. أنشئ اختبار فيزياء من درسين إلى خمسة دروس.
-3. استخدم درسًا مناسبًا مثل الضغط والسوائل أو الدوائر الكهربائية أو البيانات البيانية.
-4. تحقق من ظهور الرسم في شاشة البدائل وورقة الطالب ونموذج الإجابة.
-5. اطبع أو افتح معاينة الطباعة، وتأكد أن الرسم واضح بالأبيض والأسود ولا ينقسم عن السؤال.
+6. استبدل كود وظيفة Supabase الحالية `generate-source-questions` كاملًا.
+7. اضغط **Deploy function**.
+8. لا حاجة إلى SQL أو أسرار جديدة أو إعادة فهرسة.
+9. افتح المسودة نفسها واضغط **التالي** لاستكمال المفردات المتبقية.
