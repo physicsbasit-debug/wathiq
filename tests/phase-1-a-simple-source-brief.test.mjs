@@ -8,9 +8,10 @@ const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url
 
 test("مسار المحتوى يستخدم قائمة دروس بسيطة بدل هرم الوحدات التجريبي", () => {
   assert.match(app, /الدروس الداخلة في الاختبار/);
-  assert.match(app, /data-lesson-topic-index/);
-  assert.match(app, /data-action="add-lesson"/);
-  assert.match(app, /data-action="remove-lesson"/);
+  assert.match(app, /data-lesson-option-id/);
+  assert.match(app, /buildLessonCatalog/);
+  assert.doesNotMatch(app, /data-lesson-topic-index/);
+  assert.doesNotMatch(app, /data-action="add-lesson"/);
   assert.doesNotMatch(app, /id="topic-input"/);
   assert.doesNotMatch(app, /id="unit-select"/);
   assert.doesNotMatch(app, /data-group="lesson"/);
