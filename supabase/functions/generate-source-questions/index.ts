@@ -23,6 +23,7 @@ type CognitiveLevel = "معرفة" | "تطبيق" | "استدلال";
 type Difficulty = "سهل" | "متوسط" | "متقدم";
 type ItemDifficulty = "منخفض" | "متوسط" | "مرتفع";
 type AssessmentType = "اختبار قصير رسمي" | "امتحان نهاية الفصل الدراسي";
+type QuestionDesignPattern = "مفهومي" | "سياقي" | "حسابي" | "بيانات" | "استقصائي" | "مقارنة";
 
 interface GenerationReference {
   id: string;
@@ -41,6 +42,7 @@ interface GenerationItem {
   marks: number;
   sourceReferenceId: string;
   lessonLabel: string;
+  styleTarget: QuestionDesignPattern;
 }
 
 interface GenerationRequest {
@@ -57,10 +59,14 @@ interface GenerationRequest {
 }
 
 interface ModelGeneratedAlternative {
+  stimulus: string;
   text: string;
   options: string[];
   answer: string;
   rationale: string;
+  markScheme: string[];
+  questionForm: QuestionDesignPattern;
+  workingRequired: boolean;
   sourceEvidenceId: string;
   needsReview: boolean;
 }
@@ -75,10 +81,14 @@ interface ModelGeneratedPayload {
 }
 
 interface GeneratedAlternative {
+  stimulus: string;
   text: string;
   options: string[];
   answer: string;
   rationale: string;
+  markScheme: string[];
+  questionForm: QuestionDesignPattern;
+  workingRequired: boolean;
   sourceSupport: string;
   needsReview: boolean;
 }
@@ -314,20 +324,30 @@ function extractFirstJsonObject(value: string): string | null {
 function buildSystemInstructions(): string {
   return [
     "أنت محرر اختبارات علوم مدرسية باللغة العربية لسلطنة عُمان.",
-    "التزم بوثيقة تقويم تعلم الطلبة في مواد العلوم للصفوف 5-10، إصدار 2025/2026.",
+    "التزم أولًا بوثيقة تقويم تعلم الطلبة في مواد العلوم للصفوف 5-10، إصدار 2025/2026؛ فهي المرجع الحاكم للدرجات والأنواع والأهداف والصعوبة.",
+    "استلهم جودة بناء مفردات Cambridge Science دون نسخ أسئلة محفوظة: سياق علمي موجز، تدرج من المعرفة إلى التطبيق والاستدلال، بيانات أو تمثيلات عند الحاجة، وأفعال أمر دقيقة مرتبطة بالدرجة.",
     "مهمتك إنشاء أسئلة من النصوص المرجعية المرفقة فقط، دون إضافة معلومة علمية من الذاكرة أو الإنترنت.",
-    "أنشئ ثلاثة بدائل مختلفة لكل مفردة مرسلة في هذه الدفعة فقط، مع الحفاظ حرفيًا على الدرس ونوع السؤال وهدف التقويم ومستوى الصعوبة والدرجة.",
+    "أنشئ ثلاثة بدائل مختلفة لكل مفردة مرسلة في هذه الدفعة فقط، مع الحفاظ حرفيًا على الدرس ونوع السؤال وهدف التقويم ومستوى الصعوبة والدرجة ونمط styleTarget.",
     "لا تخلط بين الدروس؛ كل مفردة مرتبطة باسم درس ومرجع صفحة محددين في الخطة.",
+    "اجعل السؤال يقيس الفهم العلمي لا حفظ صياغة الكتاب. لا تكثر من أسئلة التعريف المباشر؛ استخدمها فقط عندما يكون styleTarget=مفهومي والمعلومة مصطلحًا أساسيًا.",
+    "عند styleTarget=سياقي: قدّم موقفًا واقعيًا قصيرًا ومناسبًا للبيئة العُمانية أو محايدًا ثقافيًا، ثم اسأل عن تطبيق المفهوم.",
+    "عند styleTarget=حسابي: ضع المعطيات والوحدات في stimulus، واطلب إظهار خطوات الحل، واجعل لكل درجة نقطة تصحيح مستقلة تشمل الطريقة والنتيجة والوحدة عند الحاجة.",
+    "عند styleTarget=بيانات: قدّم جدولًا نصيًا صغيرًا أو نتائج قياس أو وصف رسم بياني في stimulus، ثم اطلب قراءة نمط أو حسابًا أو استنتاجًا من البيانات.",
+    "عند styleTarget=استقصائي: قدّم تجربة أو إجراءً مختصرًا، ثم اسأل عن متغير أو ضبط أو موثوقية أو تفسير نتائج أو تحسين طريقة.",
+    "عند styleTarget=مقارنة: حدّد بوضوح الجانبين المطلوبين، واجعل كل فرق أو تشابه نقطة تصحيح مستقلة.",
     "مفردة الاختيار من متعدد درجتها واحدة وتقيس هدفًا واحدًا، ولها أربعة بدائل وإجابة صحيحة واحدة فقط.",
-    "اجعل مشتتات الاختيار من متعدد مقنعة ومرتبطة بالموضوع لكنها خاطئة تمامًا، ولا تستخدم: جميع ما سبق، لا شيء مما سبق، أو الأول والثاني فقط.",
-    "الإجابة القصيرة درجتها درجة أو درجتان، ويجب أن يتناسب مقدار الإجابة مع الدرجة.",
-    "الإجابة الطويلة للصفين 9 و10 فقط ودرجتها ثلاث أو أربع درجات، وتتطلب شرحًا أو تحليلًا أو أدلة أو خطوات حل، لا مجرد سرد أو استرجاع.",
-    "استخدم صياغة عربية قصيرة وواضحة وفعل أمر مناسبًا، وتجنب النفي قدر الإمكان والنفي المزدوج.",
+    "ابنِ مشتتات الاختيار من متعدد من أخطاء مفاهيمية أو عددية شائعة، واجعلها متجانسة في النوع والوحدة والطول، ولا تستخدم: جميع ما سبق، لا شيء مما سبق، أو الأول والثاني فقط.",
+    "الإجابة القصيرة درجتها درجة أو درجتان، ويجب أن يتناسب مقدار الإجابة مع الدرجة وألا تطلب أكثر من نقاط التصحيح المحددة.",
+    "الإجابة الطويلة للصفين 9 و10 فقط ودرجتها ثلاث أو أربع درجات، وتتطلب سياقًا مترابطًا ومهمتين فرعيتين كحد أقصى، لا مجرد سرد أو استرجاع.",
+    "استخدم أفعال أمر دقيقة مثل: احسب، حدد، صف، قارن، فسر، استنتج، اقترح، برر. لا تستخدم فعلًا أعلى من الدرجة المتاحة.",
+    "استخدم صياغة عربية قصيرة وواضحة، وتجنب النفي قدر الإمكان والنفي المزدوج، ولا تضع معلومات غير لازمة للإجابة.",
     "للإجابة القصيرة والطويلة: اجعل options مصفوفة فارغة، واكتب إجابة نموذجية قابلة للتصحيح.",
+    "أعد markScheme بعدد عناصر يساوي marks تمامًا؛ كل عنصر يمثل نقطة مستقلة تستحق درجة واحدة، ولا تستخدم أنصاف الدرجات.",
+    "أعد stimulus كسلسلة فارغة فقط للسؤال المفهومي المباشر؛ الأنماط السياقية والحسابية والبيانية والاستقصائية تحتاج متنًا أو بيانات واضحة.",
     "لكل بديل اختر sourceEvidenceId واحدًا فقط من allowedEvidenceIds الخاصة بالمفردة نفسها.",
     "لا تنسخ اقتباس المصدر داخل JSON؛ الخادم سيضيف نص الدليل الموثوق من المقطع المختار.",
     "لا تسأل عن أرقام صفحات أو حقوق نشر أو مقدمة الكتاب إلا إذا كان الموضوع المطلوب عنها صراحة.",
-    "إذا كان النص المرجعي ضعيفًا لمفردة معينة، أنشئ سؤالًا بسيطًا على حقيقة صريحة واضبط needsReview=true. لا تخترع.",
+    "إذا كان النص المرجعي ضعيفًا لمفردة معينة، أنشئ سؤالًا أبسط على حقيقة صريحة واضبط needsReview=true. لا تخترع.",
     "لا تستخدم عبارات مثل: بالرجوع إلى النص أو وفقًا للمصدر داخل نص السؤال.",
     "لا تضع شروحًا خارج مخطط JSON المطلوب.",
   ].join("\n");
@@ -365,6 +385,7 @@ function buildUserPrompt(request: GenerationRequest, evidenceCatalog: EvidenceCa
       cognitiveLevel: item.cognitiveLevel,
       difficultyLevel: item.difficultyLevel ?? null,
       marks: item.marks,
+      styleTarget: item.styleTarget,
     })),
     batchPlanItems: request.items.map((item) => ({
       ...item,
@@ -377,6 +398,7 @@ function buildUserPrompt(request: GenerationRequest, evidenceCatalog: EvidenceCa
       alternativesPerItem: 3,
       exactPlanItemIds: request.items.map((item) => item.planItemId),
       evidenceRule: "أعد sourceEvidenceId من allowedEvidenceIds الخاصة بالمفردة فقط.",
+      styleRule: "اجعل questionForm مطابقًا حرفيًا لـ styleTarget، وmarkScheme بعدد يساوي marks.",
     },
   });
 }
@@ -408,7 +430,11 @@ function generationSchema(requestedItems: GenerationItem[], evidenceIds: string[
               items: {
                 type: "object",
                 properties: {
-                  text: { type: "string", description: "نص السؤال فقط." },
+                  stimulus: {
+                    type: "string",
+                    description: "متن أو سياق أو بيانات السؤال. يكون فارغًا فقط للمفردة المفهومية المباشرة.",
+                  },
+                  text: { type: "string", description: "نص المطلوب بصياغة عربية واضحة وفعل أمر مناسب." },
                   options: {
                     type: "array",
                     description: "أربعة خيارات للاختيار من متعدد، ومصفوفة فارغة لبقية الأنواع.",
@@ -416,6 +442,20 @@ function generationSchema(requestedItems: GenerationItem[], evidenceIds: string[
                   },
                   answer: { type: "string", description: "الإجابة النموذجية الدقيقة." },
                   rationale: { type: "string", description: "تفسير موجز لصحة الإجابة." },
+                  markScheme: {
+                    type: "array",
+                    description: "نقطة تصحيح مستقلة لكل درجة مطلوبة.",
+                    items: { type: "string" },
+                  },
+                  questionForm: {
+                    type: "string",
+                    enum: ["مفهومي", "سياقي", "حسابي", "بيانات", "استقصائي", "مقارنة"],
+                    description: "يجب أن يطابق styleTarget الخاص بالمفردة.",
+                  },
+                  workingRequired: {
+                    type: "boolean",
+                    description: "صحيح للأسئلة الحسابية التي تتطلب إظهار خطوات الحل.",
+                  },
                   sourceEvidenceId: {
                     type: "string",
                     enum: evidenceIds,
@@ -423,7 +463,7 @@ function generationSchema(requestedItems: GenerationItem[], evidenceIds: string[
                   },
                   needsReview: { type: "boolean" },
                 },
-                required: ["text", "options", "answer", "rationale", "sourceEvidenceId", "needsReview"],
+                required: ["stimulus", "text", "options", "answer", "rationale", "markScheme", "questionForm", "workingRequired", "sourceEvidenceId", "needsReview"],
                 additionalProperties: false,
               },
             },
@@ -506,6 +546,7 @@ function parseGenerationRequest(value: unknown): GenerationRequest {
       marks: requireInteger(item.marks, "درجة السؤال غير صالحة.", 1, 20),
       sourceReferenceId,
       lessonLabel,
+      styleTarget: requireEnum(item.styleTarget, ["مفهومي", "سياقي", "حسابي", "بيانات", "استقصائي", "مقارنة"] as const, "نمط بناء السؤال غير صالح."),
     };
   };
 
@@ -533,6 +574,7 @@ function parseGenerationRequest(value: unknown): GenerationRequest {
       || official.difficultyLevel !== item.difficultyLevel
       || official.marks !== item.marks
       || official.sourceReferenceId !== item.sourceReferenceId
+      || official.styleTarget !== item.styleTarget
       || normalizeForEvidence(official.lessonLabel) !== normalizeForEvidence(item.lessonLabel)) {
       throw httpError("دفعة التوليد لا تطابق خطة الاختبار الرسمية.", 400);
     }
@@ -719,7 +761,14 @@ function validateAndHydrateGeneratedPayload(
     hydratedItems.push({
       planItemId: generatedItem.planItemId,
       alternatives: generatedItem.alternatives.map((alternative) =>
-        validateAndHydrateAlternative(alternative, requested.questionType, requested.sourceReferenceId, evidenceCatalog)
+        validateAndHydrateAlternative(
+          alternative,
+          requested.questionType,
+          requested.sourceReferenceId,
+          evidenceCatalog,
+          requested.styleTarget,
+          requested.marks,
+        )
       ),
     });
   }
@@ -732,6 +781,8 @@ function validateAndHydrateAlternative(
   questionType: QuestionType,
   sourceReferenceId: string,
   evidenceCatalog: EvidenceCatalog,
+  requestedStyleTarget: QuestionDesignPattern,
+  marks: number,
 ): GeneratedAlternative {
   if (!alternative || typeof alternative !== "object") throw retryableError("أحد بدائل الأسئلة غير صالح.");
   for (const field of ["text", "answer", "rationale", "sourceEvidenceId"] as const) {
@@ -739,8 +790,25 @@ function validateAndHydrateAlternative(
       throw retryableError("أحد بدائل الأسئلة يحتوي حقلًا نصيًا فارغًا.");
     }
   }
-  if (!Array.isArray(alternative.options) || typeof alternative.needsReview !== "boolean") {
+  if (typeof alternative.stimulus !== "string"
+    || !Array.isArray(alternative.options)
+    || !Array.isArray(alternative.markScheme)
+    || typeof alternative.workingRequired !== "boolean"
+    || typeof alternative.needsReview !== "boolean") {
     throw retryableError("أحد بدائل الأسئلة لا يطابق البنية المطلوبة.");
+  }
+  if (alternative.questionForm !== requestedStyleTarget) {
+    throw retryableError("مولد الأسئلة لم يلتزم بنمط السؤال المحدد في الخطة.");
+  }
+  const markScheme = alternative.markScheme.map((point) => typeof point === "string" ? point.trim() : "");
+  if (markScheme.length !== marks || markScheme.some((point) => !point)) {
+    throw retryableError("نموذج التصحيح لا يوزع نقطة مستقلة لكل درجة.");
+  }
+  if (["سياقي", "حسابي", "بيانات", "استقصائي"].includes(alternative.questionForm) && !alternative.stimulus.trim()) {
+    throw retryableError("أحد الأسئلة السياقية لا يحتوي متنًا أو بيانات كافية.");
+  }
+  if (alternative.questionForm === "حسابي" && !alternative.workingRequired) {
+    throw retryableError("السؤال الحسابي لا يطلب إظهار خطوات الحل.");
   }
   if (questionType === "اختيار من متعدد") {
     const options = alternative.options.map((option) => typeof option === "string" ? option.trim() : "");
@@ -762,14 +830,26 @@ function validateAndHydrateAlternative(
     `${alternative.text} ${alternative.answer} ${alternative.rationale}`,
     evidence.text,
   );
+  const commandReview = questionType !== "اختيار من متعدد" && !hasAppropriateCommandWord(alternative.text, marks);
   return {
+    stimulus: alternative.stimulus.trim(),
     text: alternative.text.trim(),
     options: alternative.options.map((option) => option.trim()),
     answer: alternative.answer.trim(),
     rationale: alternative.rationale.trim(),
+    markScheme,
+    questionForm: alternative.questionForm,
+    workingRequired: alternative.workingRequired,
     sourceSupport: evidence.text,
-    needsReview: alternative.needsReview || weakAffinity,
+    needsReview: alternative.needsReview || weakAffinity || commandReview,
   };
+}
+
+function hasAppropriateCommandWord(questionText: string, marks: number): boolean {
+  const normalized = normalizeForEvidence(questionText);
+  const oneMark = ["اكتب", "حدد", "اذكر", "اختر", "سم", "عين", "احسب", "استخرج"];
+  const multiMark = ["احسب", "صف", "قارن", "فسر", "اشرح", "استنتج", "اقترح", "برر", "حلل", "قيم", "وضح"];
+  return (marks === 1 ? oneMark : multiMark).some((command) => normalized.includes(normalizeForEvidence(command)));
 }
 
 function hasEvidenceAffinity(questionMaterial: string, evidenceText: string): boolean {

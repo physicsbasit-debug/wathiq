@@ -1,22 +1,40 @@
-# تعليمات رفع Phase 1-B7
+# تعليمات رفع Phase 1-B8
 
 ## اسم الفرع
 
-`phase-1b7-evidence-anchor-fix`
+```text
+phase-1b8-cambridge-style-alignment
+```
 
 ## رسالة الحفظ
 
-`fix: anchor generated questions to server evidence fragments`
+```text
+feat: align science questions with Cambridge-style assessment
+```
 
-## الخطوات
+## الرفع
 
-1. أنشئ الفرع بالاسم أعلاه.
-2. ارفع محتويات حزمة الملفات المعدلة فقط إلى جذر المستودع مع الاستبدال.
-3. انتظر نجاح GitHub Actions.
-4. ادمج الفرع في `main`.
-5. افتح `supabase/functions/generate-source-questions/index.ts` من `main` عبر **Raw**.
-6. الصق الملف كاملًا في وظيفة Supabase الحالية `generate-source-questions` واضغط **Deploy function**.
-7. حدّث واثق بـ `Ctrl + F5`.
-8. افتح الاختبار السابق واضغط **التالي**؛ سيكمل المفردات الأربع المتبقية فقط.
+1. أنشئ الفرع بالاسم أعلاه من `main`.
+2. فك حزمة `changed_files_only`.
+3. ارفع محتوياتها إلى جذر المستودع مع الاستبدال.
+4. انتظر GitHub Actions حتى تصبح خضراء.
+5. ادمج الفرع في `main`.
 
-لا يوجد SQL جديد، ولا حاجة لتغيير `GEMINI_API_KEY` أو إعادة فهرسة الكتاب.
+## نشر وظيفة Supabase
+
+بعد الدمج:
+
+1. افتح في GitHub على فرع `main`:
+   `supabase/functions/generate-source-questions/index.ts`
+2. اضغط **Raw** وانسخ الملف كاملًا.
+3. افتح وظيفة `generate-source-questions` في محرر Supabase.
+4. استبدل الكود كاملًا ثم اضغط **Deploy function**.
+5. لا تغيّر الأسرار، ولا تضف SQL، ولا تعِد فهرسة الكتاب.
+6. انتظر اكتمال GitHub Pages ثم نفّذ `Ctrl + F5`.
+
+## الاختبار الفعلي
+
+- أنشئ اختبارًا قصيرًا للصف العاشر من 2-5 دروس.
+- تحقق من تنوع البدائل بين مفهومي وسياقي وحسابي وبيانات واستقصائي ومقارنة.
+- تأكد أن ورقة الطالب لا تعرض اسم الكتاب أو رقم الصفحة.
+- افتح نموذج الإجابة وتأكد من وجود نقاط التصحيح والمصدر والدليل.

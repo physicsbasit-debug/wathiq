@@ -5,6 +5,7 @@ import type {
   ExamSourceReference,
   ItemDifficulty,
   PlanItem,
+  QuestionDesignPattern,
   QuestionProposal,
   QuestionType,
 } from "./types.js";
@@ -12,7 +13,7 @@ import type { OwnerSession } from "./central-source-store.js";
 import type { WathiqRuntimeConfig } from "./runtime-config.js";
 import { SCIENCE_ASSESSMENT_POLICY_ID } from "./assessment-policy.js";
 
-export const SOURCE_GENERATION_VERSION = "source-grounded-policy-ai-7-evidence-anchors";
+export const SOURCE_GENERATION_VERSION = "source-grounded-policy-ai-8-cambridge-style";
 export const GENERATION_BATCH_SIZE = 2;
 
 export interface QuestionGenerationReference {
@@ -32,6 +33,7 @@ export interface QuestionGenerationItem {
   marks: number;
   sourceReferenceId: string;
   lessonLabel: string;
+  styleTarget: QuestionDesignPattern;
 }
 
 export interface QuestionGenerationRequest {
@@ -48,10 +50,14 @@ export interface QuestionGenerationRequest {
 }
 
 export interface GeneratedAlternative {
+  stimulus: string;
   text: string;
   options: string[];
   answer: string;
   rationale: string;
+  markScheme: string[];
+  questionForm: QuestionDesignPattern;
+  workingRequired: boolean;
   sourceSupport: string;
   needsReview: boolean;
 }
@@ -93,22 +99,48 @@ function errorMessage(payload: unknown, fallback: string): string {
   return requestId ? `${message} رمز التتبع: ${requestId}` : message;
 }
 
-function parseAlternative(value: unknown, questionType: QuestionType): GeneratedAlternative {
+const QUESTION_DESIGN_PATTERNS: readonly QuestionDesignPattern[] = [
+  "مفهومي", "سياقي", "حسابي", "بيانات", "استقصائي", "مقارنة",
+];
+
+function isQuestionDesignPattern(value: unknown): value is QuestionDesignPattern {
+  return typeof value === "string" && (QUESTION_DESIGN_PATTERNS as readonly string[]).includes(value);
+}
+
+function parseAlternative(value: unknown, expected: QuestionGenerationItem): GeneratedAlternative {
   const record = asRecord(value);
   if (!record) throw new Error("استجابة مولد الأسئلة تحتوي بديلًا غير صالح.");
+  const stimulus = typeof record.stimulus === "string" ? record.stimulus.trim() : "";
   const text = typeof record.text === "string" ? record.text.trim() : "";
   const options = Array.isArray(record.options)
     ? record.options.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean)
     : [];
   const answer = typeof record.answer === "string" ? record.answer.trim() : "";
   const rationale = typeof record.rationale === "string" ? record.rationale.trim() : "";
+  const markScheme = Array.isArray(record.markScheme)
+    ? record.markScheme.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean)
+    : [];
+  const questionForm = isQuestionDesignPattern(record.questionForm) ? record.questionForm : null;
+  const workingRequired = record.workingRequired === true;
   const sourceSupport = typeof record.sourceSupport === "string" ? record.sourceSupport.trim() : "";
   const needsReview = record.needsReview === true;
 
-  if (!text || !answer || !rationale || !sourceSupport) {
+  if (!text || !answer || !rationale || !sourceSupport || !questionForm) {
     throw new Error("استجابة مولد الأسئلة ناقصة ولا تصلح للعرض.");
   }
-  if (questionType === "اختيار من متعدد") {
+  if (questionForm !== expected.styleTarget) {
+    throw new Error("مولد الأسئلة لم يلتزم بنمط السؤال المحدد في الخطة.");
+  }
+  if (markScheme.length !== expected.marks) {
+    throw new Error("نموذج التصحيح لا يوزع نقطة واضحة لكل درجة.");
+  }
+  if (["سياقي", "حسابي", "بيانات", "استقصائي"].includes(questionForm) && !stimulus) {
+    throw new Error("أحد الأسئلة السياقية لا يحتوي متنًا أو بيانات كافية.");
+  }
+  if (questionForm === "حسابي" && !workingRequired) {
+    throw new Error("السؤال الحسابي لا يطلب إظهار خطوات الحل.");
+  }
+  if (expected.questionType === "اختيار من متعدد") {
     if (options.length !== 4 || new Set(options).size !== 4) {
       throw new Error("أحد أسئلة الاختيار من متعدد لا يحتوي أربعة بدائل مختلفة.");
     }
@@ -119,7 +151,7 @@ function parseAlternative(value: unknown, questionType: QuestionType): Generated
     throw new Error("سؤال غير موضوعي أعاد بدائل اختيار من متعدد على نحو غير صالح.");
   }
 
-  return { text, options, answer, rationale, sourceSupport, needsReview };
+  return { stimulus, text, options, answer, rationale, markScheme, questionForm, workingRequired, sourceSupport, needsReview };
 }
 
 export function parseQuestionGenerationResponse(
@@ -145,7 +177,7 @@ export function parseQuestionGenerationResponse(
     }
     return {
       planItemId,
-      alternatives: itemRecord.alternatives.map((alternative) => parseAlternative(alternative, expected.questionType)),
+      alternatives: itemRecord.alternatives.map((alternative) => parseAlternative(alternative, expected)),
     };
   });
   if (seen.size !== expectedById.size) {
@@ -170,7 +202,32 @@ export function splitQuestionGenerationBatches<T>(items: readonly T[], batchSize
   return batches;
 }
 
-function generationItem(item: PlanItem): QuestionGenerationItem {
+function deriveQuestionDesignPattern(
+  item: PlanItem,
+  officialIndex: number,
+  subject: string,
+): QuestionDesignPattern {
+  const normalizedSubject = subject.trim();
+  if (item.questionType === "إجابة طويلة") {
+    if (item.cognitiveLevel === "استدلال") return "استقصائي";
+    if (normalizedSubject.includes("فيزياء") || normalizedSubject.includes("كيمياء")) return "حسابي";
+    return officialIndex % 2 === 0 ? "بيانات" : "استقصائي";
+  }
+  if (item.cognitiveLevel === "استدلال") return officialIndex % 2 === 0 ? "بيانات" : "استقصائي";
+  if (item.cognitiveLevel === "تطبيق") {
+    if (normalizedSubject.includes("فيزياء")) return officialIndex % 2 === 0 ? "حسابي" : "بيانات";
+    if (normalizedSubject.includes("كيمياء")) return officialIndex % 2 === 0 ? "سياقي" : "بيانات";
+    return officialIndex % 2 === 0 ? "بيانات" : "سياقي";
+  }
+  if (item.marks >= 2) return "مقارنة";
+  return item.questionType === "اختيار من متعدد" && officialIndex % 2 === 1 ? "سياقي" : "مفهومي";
+}
+
+function generationItem(
+  item: PlanItem,
+  officialIndex: number,
+  subject: string,
+): QuestionGenerationItem {
   if (!item.sourceReferenceId) throw new Error("إحدى مفردات الخطة غير مرتبطة بصفحة مصدر.");
   return {
     planItemId: item.id,
@@ -180,6 +237,7 @@ function generationItem(item: PlanItem): QuestionGenerationItem {
     marks: item.marks,
     sourceReferenceId: item.sourceReferenceId,
     lessonLabel: item.lessonLabel,
+    styleTarget: deriveQuestionDesignPattern(item, officialIndex, subject),
   };
 }
 
@@ -212,6 +270,7 @@ export function buildQuestionGenerationRequest(
       content: (reference.context ?? reference.excerpt).trim(),
     };
   });
+  const officialIndexById = new Map(officialPlan.map((item, index) => [item.id, index]));
   return {
     assessmentType,
     assessmentPolicyId: SCIENCE_ASSESSMENT_POLICY_ID,
@@ -221,8 +280,12 @@ export function buildQuestionGenerationRequest(
     subject,
     difficulty,
     references: requestReferences,
-    officialPlanItems: officialPlan.map(generationItem),
-    items: requestedPlan.map(generationItem),
+    officialPlanItems: officialPlan.map((item, index) => generationItem(item, index, subject)),
+    items: requestedPlan.map((item) => {
+      const officialIndex = officialIndexById.get(item.id);
+      if (officialIndex === undefined) throw new Error("إحدى مفردات الدفعة غير موجودة في الخطة الرسمية.");
+      return generationItem(item, officialIndex, subject);
+    }),
   };
 }
 
@@ -236,10 +299,14 @@ export function applyGeneratedQuestions(
     if (!generated) throw new Error("تعذر ربط الأسئلة المولدة بخطة الاختبار.");
     const proposals: QuestionProposal[] = generated.alternatives.map((alternative, index) => ({
       id: `${item.id}-proposal-${index + 1}`,
+      ...(alternative.stimulus ? { stimulus: alternative.stimulus } : {}),
       text: alternative.text,
       options: alternative.options,
       answer: alternative.answer,
       rationale: alternative.rationale,
+      markScheme: alternative.markScheme,
+      questionForm: alternative.questionForm,
+      workingRequired: alternative.workingRequired,
       sourceSupport: alternative.sourceSupport,
       needsReview: alternative.needsReview,
     }));

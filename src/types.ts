@@ -6,6 +6,7 @@ export type CognitiveLevel = "معرفة" | "تطبيق" | "استدلال";
 export type ItemDifficulty = "منخفض" | "متوسط" | "مرتفع";
 export type ExamTitleOption = "الاختبار القصير الأول" | "الاختبار القصير الثاني" | "الاختبار النهائي";
 export type AssessmentType = "اختبار قصير رسمي" | "امتحان نهاية الفصل الدراسي";
+export type QuestionDesignPattern = "مفهومي" | "سياقي" | "حسابي" | "بيانات" | "استقصائي" | "مقارنة";
 
 export interface LearningOutcome {
   id: string;
@@ -98,10 +99,14 @@ export interface PlanItem {
 
 export interface QuestionProposal {
   id: string;
+  stimulus?: string;
   text: string;
   options?: string[];
   answer: string;
   rationale?: string;
+  markScheme?: string[];
+  questionForm?: QuestionDesignPattern;
+  workingRequired?: boolean;
   sourceSupport?: string;
   needsReview?: boolean;
 }

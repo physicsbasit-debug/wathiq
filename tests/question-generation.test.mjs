@@ -18,6 +18,7 @@ function requestItems() {
     marks: 1,
     sourceReferenceId: "ref-1",
     lessonLabel: "1-1 الشحنة الكهربائية",
+    styleTarget: "مفهومي",
   }];
 }
 
@@ -26,10 +27,14 @@ function validPayload() {
     items: [{
       planItemId: "plan-1",
       alternatives: [1, 2, 3].map((index) => ({
+        stimulus: "",
         text: `ما العبارة الصحيحة عن الشحنة الكهربائية؟ ${index}`,
         options: ["خاصية فيزيائية", "وحدة زمن", "نوع طاقة حرارية", "قوة مغناطيسية فقط"],
         answer: "خاصية فيزيائية",
         rationale: "النص يعرّف الشحنة بوصفها خاصية فيزيائية.",
+        markScheme: ["تحديد العبارة العلمية الصحيحة."],
+        questionForm: "مفهومي",
+        workingRequired: false,
         sourceSupport: "الشحنة الكهربائية خاصية فيزيائية للمادة",
         needsReview: false,
       })),
@@ -102,6 +107,7 @@ test("يبني طلب الدفعة من سياق المقطع الكامل وم�
   assert.equal(request.references[0].content, "الشحنة الكهربائية خاصية فيزيائية للمادة وقد تكون موجبة أو سالبة.");
   assert.equal(request.items[0].sourceReferenceId, "ref-1");
   assert.equal(request.items[0].lessonLabel, "1-1 الشحنة الكهربائية");
+  assert.equal(request.items[0].styleTarget, "مفهومي");
   assert.equal(request.officialPlanItems.length, 2);
   assert.equal(request.assessmentType, "اختبار قصير رسمي");
   assert.equal(request.assessmentPolicyId, "oman-science-assessment-2025-2026");
@@ -121,7 +127,9 @@ test("يتحقق من ثلاثة بدائل ثم يربطها بخطة الاخ�
   assert.equal(generated[0].proposals.length, 3);
   assert.equal(generated[0].proposals[0].options.length, 4);
   assert.equal(generated[0].proposals[0].answer, "خاصية فيزيائية");
-  assert.equal(SOURCE_GENERATION_VERSION, "source-grounded-policy-ai-7-evidence-anchors");
+  assert.equal(generated[0].proposals[0].questionForm, "مفهومي");
+  assert.deepEqual(generated[0].proposals[0].markScheme, ["تحديد العبارة العلمية الصحيحة."]);
+  assert.equal(SOURCE_GENERATION_VERSION, "source-grounded-policy-ai-8-cambridge-style");
   assert.equal(parsed.requestId, "WQ-TEST1234");
 });
 
@@ -228,4 +236,48 @@ test("يعرض رمز تتبع Edge Function عند فشل دفعة التولي
     }),
     /WQ-A1B2C3D4/,
   );
+});
+
+test("يوزع مفردات الفيزياء على أنماط بناء متنوعة لا على أسئلة مباشرة فقط", () => {
+  const base = {
+    lessonId: "lesson-style",
+    lessonLabel: "1-1 الضغط",
+    outcomeId: "outcome-style",
+    outcomeLabel: "فهم الضغط",
+    sourceReferenceId: "ref-style",
+    proposals: [],
+  };
+  const officialPlan = [
+    { ...base, id: "s-1", cognitiveLevel: "معرفة", questionType: "اختيار من متعدد", marks: 1 },
+    { ...base, id: "s-2", cognitiveLevel: "تطبيق", questionType: "اختيار من متعدد", marks: 1 },
+    { ...base, id: "s-3", cognitiveLevel: "معرفة", questionType: "إجابة قصيرة", marks: 2 },
+    { ...base, id: "s-4", cognitiveLevel: "معرفة", questionType: "إجابة قصيرة", marks: 1 },
+    { ...base, id: "s-5", cognitiveLevel: "استدلال", questionType: "إجابة قصيرة", marks: 2 },
+    { ...base, id: "s-6", cognitiveLevel: "تطبيق", questionType: "إجابة طويلة", marks: 3 },
+  ];
+  const request = buildQuestionGenerationRequest(
+    "اختبار قصير رسمي",
+    "الضغط، الضغط في السوائل",
+    ["1-1 الضغط", "1-2 الضغط في السوائل"],
+    10,
+    "الفيزياء",
+    "متوسط",
+    [{
+      id: "ref-style",
+      sourceId: "source-style",
+      sourceTitle: "كتاب الطالب",
+      sourceKind: "كتاب الطالب",
+      pageFrom: 80,
+      pageTo: 83,
+      excerpt: "الضغط والقوة والمساحة والضغط في السوائل.",
+      context: "الضغط هو القوة العمودية المؤثرة على وحدة المساحة، وتوجد تطبيقات حسابية وبيانية وتجريبية.",
+      lessonTopic: "1-1 الضغط",
+      score: 95,
+    }],
+    officialPlan,
+    officialPlan,
+  );
+  assert.deepEqual(request.items.map((item) => item.styleTarget), [
+    "مفهومي", "بيانات", "مقارنة", "مفهومي", "بيانات", "حسابي",
+  ]);
 });
