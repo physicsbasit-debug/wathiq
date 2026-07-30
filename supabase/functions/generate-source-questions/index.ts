@@ -12,7 +12,7 @@ const MAX_REFERENCES = 6;
 const MAX_REFERENCE_CHARACTERS = 4_200;
 const MAX_TOTAL_REFERENCE_CHARACTERS = 24_000;
 const GEMINI_TIMEOUT_MS = 30_000;
-const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1/interactions";
+const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent`;
 
 const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
@@ -111,7 +111,22 @@ async function generateAndValidate(request: GenerationRequest, requestId: string
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     try {
       const payload = await callGemini(request, attempt > 1, requestId, attempt);
-      validateGeneratedPayload(payload, request);
+      try {
+        validateGeneratedPayload(payload, request);
+        logStage(requestId, "questions_validated", {
+          attempt,
+          itemCount: payload.items.length,
+        });
+      } catch (validationError) {
+        const payloadRecord = asRecord(payload);
+        logStage(requestId, "generation_validation_failed", {
+          attempt,
+          topLevelKeys: payloadRecord ? Object.keys(payloadRecord).slice(0, 8) : [],
+          returnedItemCount: Array.isArray(payloadRecord?.items) ? payloadRecord.items.length : null,
+          message: errorMessage(validationError),
+        });
+        throw validationError;
+      }
       return payload;
     } catch (error) {
       lastError = error;
@@ -136,6 +151,7 @@ async function callGemini(
     repairAttempt,
     itemCount: request.items.length,
     referenceCount: request.references.length,
+    api: "generateContent",
   });
   try {
     const response = await fetch(GEMINI_API_URL, {
@@ -145,17 +161,19 @@ async function callGemini(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: GEMINI_MODEL,
-        input: buildUserPrompt(request, repairAttempt),
-        system_instruction: buildSystemInstructions(),
-        store: false,
-        generation_config: {
-          max_output_tokens: 7_000,
+        systemInstruction: {
+          parts: [{ text: buildSystemInstructions() }],
         },
-        response_format: {
-          type: "text",
-          mime_type: "application/json",
-          schema: generationSchema(request.items.length),
+        contents: [{
+          role: "user",
+          parts: [{ text: buildUserPrompt(request, repairAttempt) }],
+        }],
+        store: false,
+        generationConfig: {
+          candidateCount: 1,
+          maxOutputTokens: 7_000,
+          responseMimeType: "application/json",
+          responseJsonSchema: generationSchema(request.items),
         },
       }),
       signal: controller.signal,
@@ -168,21 +186,25 @@ async function callGemini(
         status: response.status,
         durationMs: Date.now() - startedAt,
       });
-      if (response.status >= 500 || response.status === 429) throw retryableError(message);
+      if (response.status >= 500 || response.status === 408 || response.status === 429) {
+        throw retryableError(message);
+      }
       throw httpError(message, 400);
     }
-    assertCompletedGeminiInteraction(payload);
-    const output = findGeminiOutputText(payload);
+
+    const completion = inspectGenerateContentCompletion(payload);
+    const output = findGenerateContentOutputText(payload);
     logStage(requestId, "gemini_response_received", {
       attempt,
-      interactionStatus: geminiInteractionStatus(payload),
+      finishReason: completion.finishReason,
       textPartCount: output.partCount,
       outputCharacters: output.text.length,
+      promptTokens: completion.promptTokens,
+      outputTokens: completion.outputTokens,
       durationMs: Date.now() - startedAt,
     });
     if (!output.text) {
-      const stepError = geminiModelOutputError(payload);
-      throw retryableError(stepError || "لم يُرجع مولد الأسئلة بيانات قابلة للقراءة.");
+      throw retryableError(completion.finishMessage || "لم يُرجع مولد الأسئلة بيانات قابلة للقراءة.");
     }
     return parseGeneratedJson(output.text);
   } catch (error) {
@@ -305,33 +327,55 @@ function buildUserPrompt(request: GenerationRequest, repairAttempt: boolean): st
       marks: item.marks,
     })),
     batchPlanItems: request.items,
+    outputContract: {
+      topLevelType: "object",
+      requiredTopLevelKey: "items",
+      itemCount: request.items.length,
+      alternativesPerItem: 3,
+      exactPlanItemIds: request.items.map((item) => item.planItemId),
+    },
   });
 }
 
-function generationSchema(requestedItemCount: number): Record<string, unknown> {
+function generationSchema(requestedItems: GenerationItem[]): Record<string, unknown> {
+  const requestedIds = requestedItems.map((item) => item.planItemId);
   return {
     type: "object",
+    description: "النتيجة النهائية لتوليد مفردات الاختبار، ويجب أن تحتوي المفتاح items فقط.",
     properties: {
       items: {
         type: "array",
-        minItems: requestedItemCount,
-        maxItems: requestedItemCount,
+        description: "مفردة مولدة واحدة لكل planItemId مطلوب وبالترتيب نفسه.",
+        minItems: requestedItems.length,
+        maxItems: requestedItems.length,
         items: {
           type: "object",
           properties: {
-            planItemId: { type: "string" },
+            planItemId: {
+              type: "string",
+              enum: requestedIds,
+              description: "المعرف المطابق حرفيًا لإحدى مفردات الدفعة.",
+            },
             alternatives: {
               type: "array",
+              description: "ثلاث صيغ بديلة مختلفة للمفردة نفسها.",
               minItems: 3,
               maxItems: 3,
               items: {
                 type: "object",
                 properties: {
-                  text: { type: "string" },
-                  options: { type: "array", items: { type: "string" } },
-                  answer: { type: "string" },
-                  rationale: { type: "string" },
-                  sourceSupport: { type: "string" },
+                  text: { type: "string", description: "نص السؤال فقط." },
+                  options: {
+                    type: "array",
+                    description: "أربعة خيارات للاختيار من متعدد، ومصفوفة فارغة لبقية الأنواع.",
+                    items: { type: "string" },
+                  },
+                  answer: { type: "string", description: "الإجابة النموذجية الدقيقة." },
+                  rationale: { type: "string", description: "تفسير موجز لصحة الإجابة." },
+                  sourceSupport: {
+                    type: "string",
+                    description: "اقتباس قصير منسوخ حرفيًا من المرجع المرسل ويدعم السؤال والإجابة.",
+                  },
                   needsReview: { type: "boolean" },
                 },
                 required: ["text", "options", "answer", "rationale", "sourceSupport", "needsReview"],
@@ -593,57 +637,53 @@ function normalizeForEvidence(value: string): string {
     .toLowerCase();
 }
 
-function findGeminiOutputText(payload: unknown): { text: string; partCount: number } {
+interface GenerateContentCompletion {
+  finishReason: string;
+  finishMessage: string;
+  promptTokens: number | null;
+  outputTokens: number | null;
+}
+
+function findGenerateContentOutputText(payload: unknown): { text: string; partCount: number } {
   const record = asRecord(payload);
-  if (!record) return { text: "", partCount: 0 };
-  if (typeof record.output_text === "string" && record.output_text.trim()) {
-    return { text: record.output_text, partCount: 1 };
+  if (!record || !Array.isArray(record.candidates) || record.candidates.length < 1) {
+    return { text: "", partCount: 0 };
   }
-  if (!Array.isArray(record.steps)) return { text: "", partCount: 0 };
+  const candidate = asRecord(record.candidates[0]);
+  const content = asRecord(candidate?.content);
+  if (!content || !Array.isArray(content.parts)) return { text: "", partCount: 0 };
   const textParts: string[] = [];
-  for (const step of record.steps) {
-    const stepRecord = asRecord(step);
-    if (stepRecord?.type !== "model_output" || !Array.isArray(stepRecord.content)) continue;
-    for (const content of stepRecord.content) {
-      const contentRecord = asRecord(content);
-      if (contentRecord?.type === "text" && typeof contentRecord.text === "string" && contentRecord.text) {
-        textParts.push(contentRecord.text);
-      }
-    }
+  for (const part of content.parts) {
+    const partRecord = asRecord(part);
+    if (typeof partRecord?.text === "string" && partRecord.text) textParts.push(partRecord.text);
   }
   return { text: textParts.join(""), partCount: textParts.length };
 }
 
-function geminiInteractionStatus(payload: unknown): string {
+function inspectGenerateContentCompletion(payload: unknown): GenerateContentCompletion {
   const record = asRecord(payload);
-  return typeof record?.status === "string" ? record.status : "unknown";
-}
-
-function assertCompletedGeminiInteraction(payload: unknown): void {
-  const status = geminiInteractionStatus(payload);
-  if (status === "completed" || status === "unknown") return;
-  const statusMessages: Record<string, string> = {
-    incomplete: "أوقف Gemini الاستجابة قبل اكتمال JSON.",
-    budget_exceeded: "تجاوز Gemini ميزانية الرموز قبل اكتمال الاستجابة.",
-    failed: "فشل Gemini في إكمال الاستجابة.",
-    cancelled: "ألغى Gemini الاستجابة قبل اكتمالها.",
-    requires_action: "أعاد Gemini استجابة تتطلب إجراء غير متوقع.",
-    in_progress: "ما زالت استجابة Gemini قيد التنفيذ.",
-    queued: "تأخرت استجابة Gemini في قائمة الانتظار.",
-  };
-  throw retryableError(statusMessages[status] || `أعاد Gemini حالة غير مكتملة: ${status}.`);
-}
-
-function geminiModelOutputError(payload: unknown): string {
-  const record = asRecord(payload);
-  if (!record || !Array.isArray(record.steps)) return "";
-  for (const step of record.steps) {
-    const stepRecord = asRecord(step);
-    if (stepRecord?.type !== "model_output") continue;
-    const error = asRecord(stepRecord.error);
-    if (typeof error?.message === "string" && error.message.trim()) return error.message.trim();
+  const promptFeedback = asRecord(record?.promptFeedback);
+  const blockReason = typeof promptFeedback?.blockReason === "string" ? promptFeedback.blockReason : "";
+  if (blockReason && blockReason !== "BLOCK_REASON_UNSPECIFIED") {
+    throw httpError(`رفض Gemini الطلب قبل التوليد (${blockReason}).`, 422);
   }
-  return "";
+  if (!record || !Array.isArray(record.candidates) || record.candidates.length < 1) {
+    throw retryableError("لم يُرجع Gemini أي نتيجة مرشحة.");
+  }
+  const candidate = asRecord(record.candidates[0]);
+  const finishReason = typeof candidate?.finishReason === "string" ? candidate.finishReason : "FINISH_REASON_UNSPECIFIED";
+  const finishMessage = typeof candidate?.finishMessage === "string" ? candidate.finishMessage.trim() : "";
+  const usage = asRecord(record.usageMetadata);
+  const promptTokens = typeof usage?.promptTokenCount === "number" ? usage.promptTokenCount : null;
+  const outputTokens = typeof usage?.candidatesTokenCount === "number" ? usage.candidatesTokenCount : null;
+
+  if (finishReason === "STOP" || finishReason === "FINISH_REASON_UNSPECIFIED") {
+    return { finishReason, finishMessage, promptTokens, outputTokens };
+  }
+  if (finishReason === "MAX_TOKENS" || finishReason === "MALFORMED_RESPONSE" || finishReason === "OTHER") {
+    throw retryableError(finishMessage || `لم يكتمل ناتج Gemini (${finishReason}).`);
+  }
+  throw httpError(finishMessage || `أوقف Gemini التوليد (${finishReason}).`, 422);
 }
 
 function geminiError(payload: unknown, fallback: string): string {
