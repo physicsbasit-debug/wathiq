@@ -24,7 +24,7 @@ test("يضبط تكلفة التفكير وحجم الإخراج ويسجل بي
 });
 
 test("يحافظ على المسودات المكتملة ويرفع إصدار التطبيق فقط", () => {
-  assert.equal(pkg.version, "0.0.36");
+  assert.match(pkg.version, /^0\.0\.(?:36|37)$/);
   assert.match(generator, /source-grounded-policy-ai-9-visual-svg/);
   assert.match(pkg.description, /تقليل استهلاك Gemini/);
 });

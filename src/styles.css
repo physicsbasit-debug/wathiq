@@ -1328,3 +1328,47 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
   .qv-grid { stroke: #bbb; }
   .qv-bar, .qv-liquid { fill: #eee; }
 }
+
+/* Phase 1-C2: exam assembly, approval, and export */
+.constructed-standalone { border-top: 1px solid #8e98a5; padding-top: 14px; }
+.approval-status {
+  display: grid;
+  gap: 4px;
+  padding: 13px 14px;
+  border: 1px solid #d5dee9;
+  border-radius: 14px;
+  background: #f8fafc;
+}
+.approval-status strong { display: flex; align-items: center; gap: 7px; color: var(--navy-deep); }
+.approval-status span { color: var(--muted); font-size: 12px; }
+.approval-status.approved { border-color: #a7dbc4; background: #effaf5; }
+.approval-status.approved strong { color: #176b4c; }
+.approval-status.draft { border-color: #ead59a; background: #fffaf0; }
+.export-panel {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid #d5dee9;
+  border-radius: 14px;
+  background: #fbfcfe;
+}
+.export-panel h3 { margin: 0; color: var(--navy-deep); font-size: 15px; }
+.export-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.export-grid button { min-height: 43px; }
+.approval-toggle { min-height: 46px; }
+.approved-review .paper-preview { box-shadow: 0 0 0 2px rgba(34, 126, 91, 0.16), var(--shadow); }
+.teacher-key { display: grid; gap: 12px; }
+.teacher-key > h2 { margin: 0; text-align: center; }
+.teacher-key article { padding: 12px 0; border-bottom: 1px solid #dce3ec; }
+.teacher-key-head { display: flex; justify-content: space-between; gap: 12px; }
+
+@media (max-width: 720px) {
+  .export-grid { grid-template-columns: 1fr; }
+  .teacher-key-head { display: grid; }
+}
+
+@media print {
+  .approval-status,
+  .export-panel,
+  .approval-toggle { display: none !important; }
+}

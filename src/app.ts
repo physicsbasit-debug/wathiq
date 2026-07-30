@@ -1,11 +1,13 @@
 import { MOCK_LIBRARY, MOCK_SOURCES, SUBJECTS } from "./data.js";
 import {
   applyOfficialAssessmentTemplate,
+  approveExamDraft,
   buildPlan,
   createEmptyDraft,
   MAX_LESSON_TOPICS,
   MIN_LESSON_TOPICS,
   normalizeLessonTopics,
+  reopenExamDraft,
   isPlanComplete,
   selectedProposal,
   setExamTitle,
@@ -15,7 +17,8 @@ import {
 import { clearDraft, loadDraft, loadProfile, loadSources, saveDraft, saveProfile, saveSources } from "./storage.js";
 import type { ExamDraft, ExamTitleOption, ManagedSource, PlanItem, QuestionCounts, SourceDraft, SourceStatus, SourceExtractionResult, ViewName, WizardStep } from "./types.js";
 import { escapeHtml, formatArabicDate, icon } from "./ui.js";
-import { questionVisualTypeLabel, renderQuestionVisualSvg } from "./question-visual.js";
+import { questionVisualTypeLabel, renderQuestionVisualSvg, validateQuestionVisualSpec } from "./question-visual.js";
+import { buildStandaloneExamDocument, downloadWordHtml, interleaveAssessmentItems, printHtmlDocument, safeExportFileName } from "./exam-export.js";
 import { buildSourceDrivePath, changeSourceStatus, createEmptySourceDraft, createManagedSource, findDuplicateContentSource, findDuplicateSource, sourceSubjectLabel, SOURCE_KINDS, SOURCE_SEMESTERS, validateSourceDraft } from "./source-domain.js";
 import { createRegistryBackup, mergeSourceRegistry, parseRegistryBackup } from "./source-registry.js";
 import { CentralSourceStore } from "./central-source-store.js";
@@ -210,6 +213,10 @@ window.addEventListener("popstate", restoreViewFromLocation);
 window.addEventListener("hashchange", restoreViewFromLocation);
 
 function setStep(step: WizardStep): void {
+  if (state.draft.status === "معتمد" && step < 4) {
+    showToast("الاختبار معتمد. ألغِ الاعتماد أولًا لفتح التعديل.");
+    return;
+  }
   state.draft.currentStep = step;
   scheduleSave();
   render();
@@ -222,6 +229,8 @@ function invalidateGeneratedQuestions(): void {
   state.draft.generationVersion = "";
   state.draft.generationModel = "";
   state.draft.generatedAt = "";
+  state.draft.approvedAt = "";
+  state.draft.status = "مسودة";
   state.questionGenerationMessage = "";
 }
 
@@ -368,7 +377,7 @@ function renderStepper(): string {
   return `<ol class="stepper" aria-label="مراحل إنشاء الاختبار">${steps
     .map((step) => {
       const status = state.draft.currentStep === step.id ? "active" : state.draft.currentStep > step.id ? "done" : "";
-      return `<li class="${status}"><button data-step="${step.id}" ${state.draft.currentStep < step.id ? "disabled" : ""}><span>${status === "done" ? icon("check") : step.id}</span><b>${step.label}</b></button></li>`;
+      return `<li class="${status}"><button data-step="${step.id}" ${(state.draft.currentStep < step.id || (state.draft.status === "معتمد" && step.id < 4)) ? "disabled" : ""}><span>${status === "done" ? icon("check") : step.id}</span><b>${step.label}</b></button></li>`;
     })
     .join("")}</ol>`;
 }
@@ -571,8 +580,8 @@ function renderPlanItem(item: PlanItem, index: number): string {
   return `<article class="plan-card">
     <header><div class="question-number">${index + 1}</div><div><h3>${item.questionType}</h3><p>${escapeHtml(item.lessonLabel)} · ${escapeHtml(sourceLabel)}</p></div><div class="plan-tags"><span>${item.cognitiveLevel}</span><span>${item.marks} ${item.marks === 1 ? "درجة" : "درجات"}</span></div></header>
     ${renderPlanVisual(item)}
-    <div class="proposal-grid">${item.proposals.map((proposal, proposalIndex) => `<label class="proposal-card ${chosen === proposal.id ? "selected" : ""}"><input type="radio" name="proposal-${item.id}" data-plan-id="${item.id}" value="${proposal.id}" ${chosen === proposal.id ? "checked" : ""}/><div class="proposal-top"><span>البديل ${proposalIndex + 1}</span><div class="proposal-badges">${proposal.questionForm ? `<b class="question-form-badge">${escapeHtml(proposal.questionForm)}</b>` : ""}${proposal.needsReview ? `<b class="review-needed-badge">يحتاج تدقيقًا أدق</b>` : ""}</div></div>${proposal.stimulus ? `<div class="proposal-stimulus">${escapeHtml(proposal.stimulus)}</div>` : ""}<p>${escapeHtml(proposal.text)}</p>${renderProposalOptions(proposal.options)}<details class="proposal-evidence"><summary>الإجابة ونموذج التصحيح ودليل المصدر</summary><p class="proposal-answer"><strong>الإجابة:</strong> ${escapeHtml(proposal.answer)}</p>${renderMarkScheme(proposal.markScheme)}${proposal.rationale ? `<p><strong>سبب الإجابة:</strong> ${escapeHtml(proposal.rationale)}</p>` : ""}${proposal.sourceSupport ? `<blockquote>${escapeHtml(proposal.sourceSupport)}</blockquote>` : ""}</details><span class="choose-label">${chosen === proposal.id ? `${icon("check")} تم الاختيار` : "اختر هذا السؤال"}</span></label>`).join("")}</div>
-    <footer><button class="text-btn" data-regenerate="${item.id}" ${state.questionGenerationBusy ? "disabled" : ""}>${icon("spark")} توليد ثلاثة بدائل جديدة لهذه المفردة</button></footer>
+    <div class="proposal-grid">${item.proposals.map((proposal, proposalIndex) => `<label class="proposal-card ${chosen === proposal.id ? "selected" : ""}"><input type="radio" name="proposal-${item.id}" data-plan-id="${item.id}" value="${proposal.id}" ${chosen === proposal.id ? "checked" : ""} ${state.draft.status === "معتمد" ? "disabled" : ""}/><div class="proposal-top"><span>البديل ${proposalIndex + 1}</span><div class="proposal-badges">${proposal.questionForm ? `<b class="question-form-badge">${escapeHtml(proposal.questionForm)}</b>` : ""}${proposal.needsReview ? `<b class="review-needed-badge">يحتاج تدقيقًا أدق</b>` : ""}</div></div>${proposal.stimulus ? `<div class="proposal-stimulus">${escapeHtml(proposal.stimulus)}</div>` : ""}<p>${escapeHtml(proposal.text)}</p>${renderProposalOptions(proposal.options)}<details class="proposal-evidence"><summary>الإجابة ونموذج التصحيح ودليل المصدر</summary><p class="proposal-answer"><strong>الإجابة:</strong> ${escapeHtml(proposal.answer)}</p>${renderMarkScheme(proposal.markScheme)}${proposal.rationale ? `<p><strong>سبب الإجابة:</strong> ${escapeHtml(proposal.rationale)}</p>` : ""}${proposal.sourceSupport ? `<blockquote>${escapeHtml(proposal.sourceSupport)}</blockquote>` : ""}</details><span class="choose-label">${chosen === proposal.id ? `${icon("check")} تم الاختيار` : "اختر هذا السؤال"}</span></label>`).join("")}</div>
+    <footer><button class="text-btn" data-regenerate="${item.id}" ${(state.questionGenerationBusy || state.draft.status === "معتمد") ? "disabled" : ""}>${icon("spark")} توليد ثلاثة بدائل جديدة لهذه المفردة</button></footer>
   </article>`;
 }
 
@@ -595,79 +604,179 @@ function renderPaperResponseArea(item: PlanItem, proposal: SelectedPaperItem["pr
 }
 
 function renderPaperPrompt(item: PlanItem, proposal: SelectedPaperItem["proposal"], label: string, subpart: boolean): string {
-  return `<div class="${subpart ? "paper-subpart" : "paper-question"}">${renderPlanVisual(item, true)}${proposal.stimulus ? `<div class="paper-stimulus">${escapeHtml(proposal.stimulus)}</div>` : ""}<div class="paper-question-title"><b>${escapeHtml(label)}</b><span>${escapeHtml(proposal.text)}</span><strong>[${item.marks}]</strong></div>${renderPaperResponseArea(item, proposal)}</div>`;
+  return `<div class="${subpart ? "paper-subpart" : "paper-question"}">${proposal.stimulus ? `<div class="paper-stimulus">${escapeHtml(proposal.stimulus)}</div>` : ""}${renderPlanVisual(item, true)}<div class="paper-question-title"><b>${escapeHtml(label)}</b><span>${escapeHtml(proposal.text)}</span><strong>[${item.marks}]</strong></div>${renderPaperResponseArea(item, proposal)}</div>`;
 }
 
 function buildPaperLayout(selected: SelectedPaperItem[]): PaperLayout {
   const labels = new Map<string, string>();
-  const multipleChoice = selected.filter(({ item }) => item.questionType === "اختيار من متعدد");
-  const constructed = selected.filter(({ item }) => item.questionType !== "اختيار من متعدد");
+  const ordered = interleaveAssessmentItems(
+    selected,
+    ({ item }) => item.questionType === "اختيار من متعدد",
+  );
   let mainNumber = 1;
   const parts: string[] = [];
 
-  for (const entry of multipleChoice) {
-    const label = `${mainNumber})`;
-    labels.set(entry.item.id, `${mainNumber}`);
-    parts.push(`<article class="standalone-question">${renderPaperPrompt(entry.item, entry.proposal, label, false)}</article>`);
-    mainNumber += 1;
-  }
+  for (let index = 0; index < ordered.length;) {
+    const entry = ordered[index];
+    if (!entry) break;
+    if (entry.item.questionType === "اختيار من متعدد") {
+      const label = `${mainNumber})`;
+      labels.set(entry.item.id, `${mainNumber}`);
+      parts.push(`<article class="standalone-question">${renderPaperPrompt(entry.item, entry.proposal, label, false)}</article>`);
+      mainNumber += 1;
+      index += 1;
+      continue;
+    }
 
-  const groups = new Map<string, SelectedPaperItem[]>();
-  for (const entry of constructed) {
-    const key = entry.item.lessonLabel || "مفردات مترابطة";
-    const group = groups.get(key) ?? [];
-    group.push(entry);
-    groups.set(key, group);
-  }
+    const lessonLabel = entry.item.lessonLabel || "مفردات مترابطة";
+    const group: SelectedPaperItem[] = [entry];
+    let cursor = index + 1;
+    while (cursor < ordered.length) {
+      const next = ordered[cursor];
+      if (!next || next.item.questionType === "اختيار من متعدد" || (next.item.lessonLabel || "مفردات مترابطة") !== lessonLabel) break;
+      group.push(next);
+      cursor += 1;
+    }
 
-  for (const [lessonLabel, group] of groups) {
-    const groupNumber = mainNumber;
-    const totalMarks = group.reduce((sum, entry) => sum + entry.item.marks, 0);
-    const subparts = group.map((entry, index) => {
-      const subLabel = `(${ARABIC_SUBPART_LABELS[index] ?? index + 1})`;
-      labels.set(entry.item.id, `${groupNumber}${subLabel}`);
-      return renderPaperPrompt(entry.item, entry.proposal, subLabel, true);
-    }).join("");
-    parts.push(`<article class="structured-question"><header class="structured-question-header"><b>${groupNumber})</b><span>اقرأ الموقف أو البيانات الآتية، ثم أجب عن المفردات المرتبطة بدرس: ${escapeHtml(lessonLabel)}.</span><strong>[المجموع: ${totalMarks}]</strong></header>${subparts}</article>`);
+    if (group.length === 1) {
+      const only = group[0]!;
+      const label = `${mainNumber})`;
+      labels.set(only.item.id, `${mainNumber}`);
+      parts.push(`<article class="standalone-question constructed-standalone">${renderPaperPrompt(only.item, only.proposal, label, false)}</article>`);
+    } else {
+      const totalMarks = group.reduce((sum, item) => sum + item.item.marks, 0);
+      const subparts = group.map((groupEntry, subIndex) => {
+        const subLabel = `(${ARABIC_SUBPART_LABELS[subIndex] ?? subIndex + 1})`;
+        labels.set(groupEntry.item.id, `${mainNumber}${subLabel}`);
+        return renderPaperPrompt(groupEntry.item, groupEntry.proposal, subLabel, true);
+      }).join("");
+      parts.push(`<article class="structured-question"><header class="structured-question-header"><b>${mainNumber})</b><span>اقرأ الموقف أو البيانات الآتية، ثم أجب عن المفردات المرتبطة بدرس: ${escapeHtml(lessonLabel)}.</span><strong>[المجموع: ${totalMarks}]</strong></header>${subparts}</article>`);
+    }
     mainNumber += 1;
+    index = cursor;
   }
 
   return { html: parts.join(""), labels };
 }
 
-function renderAnswerKey(selected: SelectedPaperItem[], labels: Map<string, string>): string {
-  return `<details class="answer-key"><summary>نموذج الإجابة وأدلة المصدر</summary>${selected.map(({ item, proposal }) => {
+function renderAnswerKeyArticles(selected: SelectedPaperItem[], labels: Map<string, string>, exportMode = false): string {
+  return selected.map(({ item, proposal }) => {
     const reference = state.draft.sourceReferences.find((entry) => entry.id === item.sourceReferenceId);
     const pages = reference ? (reference.pageFrom === reference.pageTo ? `ص ${reference.pageFrom}` : `ص ${reference.pageFrom}-${reference.pageTo}`) : "مرجع غير محدد";
     const label = labels.get(item.id) ?? "؟";
-    return `<article><div class="answer-key-head"><strong>${escapeHtml(label)}) ${escapeHtml(proposal.answer)}</strong>${proposal.questionForm ? `<span>${escapeHtml(proposal.questionForm)}</span>` : ""}</div>${renderPlanVisual(item, true)}${renderMarkScheme(proposal.markScheme)}${proposal.rationale ? `<p>${escapeHtml(proposal.rationale)}</p>` : ""}<small>${escapeHtml(reference?.sourceTitle ?? "المصدر")} · ${pages}</small>${proposal.sourceSupport ? `<blockquote>${escapeHtml(proposal.sourceSupport)}</blockquote>` : ""}</article>`;
-  }).join("")}</details>`;
+    const headClass = exportMode ? "teacher-key-head" : "answer-key-head";
+    return `<article><div class="${headClass}"><strong>${escapeHtml(label)}) ${escapeHtml(proposal.answer)}</strong>${proposal.questionForm ? `<span>${escapeHtml(proposal.questionForm)}</span>` : ""}</div>${renderPlanVisual(item, true)}${renderMarkScheme(proposal.markScheme)}${proposal.rationale ? `<p>${escapeHtml(proposal.rationale)}</p>` : ""}<small>${escapeHtml(reference?.sourceTitle ?? "المصدر")} · ${pages}</small>${proposal.sourceSupport ? `<blockquote>${escapeHtml(proposal.sourceSupport)}</blockquote>` : ""}</article>`;
+  }).join("");
+}
+
+function renderAnswerKey(selected: SelectedPaperItem[], labels: Map<string, string>): string {
+  return `<details class="answer-key"><summary>نموذج الإجابة وأدلة المصدر</summary>${renderAnswerKeyArticles(selected, labels)}</details>`;
+}
+
+function renderTeacherAnswerKey(selected: SelectedPaperItem[], labels: Map<string, string>): string {
+  return `<section class="teacher-key"><h2>نموذج الإجابة والتصحيح</h2>${renderAnswerKeyArticles(selected, labels, true)}</section>`;
+}
+
+interface ReviewReadiness {
+  ready: boolean;
+  checks: Array<{ label: string; okay: boolean }>;
+}
+
+function selectedPaperItems(): SelectedPaperItem[] {
+  return state.draft.plan.flatMap((item) => {
+    const proposal = selectedProposal(state.draft, item);
+    return proposal ? [{ item, proposal }] : [];
+  });
+}
+
+function visualSignature(item: PlanItem): string {
+  if (!item.visual || item.visual.type === "none") return "";
+  const { visualId: _visualId, title: _title, altText: _altText, purpose: _purpose, ...structural } = item.visual;
+  return JSON.stringify(structural);
+}
+
+function reviewReadiness(selected: SelectedPaperItem[]): ReviewReadiness {
+  const setupValid = validateExamSetup(state.draft).valid;
+  const markTotal = state.draft.plan.reduce((sum, item) => sum + item.marks, 0);
+  const groundedGeneration = state.draft.generationVersion === SOURCE_GENERATION_VERSION;
+  const markSchemesComplete = selected.length === state.draft.plan.length
+    && selected.every(({ item, proposal }) => proposal.markScheme?.length === item.marks);
+  const visualItems = state.draft.plan.filter((item) => item.visual && item.visual.type !== "none");
+  const visualValidity = visualItems.every((item) => {
+    try {
+      validateQuestionVisualSpec(item.visual!);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  const signatures = visualItems.map(visualSignature).filter(Boolean);
+  const visualsUnique = signatures.length === new Set(signatures).size;
+  const checks = [
+    { label: "ارتباط الدروس بالمصدر", okay: state.draft.sourceReferences.length > 0 },
+    { label: "مجموع الدرجات", okay: markTotal === state.draft.totalMarks },
+    { label: "اختيار مفردات الخطة", okay: isPlanComplete(state.draft) },
+    { label: "توليد الأسئلة من المصدر", okay: groundedGeneration },
+    { label: "نموذج تصحيح لكل درجة", okay: markSchemesComplete },
+    { label: `العناصر البصرية (${visualItems.length})`, okay: visualValidity && visualsUnique },
+    { label: "بيانات الاختبار والمواصفة", okay: setupValid },
+  ];
+  return { ready: checks.every((check) => check.okay), checks };
+}
+
+function renderStudentPaper(subject: string, paperLayout: PaperLayout): string {
+  return `<section class="paper-preview">
+    <header class="paper-header"><div class="ministry-mark">شعار<br/>الخنجر</div><div><strong>سلطنة عُمان</strong><span>وزارة التعليم</span><span>${escapeHtml(state.draft.directorate)}</span><span>${escapeHtml(state.draft.school)}</span></div></header>
+    <div class="paper-title"><h2>${escapeHtml(state.draft.title)}</h2><p>${subject} · الصف ${state.draft.grade} · الفصل الدراسي ${escapeHtml(state.draft.semester)} · ${escapeHtml(state.draft.academicYear)}</p></div>
+    <div class="student-row"><span>اسم الطالب: ____________________</span><span>التاريخ: ${formatArabicDate(state.draft.examDate)}</span><span>الزمن: ${state.draft.durationMinutes} دقيقة</span></div>
+    <div class="paper-questions">${paperLayout.html}</div>
+    <footer class="paper-footer">- 1 -</footer>
+  </section>`;
+}
+
+function exportDocumentHtml(kind: "student" | "answer"): { html: string; fileName: string } {
+  const selected = selectedPaperItems();
+  const paperLayout = buildPaperLayout(selected);
+  const subject = SUBJECTS.find((item) => item.id === state.draft.subjectId)?.label ?? "المادة";
+  const body = kind === "student"
+    ? renderStudentPaper(subject, paperLayout)
+    : `${renderStudentPaper(subject, paperLayout)}${renderTeacherAnswerKey(selected, paperLayout.labels)}`;
+  const label = kind === "student" ? "ورقة_الطالب" : "نموذج_الإجابة";
+  const fileName = safeExportFileName(`${state.draft.title}_${subject}_الصف_${state.draft.grade}_${label}`);
+  return {
+    html: buildStandaloneExamDocument({
+      title: fileName,
+      bodyHtml: body,
+      kind,
+      ...(state.draft.approvedAt ? { approvedAt: formatArabicDate(state.draft.approvedAt.slice(0, 10)) } : {}),
+    }),
+    fileName,
+  };
 }
 
 function renderReviewStep(): string {
   const subject = SUBJECTS.find((item) => item.id === state.draft.subjectId)?.label ?? "المادة";
-  const selected = state.draft.plan.flatMap((item) => {
-    const proposal = selectedProposal(state.draft, item);
-    return proposal ? [{ item, proposal }] : [];
-  });
-  const groundedGeneration = state.draft.generationVersion === SOURCE_GENERATION_VERSION;
-  const visualItems = state.draft.plan.filter((item) => item.visual && item.visual.type !== "none");
+  const selected = selectedPaperItems();
   const paperLayout = buildPaperLayout(selected);
+  const readiness = reviewReadiness(selected);
+  const approved = state.draft.status === "معتمد";
+  const approvalLabel = approved && state.draft.approvedAt
+    ? `معتمد بتاريخ ${formatArabicDate(state.draft.approvedAt.slice(0, 10))}`
+    : "مسودة قيد المراجعة";
   return `
-    <div class="review-layout">
-      <section class="paper-preview">
-        <header class="paper-header"><div class="ministry-mark">شعار<br/>الخنجر</div><div><strong>سلطنة عُمان</strong><span>وزارة التعليم</span><span>${escapeHtml(state.draft.directorate)}</span><span>${escapeHtml(state.draft.school)}</span></div></header>
-        <div class="paper-title"><h2>${escapeHtml(state.draft.title)}</h2><p>${subject} · الصف ${state.draft.grade} · الفصل الدراسي ${escapeHtml(state.draft.semester)} · ${escapeHtml(state.draft.academicYear)}</p></div>
-        <div class="student-row"><span>اسم الطالب: ____________________</span><span>التاريخ: ${formatArabicDate(state.draft.examDate)}</span><span>الزمن: ${state.draft.durationMinutes} دقيقة</span></div>
-        <div class="paper-questions">${paperLayout.html}</div>
-        <footer class="paper-footer">- 1 -</footer>
-      </section>
+    <div class="review-layout ${approved ? "approved-review" : ""}">
+      ${renderStudentPaper(subject, paperLayout)}
       <aside class="review-panel">
-        <div class="final-check"><h3>حالة المسودة</h3>${checkRow("ارتباط الدروس بالمصدر", state.draft.sourceReferences.length > 0)}${checkRow("مجموع الدرجات", true)}${checkRow("اختيار مفردات الخطة", isPlanComplete(state.draft))}${checkRow("توليد الأسئلة من المصدر", groundedGeneration)}${checkRow(`العناصر البصرية (${visualItems.length})`, true)}</div>
-        <div class="review-summary"><span>الدرجة</span><strong>${state.draft.totalMarks}</strong><span>الأسئلة</span><strong>${state.draft.plan.length}</strong><span>المواصفة</span><strong>معتمدة</strong></div>
+        <div class="approval-status ${approved ? "approved" : "draft"}"><strong>${approved ? `${icon("check")} اختبار معتمد` : "اختبار غير معتمد"}</strong><span>${escapeHtml(approvalLabel)}</span></div>
+        <div class="final-check"><h3>حالة ${approved ? "الاختبار" : "المسودة"}</h3>${readiness.checks.map((check) => checkRow(check.label, check.okay)).join("")}</div>
+        <div class="review-summary"><span>الدرجة</span><strong>${state.draft.totalMarks}</strong><span>الأسئلة</span><strong>${state.draft.plan.length}</strong><span>الحالة</span><strong>${state.draft.status}</strong></div>
         ${renderAnswerKey(selected, paperLayout.labels)}
-        <button class="primary-btn full" data-action="save-now">${icon("save")} حفظ المسودة</button>
-        <p class="muted-note">الأسئلة مولدة من نصوص المصدر وفق قالب عُماني وبناء أسلوبي دولي، لكنها تبقى مسودة تحتاج مراجعة المعلم قبل الاستخدام. تُحفظ مراجع الصفحات وأدلة النص في نموذج المعلم، ولا تظهر في ورقة الطالب. التصدير النهائي لم يُفعّل بعد.</p>
+        ${approved ? `<section class="export-panel"><h3>التصدير النهائي</h3><div class="export-grid"><button class="secondary-btn" data-action="export-student-word">ورقة الطالب Word (.doc)</button><button class="secondary-btn" data-action="export-student-pdf">ورقة الطالب PDF / طباعة</button><button class="secondary-btn" data-action="export-answer-word">نموذج الإجابة Word (.doc)</button><button class="secondary-btn" data-action="export-answer-pdf">نموذج الإجابة PDF / طباعة</button></div></section>` : ""}
+        ${approved
+          ? `<button class="secondary-btn full approval-toggle" data-action="reopen-draft">إلغاء الاعتماد للتعديل</button>`
+          : `<button class="primary-btn full approval-toggle" data-action="approve-draft" ${readiness.ready ? "" : "disabled"}>${icon("check")} اعتماد الاختبار</button>`}
+        <button class="secondary-btn full" data-action="save-now">${icon("save")} حفظ ${approved ? "الاختبار" : "المسودة"}</button>
+        <p class="muted-note">${approved ? "تم قفل التعديل وتفعيل نسخ Word وPDF. ألغِ الاعتماد فقط عند الحاجة إلى تعديل فعلي." : "الأسئلة تحتاج مراجعة المعلم قبل الاستخدام. راجع الصياغة والرسومات ونموذج التصحيح، ثم اعتمد الاختبار لتفعيل التصدير النهائي."}</p>
       </aside>
     </div>
     ${renderWizardFooter(4, true)}
@@ -687,7 +796,7 @@ function renderWizardFooter(step: WizardStep, canContinue = true): string {
       ? "جارٍ إنشاء الأسئلة من المصدر…"
       : `التالي ${icon("arrow")}`;
   const busy = retrieving || generating;
-  return `<footer class="wizard-footer">${step > 1 ? `<button class="secondary-btn" data-action="previous-step" ${busy ? "disabled" : ""}>السابق</button>` : `<button class="secondary-btn" data-nav="home">إلغاء</button>`}<div>${step < 4 ? `<button class="primary-btn" data-action="next-step" ${canContinue && !busy ? "" : "disabled"}>${nextLabel}</button>` : `<button class="secondary-btn" data-nav="library">الذهاب إلى اختباراتي</button>`}</div></footer>`;
+  return `<footer class="wizard-footer">${step > 1 ? `<button class="secondary-btn" data-action="previous-step" ${(busy || state.draft.status === "معتمد") ? "disabled" : ""}>السابق</button>` : `<button class="secondary-btn" data-nav="home">إلغاء</button>`}<div>${step < 4 ? `<button class="primary-btn" data-action="next-step" ${canContinue && !busy ? "" : "disabled"}>${nextLabel}</button>` : `<button class="secondary-btn" data-nav="library">الذهاب إلى اختباراتي</button>`}</div></footer>`;
 }
 
 function renderPolicyReference(): string {
@@ -775,7 +884,7 @@ function renderPolicyRuleCard(title: string, rules: readonly string[]): string {
 function renderLibrary(): string {
   const localDraft = loadDraft();
   const exams = [
-    ...(localDraft ? [{ id: localDraft.id, title: localDraft.title || "مسودة اختبار بلا عنوان", subject: SUBJECTS.find((item) => item.id === localDraft.subjectId)?.label ?? "غير محددة", grade: localDraft.grade ?? 0, status: "مسودة" as const, date: localDraft.updatedAt.slice(0, 10), progress: localDraft.currentStep * 25 }] : []),
+    ...(localDraft ? [{ id: localDraft.id, title: localDraft.title || "مسودة اختبار بلا عنوان", subject: SUBJECTS.find((item) => item.id === localDraft.subjectId)?.label ?? "غير محددة", grade: localDraft.grade ?? 0, status: localDraft.status === "معتمد" ? "معتمد" as const : "مسودة" as const, date: localDraft.updatedAt.slice(0, 10), progress: localDraft.status === "معتمد" ? 100 : localDraft.currentStep * 25 }] : []),
     ...MOCK_LIBRARY,
   ].filter((exam) => state.libraryFilter === "الكل" || exam.status === state.libraryFilter);
 
@@ -787,7 +896,7 @@ function renderLibrary(): string {
 }
 
 function renderExamCard(exam: (typeof MOCK_LIBRARY)[number]): string {
-  return `<article class="exam-card" data-search-text="${escapeHtml(`${exam.title} ${exam.subject} ${exam.grade}`)}"><div class="exam-card-head"><span class="status-badge ${exam.status === "معتمد" ? "approved" : "draft"}">${exam.status}</span>${exam.hasModelB ? `<span class="model-badge">أ + ب</span>` : ""}</div><h2>${escapeHtml(exam.title)}</h2><p>${escapeHtml(exam.subject)} · الصف ${exam.grade || "غير محدد"}</p><div class="exam-meta"><span>${formatArabicDate(exam.date)}</span>${exam.progress ? `<span>${exam.progress}% مكتمل</span>` : ""}</div>${exam.progress ? `<div class="progress-track"><span style="width:${exam.progress}%"></span></div>` : ""}<div class="exam-actions">${exam.status === "مسودة" ? `<button class="primary-btn compact" data-action="resume-draft">متابعة</button><button class="ghost-btn compact" data-action="delete-draft">حذف</button>` : `<button class="secondary-btn compact" data-action="mock-download">تنزيل Word</button><button class="ghost-btn compact" data-action="mock-download">تنزيل PDF</button>`}</div></article>`;
+  return `<article class="exam-card" data-search-text="${escapeHtml(`${exam.title} ${exam.subject} ${exam.grade}`)}"><div class="exam-card-head"><span class="status-badge ${exam.status === "معتمد" ? "approved" : "draft"}">${exam.status}</span>${exam.hasModelB ? `<span class="model-badge">أ + ب</span>` : ""}</div><h2>${escapeHtml(exam.title)}</h2><p>${escapeHtml(exam.subject)} · الصف ${exam.grade || "غير محدد"}</p><div class="exam-meta"><span>${formatArabicDate(exam.date)}</span>${exam.progress ? `<span>${exam.progress}% مكتمل</span>` : ""}</div>${exam.progress ? `<div class="progress-track"><span style="width:${exam.progress}%"></span></div>` : ""}<div class="exam-actions">${exam.status === "مسودة" ? `<button class="primary-btn compact" data-action="resume-draft">متابعة</button><button class="ghost-btn compact" data-action="delete-draft">حذف</button>` : `<button class="primary-btn compact" data-action="resume-draft">فتح الاختبار</button>`}</div></article>`;
 }
 
 
@@ -1157,6 +1266,41 @@ function handleAction(action: string, element: HTMLElement): void {
     return;
   }
   if (action === "save-now") return saveNow();
+  if (action === "approve-draft") {
+    const readiness = reviewReadiness(selectedPaperItems());
+    if (!readiness.ready) {
+      showToast("لا يمكن اعتماد الاختبار قبل اكتمال جميع فحوص المراجعة.");
+      return;
+    }
+    approveExamDraft(state.draft);
+    saveNow();
+    render();
+    showToast("تم اعتماد الاختبار وقفل التعديل وتفعيل التصدير.");
+    return;
+  }
+  if (action === "reopen-draft") {
+    reopenExamDraft(state.draft);
+    saveNow();
+    render();
+    showToast("تم إلغاء الاعتماد وفتح الاختبار للتعديل.");
+    return;
+  }
+  if (["export-student-word", "export-student-pdf", "export-answer-word", "export-answer-pdf"].includes(action)) {
+    if (state.draft.status !== "معتمد") {
+      showToast("اعتمد الاختبار أولًا قبل التصدير النهائي.");
+      return;
+    }
+    const kind = action.includes("answer") ? "answer" as const : "student" as const;
+    const document = exportDocumentHtml(kind);
+    if (action.endsWith("word")) {
+      void downloadWordHtml(document.fileName, document.html)
+        .then(() => showToast("تم تجهيز ملف Word للتنزيل مع تحويل الرسومات إلى صور واضحة."))
+        .catch((error: unknown) => showToast(error instanceof Error ? error.message : "تعذر تجهيز ملف Word."));
+    } else if (!printHtmlDocument(document.fileName, document.html)) {
+      showToast("تعذر فتح نافذة الطباعة. اسمح بالنوافذ المنبثقة ثم أعد المحاولة.");
+    }
+    return;
+  }
   if (action === "previous-step") return setStep(Math.max(1, state.draft.currentStep - 1) as WizardStep);
   if (action === "next-step") { void nextStep(); return; }
   if (action === "apply-suggestion") return applySuggestedCounts();
@@ -1316,6 +1460,7 @@ async function nextStep(): Promise<void> {
   }
   if (step === 3) {
     if (!isPlanComplete(state.draft)) return showToast("اختر سؤالًا واحدًا لكل مفردة.");
+    if (state.draft.status !== "معتمد") state.draft.status = "جاهز للمراجعة";
     return setStep(4);
   }
 }
@@ -1647,6 +1792,7 @@ function applySuggestedCounts(): void {
 function bindPlanStep(): void {
   document.querySelectorAll<HTMLInputElement>("[data-plan-id]").forEach((input) => {
     input.addEventListener("change", () => {
+      if (state.draft.status === "معتمد") return;
       const planId = input.dataset.planId;
       if (!planId) return;
       state.draft.selectedProposalByPlanItem[planId] = input.value;
@@ -1657,6 +1803,7 @@ function bindPlanStep(): void {
 
   document.querySelectorAll<HTMLElement>("[data-regenerate]").forEach((button) => {
     button.addEventListener("click", () => {
+      if (state.draft.status === "معتمد") return;
       const planId = button.dataset.regenerate;
       const item = state.draft.plan.find((entry) => entry.id === planId);
       if (!item) return;

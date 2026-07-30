@@ -8,6 +8,7 @@ export type ExamTitleOption = "الاختبار القصير الأول" | "ال
 export type AssessmentType = "اختبار قصير رسمي" | "امتحان نهاية الفصل الدراسي";
 export type QuestionDesignPattern = "مفهومي" | "سياقي" | "حسابي" | "بيانات" | "استقصائي" | "مقارنة";
 export type QuestionVisualType = "none" | "line_graph" | "bar_chart" | "pressure_diagram" | "circuit_diagram";
+export type QuestionVisualVariant = "default" | "submerged_object" | "depth_comparison" | "force_area" | "liquid_column" | "series_circuit" | "measurement_circuit" | "trend" | "comparison";
 export type CircuitComponent = "battery" | "switch_open" | "switch_closed" | "lamp" | "resistor" | "ammeter" | "voltmeter";
 
 export interface QuestionVisualPoint {
@@ -18,6 +19,9 @@ export interface QuestionVisualPoint {
 
 export interface QuestionVisualSpec {
   type: QuestionVisualType;
+  visualId?: string;
+  variant?: QuestionVisualVariant;
+  purpose?: string;
   title: string;
   altText: string;
   xAxisLabel: string;
@@ -105,6 +109,7 @@ export interface ExamDraft {
   generationVersion: string;
   generationModel: string;
   generatedAt: string;
+  approvedAt: string;
   currentStep: WizardStep;
   updatedAt: string;
   status: "مسودة" | "جاهز للمراجعة" | "معتمد";

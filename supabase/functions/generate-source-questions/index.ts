@@ -25,6 +25,7 @@ type ItemDifficulty = "منخفض" | "متوسط" | "مرتفع";
 type AssessmentType = "اختبار قصير رسمي" | "امتحان نهاية الفصل الدراسي";
 type QuestionDesignPattern = "مفهومي" | "سياقي" | "حسابي" | "بيانات" | "استقصائي" | "مقارنة";
 type QuestionVisualType = "none" | "line_graph" | "bar_chart" | "pressure_diagram" | "circuit_diagram";
+type QuestionVisualVariant = "default" | "submerged_object" | "depth_comparison" | "force_area" | "liquid_column" | "series_circuit" | "measurement_circuit" | "trend" | "comparison";
 type CircuitComponent = "battery" | "switch_open" | "switch_closed" | "lamp" | "resistor" | "ammeter" | "voltmeter";
 
 interface QuestionVisualPoint {
@@ -35,6 +36,9 @@ interface QuestionVisualPoint {
 
 interface QuestionVisualSpec {
   type: QuestionVisualType;
+  visualId: string;
+  variant: QuestionVisualVariant;
+  purpose: string;
   title: string;
   altText: string;
   xAxisLabel: string;
@@ -840,6 +844,9 @@ const CIRCUIT_COMPONENTS: readonly CircuitComponent[] = ["battery", "switch_open
 function emptyVisualSpec(): QuestionVisualSpec {
   return {
     type: "none",
+    visualId: "",
+    variant: "default",
+    purpose: "",
     title: "",
     altText: "",
     xAxisLabel: "",
@@ -951,31 +958,80 @@ function buildServerOwnedVisualSpec(item: GenerationItem, request: GenerationReq
 
   const reference = referenceForVisual(item, request);
   const context = normalizeVisualContext(`${request.subject} ${request.topic} ${item.lessonLabel} ${reference?.content ?? ""}`);
-  const seed = visualSeed(`${item.planItemId}|${item.lessonLabel}|${item.visualTarget}`);
+  const seed = visualSeed(`${item.planItemId}|${item.lessonLabel}|${item.visualTarget}|${item.styleTarget}`);
   const titleSuffix = item.lessonLabel ? ` - ${item.lessonLabel}` : "";
+  const visualId = `visual-${item.planItemId}`;
 
   if (item.visualTarget === "pressure_diagram") {
     const liquid = inferLiquidName(context);
-    const objectDepth = 0.42 + ((seed % 13) / 100);
-    return {
+    const liquidLevel = 0.68 + ((seed % 9) / 100);
+    const base = {
       ...emptyVisualSpec(),
-      type: "pressure_diagram",
-      title: `جسم داخل ${liquid}${titleSuffix}`,
-      altText: `وعاء يحتوي ${liquid} وجسمًا عند عمق محدد أسفل السطح`,
+      type: "pressure_diagram" as const,
+      visualId,
       labels: [liquid, "الجسم"],
-      values: [0.74, Math.min(0.62, objectDepth)],
-      annotations: ["سطح السائل", "العمق"],
+    };
+    if (item.styleTarget === "حسابي") {
+      return {
+        ...base,
+        variant: "force_area",
+        purpose: "تمثيل القوة العمودية ومساحة التلامس في علاقة الضغط",
+        title: `القوة والمساحة في حساب الضغط${titleSuffix}`,
+        altText: "جسم يؤثر بقوة عمودية على سطح ذي مساحة تلامس محددة",
+        values: [liquidLevel, 0.5],
+        annotations: ["القوة F", "المساحة A"],
+      };
+    }
+    if (item.styleTarget === "مقارنة" || item.cognitiveLevel === "استدلال") {
+      const firstDepth = 0.28 + ((seed % 9) / 100);
+      return {
+        ...base,
+        variant: "depth_comparison",
+        purpose: "مقارنة الضغط عند عمقين مختلفين داخل السائل",
+        title: `مقارنة الضغط عند عمقين${titleSuffix}`,
+        altText: `جسمان داخل ${liquid} عند عمقين مختلفين أسفل السطح`,
+        values: [liquidLevel, firstDepth, Math.min(0.84, firstDepth + 0.34)],
+        annotations: ["العمق h₁", "العمق h₂"],
+      };
+    }
+    if (seed % 3 === 0) {
+      return {
+        ...base,
+        variant: "liquid_column",
+        purpose: "ربط ارتفاع عمود السائل بالضغط عند قاعدته",
+        title: `عمود سائل وقياس الضغط${titleSuffix}`,
+        altText: `عمود من ${liquid} متصل بمقياس ضغط عند القاعدة`,
+        values: [liquidLevel, 0.5],
+        annotations: ["ارتفاع العمود h", "مقياس الضغط P"],
+      };
+    }
+    const objectDepth = 0.38 + ((seed % 19) / 100);
+    return {
+      ...base,
+      variant: "submerged_object",
+      purpose: "تحديد عمق جسم مغمور أسفل سطح السائل",
+      title: `جسم مغمور داخل ${liquid}${titleSuffix}`,
+      altText: `وعاء يحتوي ${liquid} وجسمًا عند عمق محدد أسفل السطح`,
+      values: [liquidLevel, Math.min(0.68, objectDepth)],
+      annotations: ["سطح السائل", "العمق h"],
     };
   }
 
   if (item.visualTarget === "circuit_diagram") {
-    const components: CircuitComponent[] = ["battery", "switch_closed"];
+    const measurement = item.styleTarget === "بيانات" || item.styleTarget === "استقصائي" || item.cognitiveLevel === "استدلال";
+    const components: CircuitComponent[] = ["battery", seed % 2 === 0 ? "switch_closed" : "switch_open"];
     components.push(/مقاوم/u.test(context) ? "resistor" : "lamp");
+    if (measurement) components.push("ammeter");
     return {
       ...emptyVisualSpec(),
       type: "circuit_diagram",
-      title: `دائرة كهربائية مبسطة${titleSuffix}`,
-      altText: "دائرة كهربائية مغلقة تحتوي بطارية ومفتاحًا وحملًا كهربائيًا",
+      visualId,
+      variant: measurement ? "measurement_circuit" : "series_circuit",
+      purpose: measurement ? "قراءة أو تحليل دائرة كهربائية مزودة بجهاز قياس" : "تحديد مكونات ومسار دائرة كهربائية بسيطة",
+      title: `${measurement ? "دائرة قياس كهربائية" : "دائرة كهربائية بسيطة"}${titleSuffix}`,
+      altText: measurement
+        ? "دائرة كهربائية تحتوي بطارية ومفتاحًا وحملًا وأميترًا"
+        : "دائرة كهربائية تحتوي بطارية ومفتاحًا وحملًا كهربائيًا",
       components,
       annotations: components.map((component) => ({
         battery: "بطارية",
@@ -990,42 +1046,51 @@ function buildServerOwnedVisualSpec(item: GenerationItem, request: GenerationReq
   }
 
   const profile = graphProfile(context);
+  const scale = 1 + ((seed % 3) * 0.25);
+  const xValues = profile.xValues.map((value) => Number((value * scale).toFixed(2)));
+  const yValues = profile.yValues.map((value, index) => Number((value * scale + (index > 0 ? seed % 2 : 0)).toFixed(2)));
   if (item.visualTarget === "line_graph") {
-    const points = profile.xValues.map((x, index) => ({ x, y: profile.yValues[index] ?? 0, label: "" }));
-    const xMax = Math.max(...profile.xValues);
-    const yMax = Math.max(...profile.yValues);
+    const points = xValues.map((x, index) => ({ x, y: yValues[index] ?? 0, label: "" }));
+    const xMax = Math.max(...xValues);
+    const yMax = Math.max(...yValues);
     return {
       ...emptyVisualSpec(),
       type: "line_graph",
-      title: profile.title,
+      visualId,
+      variant: "trend",
+      purpose: "قراءة اتجاه العلاقة بين متغيرين علميين",
+      title: `${profile.title}${titleSuffix}`,
       altText: `رسم بياني خطي يوضح ${profile.title}`,
       xAxisLabel: profile.xAxisLabel,
       xAxisUnit: profile.xAxisUnit,
       yAxisLabel: profile.yAxisLabel,
       yAxisUnit: profile.yAxisUnit,
-      xMin: Math.min(0, ...profile.xValues),
+      xMin: Math.min(0, ...xValues),
       xMax: xMax > 0 ? xMax : 1,
-      yMin: Math.min(0, ...profile.yValues),
+      yMin: Math.min(0, ...yValues),
       yMax: yMax > 0 ? yMax : 1,
       points,
-      annotations: ["بيانات تجربة افتراضية معطاة في السؤال"],
+      annotations: ["بيانات تجربة معطاة في السؤال"],
     };
   }
 
-  const barValues = profile.yValues.slice(1, 5);
+  const barValues = yValues.slice(1, 5);
   const yMax = Math.max(...barValues);
   return {
     ...emptyVisualSpec(),
     type: "bar_chart",
+    visualId,
+    variant: "comparison",
+    purpose: "مقارنة نتائج قياس بين أربع حالات",
     title: `مقارنة نتائج القياس${titleSuffix}`,
-    altText: "رسم أعمدة يقارن أربع نتائج قياس",
+    altText: "رسم أعمدة يقارن أربع نتائج قياس مستقلة",
     yAxisLabel: profile.yAxisLabel,
     yAxisUnit: profile.yAxisUnit,
     yMin: 0,
     yMax: yMax > 0 ? Math.ceil(yMax * 1.2) : 10,
-    labels: ["العينة أ", "العينة ب", "العينة ج", "العينة د"],
+    labels: ["الحالة أ", "الحالة ب", "الحالة ج", "الحالة د"],
     values: barValues,
-    annotations: ["بيانات تجربة افتراضية معطاة في السؤال"],
+    annotations: ["بيانات تجربة معطاة في السؤال"],
   };
 }
 

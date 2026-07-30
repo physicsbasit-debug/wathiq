@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  diversifyQuestionVisualSpec,
   emptyQuestionVisualSpec,
   parseQuestionVisualSpec,
   questionVisualTypeLabel,
@@ -89,4 +90,23 @@ test("يهرب التسميات ولا يسمح بإدخال SVG خام", () => 
   const svg = renderQuestionVisualSvg(parsed);
   assert.doesNotMatch(svg, /<script>/);
   assert.match(svg, /&lt;script&gt;/);
+});
+
+
+test("ينوّع الرسومات الحتمية بين المفردات ولا يعيد الصورة نفسها", () => {
+  const base = {
+    ...emptyQuestionVisualSpec(),
+    type: "pressure_diagram",
+    title: "الضغط في السوائل",
+    altText: "مخطط ضغط تعليمي",
+    labels: ["الماء", "الجسم"],
+    values: [0.72, 0.4, 0.75],
+  };
+  const first = diversifyQuestionVisualSpec(base, 0, "item-1");
+  const second = diversifyQuestionVisualSpec(base, 1, "item-2");
+  const third = diversifyQuestionVisualSpec(base, 2, "item-3");
+  assert.notEqual(first.visualId, second.visualId);
+  assert.notEqual(first.variant, second.variant);
+  assert.notEqual(renderQuestionVisualSvg(first), renderQuestionVisualSvg(second));
+  assert.match(renderQuestionVisualSvg(third), /مساحة التلامس A|القوة F/);
 });
