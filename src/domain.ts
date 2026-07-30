@@ -71,6 +71,7 @@ export function createEmptyDraft(now = new Date()): ExamDraft {
     generationVersion: "",
     generationModel: "",
     generatedAt: "",
+    approvedAt: "",
     currentStep: 1,
     updatedAt: now.toISOString(),
     status: "مسودة",
@@ -91,6 +92,8 @@ export function applyOfficialAssessmentTemplate(draft: ExamDraft): ExamDraft {
   draft.generationVersion = "";
   draft.generationModel = "";
   draft.generatedAt = "";
+  draft.approvedAt = "";
+  draft.status = "مسودة";
   return draft;
 }
 
@@ -102,6 +105,20 @@ export function applyOfficialShortTestTemplate(draft: ExamDraft): ExamDraft {
 export function setExamTitle(draft: ExamDraft, title: ExamTitleOption): ExamDraft {
   draft.title = title;
   return applyOfficialAssessmentTemplate(draft);
+}
+
+
+export function approveExamDraft(draft: ExamDraft, approvedAt = new Date().toISOString()): ExamDraft {
+  draft.status = "معتمد";
+  draft.approvedAt = approvedAt;
+  draft.currentStep = 4;
+  return draft;
+}
+
+export function reopenExamDraft(draft: ExamDraft): ExamDraft {
+  draft.status = "جاهز للمراجعة";
+  draft.approvedAt = "";
+  return draft;
 }
 
 

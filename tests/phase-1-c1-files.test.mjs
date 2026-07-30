@@ -11,7 +11,7 @@ const readme = await readFile(new URL("../README.md", import.meta.url), "utf8");
 const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 
 test("يثبت إصدار محرك الرسومات ويعلن نطاقه بوضوح", () => {
-  assert.equal(pkg.version, "0.0.36");
+  assert.match(pkg.version, /^0\.0\.(?:36|37)$/);
   assert.match(pkg.description, /SVG/);
   assert.match(readme, /Phase 1-C1/);
   assert.match(readme, /مواصفة SVG حتمية وآمنة|fixedVisual/);

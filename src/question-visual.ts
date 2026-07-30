@@ -3,6 +3,7 @@ import type {
   QuestionVisualPoint,
   QuestionVisualSpec,
   QuestionVisualType,
+  QuestionVisualVariant,
 } from "./types.js";
 
 export const QUESTION_VISUAL_TYPES: readonly QuestionVisualType[] = [
@@ -11,6 +12,18 @@ export const QUESTION_VISUAL_TYPES: readonly QuestionVisualType[] = [
   "bar_chart",
   "pressure_diagram",
   "circuit_diagram",
+];
+
+export const QUESTION_VISUAL_VARIANTS: readonly QuestionVisualVariant[] = [
+  "default",
+  "submerged_object",
+  "depth_comparison",
+  "force_area",
+  "liquid_column",
+  "series_circuit",
+  "measurement_circuit",
+  "trend",
+  "comparison",
 ];
 
 export const CIRCUIT_COMPONENTS: readonly CircuitComponent[] = [
@@ -37,6 +50,10 @@ export function questionVisualTypeLabel(type: QuestionVisualType): string {
 
 export function isQuestionVisualType(value: unknown): value is QuestionVisualType {
   return typeof value === "string" && (QUESTION_VISUAL_TYPES as readonly string[]).includes(value);
+}
+
+export function isQuestionVisualVariant(value: unknown): value is QuestionVisualVariant {
+  return typeof value === "string" && (QUESTION_VISUAL_VARIANTS as readonly string[]).includes(value);
 }
 
 export function isCircuitComponent(value: unknown): value is CircuitComponent {
@@ -86,6 +103,9 @@ function cleanPoints(value: unknown): QuestionVisualPoint[] {
 export function emptyQuestionVisualSpec(): QuestionVisualSpec {
   return {
     type: "none",
+    visualId: "",
+    variant: "default",
+    purpose: "",
     title: "",
     altText: "",
     xAxisLabel: "",
@@ -115,6 +135,9 @@ export function parseQuestionVisualSpec(value: unknown, expectedType?: QuestionV
 
   const spec: QuestionVisualSpec = {
     type: record.type,
+    visualId: cleanText(record.visualId, 80),
+    variant: isQuestionVisualVariant(record.variant) ? record.variant : "default",
+    purpose: cleanText(record.purpose, 160),
     title: cleanText(record.title),
     altText: cleanText(record.altText, 240),
     xAxisLabel: cleanText(record.xAxisLabel, 60),
@@ -136,6 +159,24 @@ export function parseQuestionVisualSpec(value: unknown, expectedType?: QuestionV
 
   validateQuestionVisualSpec(spec);
   return spec;
+}
+
+export function diversifyQuestionVisualSpec(spec: QuestionVisualSpec, index: number, planItemId = ""): QuestionVisualSpec {
+  if (spec.type === "none") return { ...spec, visualId: spec.visualId || "", variant: spec.variant ?? "default" };
+  const pressureVariants: QuestionVisualVariant[] = ["submerged_object", "depth_comparison", "force_area", "liquid_column"];
+  const circuitVariants: QuestionVisualVariant[] = ["series_circuit", "measurement_circuit"];
+  const graphVariants: QuestionVisualVariant[] = ["trend", "comparison"];
+  const fallback = (spec.type === "pressure_diagram"
+    ? pressureVariants[index % pressureVariants.length]
+    : spec.type === "circuit_diagram"
+      ? circuitVariants[index % circuitVariants.length]
+      : graphVariants[index % graphVariants.length]) ?? "default";
+  return {
+    ...spec,
+    visualId: spec.visualId || `visual-${planItemId || index + 1}`,
+    variant: spec.variant && spec.variant !== "default" ? spec.variant : fallback,
+    purpose: spec.purpose || spec.altText,
+  };
 }
 
 export function validateQuestionVisualSpec(spec: QuestionVisualSpec): void {
@@ -267,17 +308,47 @@ function renderBarChart(spec: QuestionVisualSpec): string {
 function renderPressureDiagram(spec: QuestionVisualSpec): string {
   const width = 640;
   const height = 360;
-  const tankX = 150;
-  const tankY = 55;
-  const tankW = 330;
-  const tankH = 245;
-  const liquidLevel = spec.values[0] ?? 0.65;
-  const objectDepth = spec.values[1] ?? 0.55;
-  const liquidTop = tankY + tankH * (1 - liquidLevel);
-  const objectY = liquidTop + objectDepth * (tankY + tankH - liquidTop - 24);
-  const objectX = tankX + tankW * 0.58;
+  const variant = spec.variant ?? "submerged_object";
   const liquidLabel = spec.labels[0] ?? "السائل";
   const objectLabel = spec.labels[1] ?? "الجسم";
+
+  if (variant === "force_area") {
+    const surfaceY = 250;
+    const blockX = 245;
+    const blockY = 150;
+    const blockW = 150;
+    const blockH = 80;
+    return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}"><text x="${width / 2}" y="28" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text><line x1="120" y1="${surfaceY}" x2="520" y2="${surfaceY}" class="qv-surface"/><rect x="${blockX}" y="${blockY}" width="${blockW}" height="${blockH}" class="qv-object"/><text x="${blockX + blockW / 2}" y="${blockY + 45}" class="qv-object-label" text-anchor="middle">${escapeXml(objectLabel)}</text><line x1="${blockX + blockW / 2}" y1="80" x2="${blockX + blockW / 2}" y2="${blockY - 6}" class="qv-depth"/><path d="M ${blockX + blockW / 2 - 8} ${blockY - 16} L ${blockX + blockW / 2} ${blockY - 6} L ${blockX + blockW / 2 + 8} ${blockY - 16}" class="qv-depth"/><text x="${blockX + blockW / 2 + 18}" y="110" class="qv-annotation">القوة F</text><line x1="${blockX}" y1="${surfaceY + 35}" x2="${blockX + blockW}" y2="${surfaceY + 35}" class="qv-depth"/><path d="M ${blockX + 8} ${surfaceY + 29} L ${blockX} ${surfaceY + 35} L ${blockX + 8} ${surfaceY + 41} M ${blockX + blockW - 8} ${surfaceY + 29} L ${blockX + blockW} ${surfaceY + 35} L ${blockX + blockW - 8} ${surfaceY + 41}" class="qv-depth"/><text x="${blockX + blockW / 2}" y="${surfaceY + 58}" class="qv-annotation" text-anchor="middle">مساحة التلامس A</text></svg>`;
+  }
+
+  const tankX = 145;
+  const tankY = 56;
+  const tankW = 350;
+  const tankH = 245;
+  const liquidLevel = spec.values[0] ?? 0.72;
+  const liquidTop = tankY + tankH * (1 - liquidLevel);
+
+  if (variant === "depth_comparison") {
+    const depthOne = spec.values[1] ?? 0.34;
+    const depthTwo = spec.values[2] ?? Math.min(0.82, depthOne + 0.32);
+    const usable = tankY + tankH - liquidTop - 28;
+    const yOne = liquidTop + depthOne * usable;
+    const yTwo = liquidTop + depthTwo * usable;
+    return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}"><text x="${width / 2}" y="28" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text><path d="M ${tankX} ${tankY} V ${tankY + tankH} H ${tankX + tankW} V ${tankY}" class="qv-vessel"/><rect x="${tankX + 2}" y="${liquidTop}" width="${tankW - 4}" height="${tankY + tankH - liquidTop - 2}" class="qv-liquid"/><line x1="${tankX}" y1="${liquidTop}" x2="${tankX + tankW}" y2="${liquidTop}" class="qv-surface"/><circle cx="250" cy="${yOne}" r="18" class="qv-object"/><circle cx="390" cy="${yTwo}" r="18" class="qv-object"/><text x="250" y="${yOne + 4}" class="qv-object-label" text-anchor="middle">أ</text><text x="390" y="${yTwo + 4}" class="qv-object-label" text-anchor="middle">ب</text><line x1="205" y1="${liquidTop}" x2="205" y2="${yOne}" class="qv-depth"/><line x1="435" y1="${liquidTop}" x2="435" y2="${yTwo}" class="qv-depth"/><text x="195" y="${(liquidTop + yOne) / 2}" class="qv-annotation" text-anchor="end">h₁</text><text x="445" y="${(liquidTop + yTwo) / 2}" class="qv-annotation">h₂</text><text x="${tankX + 16}" y="${liquidTop + 26}" class="qv-liquid-label">${escapeXml(liquidLabel)}</text></svg>`;
+  }
+
+  if (variant === "liquid_column") {
+    const columnX = 260;
+    const columnY = 62;
+    const columnW = 120;
+    const columnH = 230;
+    const fillTop = columnY + columnH * (1 - liquidLevel);
+    return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}"><text x="${width / 2}" y="28" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text><path d="M ${columnX} ${columnY} V ${columnY + columnH} H ${columnX + columnW} V ${columnY}" class="qv-vessel"/><rect x="${columnX + 2}" y="${fillTop}" width="${columnW - 4}" height="${columnY + columnH - fillTop - 2}" class="qv-liquid"/><line x1="${columnX}" y1="${fillTop}" x2="${columnX + columnW}" y2="${fillTop}" class="qv-surface"/><line x1="225" y1="${fillTop}" x2="225" y2="${columnY + columnH}" class="qv-depth"/><text x="210" y="${(fillTop + columnY + columnH) / 2}" class="qv-annotation" text-anchor="end">ارتفاع العمود h</text><circle cx="430" cy="${columnY + columnH - 18}" r="24" class="qv-component-fill"/><text x="430" y="${columnY + columnH - 12}" class="qv-meter" text-anchor="middle">P</text><line x1="${columnX + columnW}" y1="${columnY + columnH - 18}" x2="406" y2="${columnY + columnH - 18}" class="qv-wire"/><text x="${columnX + columnW / 2}" y="${fillTop + 28}" class="qv-liquid-label" text-anchor="middle">${escapeXml(liquidLabel)}</text></svg>`;
+  }
+
+  const objectDepth = spec.values[1] ?? 0.55;
+  const objectY = liquidTop + objectDepth * (tankY + tankH - liquidTop - 24);
+  const objectX = tankX + tankW * 0.58;
   const annotations = spec.annotations.slice(0, 3).map((text, index) => `<text x="505" y="${115 + index * 32}" class="qv-annotation" text-anchor="start">${escapeXml(text)}</text>`).join("");
   return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}"><text x="${width / 2}" y="26" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text><path d="M ${tankX} ${tankY} V ${tankY + tankH} H ${tankX + tankW} V ${tankY}" class="qv-vessel"/><rect x="${tankX + 2}" y="${liquidTop}" width="${tankW - 4}" height="${tankY + tankH - liquidTop - 2}" class="qv-liquid"/><line x1="${tankX}" y1="${liquidTop}" x2="${tankX + tankW}" y2="${liquidTop}" class="qv-surface"/><circle cx="${objectX}" cy="${objectY}" r="18" class="qv-object"/><text x="${objectX}" y="${objectY + 4}" class="qv-object-label" text-anchor="middle">${escapeXml(objectLabel)}</text><line x1="${objectX - 54}" y1="${liquidTop}" x2="${objectX - 54}" y2="${objectY}" class="qv-depth"/><path d="M ${objectX - 60} ${liquidTop + 8} L ${objectX - 54} ${liquidTop} L ${objectX - 48} ${liquidTop + 8} M ${objectX - 60} ${objectY - 8} L ${objectX - 54} ${objectY} L ${objectX - 48} ${objectY - 8}" class="qv-depth"/><text x="${objectX - 68}" y="${(liquidTop + objectY) / 2}" class="qv-annotation" text-anchor="end">العمق h</text><text x="${tankX + 16}" y="${liquidTop + 28}" class="qv-liquid-label">${escapeXml(liquidLabel)}</text>${annotations}</svg>`;
 }
@@ -334,5 +405,5 @@ export function renderQuestionVisualSvg(spec: QuestionVisualSpec): string {
       : spec.type === "pressure_diagram"
         ? renderPressureDiagram(spec)
         : renderCircuitDiagram(spec);
-  return `<figure class="question-visual question-visual-${spec.type}">${svg}<figcaption>${escapeXml(spec.altText)}</figcaption></figure>`;
+  return `<figure class="question-visual question-visual-${spec.type}" data-visual-id="${escapeXml(spec.visualId ?? "")}" data-visual-variant="${escapeXml(spec.variant ?? "default")}">${svg}<figcaption>${escapeXml(spec.altText)}</figcaption></figure>`;
 }

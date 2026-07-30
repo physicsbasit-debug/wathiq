@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  approveExamDraft,
   buildPlan,
   computeMarks,
   createEmptyDraft,
@@ -9,6 +10,7 @@ import {
   MAX_LESSON_TOPICS,
   MIN_LESSON_TOPICS,
   normalizeLessonTopics,
+  reopenExamDraft,
   suggestCountsForMarks,
   syncDraftTopicFromLessons,
   validateExamSetup,
@@ -193,4 +195,19 @@ test("يبني قالب الاختبار النهائي للصف العاشر ع
     }, { منخفض: 0, متوسط: 0, مرتفع: 0 }),
     { منخفض: 24, متوسط: 24, مرتفع: 12 },
   );
+});
+
+
+test("يعتمد الاختبار ثم يفتح نسخة المراجعة دون فقد الخطة", () => {
+  const draft = completeDraft();
+  draft.plan = buildPlan(draft);
+  const planIds = draft.plan.map((item) => item.id);
+  approveExamDraft(draft, "2026-09-15T10:00:00.000Z");
+  assert.equal(draft.status, "معتمد");
+  assert.equal(draft.approvedAt, "2026-09-15T10:00:00.000Z");
+  assert.equal(draft.currentStep, 4);
+  reopenExamDraft(draft);
+  assert.equal(draft.status, "جاهز للمراجعة");
+  assert.equal(draft.approvedAt, "");
+  assert.deepEqual(draft.plan.map((item) => item.id), planIds);
 });

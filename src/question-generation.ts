@@ -264,15 +264,20 @@ function deriveQuestionVisualTarget(
 ): QuestionVisualType {
   const normalizedSubject = normalizeVisualText(subject);
   const evidence = normalizeVisualText(`${item.lessonLabel} ${referenceContent}`);
+  const pattern = deriveQuestionDesignPattern(item, officialIndex, subject);
   if (normalizedSubject.includes("فيزياء")) {
     if (/(دائره|بطاريه|مصباح|مقاوم|تيار|جهد|مكثف|اميتر|فولتميتر)/u.test(evidence)) {
-      return item.cognitiveLevel === "معرفة" && item.marks === 1 ? "none" : "circuit_diagram";
+      if (item.cognitiveLevel === "معرفة" && item.marks === 1) return "none";
+      return pattern === "بيانات" && officialIndex % 2 === 0 ? "line_graph" : "circuit_diagram";
     }
-    if (/(ضغط|سائل|عمق|كثافه|طفو)/u.test(evidence) && (item.marks >= 2 || item.cognitiveLevel !== "معرفة")) {
+    if (/(ضغط|سائل|عمق|كثافه|طفو)/u.test(evidence)) {
+      if (item.cognitiveLevel === "معرفة" || item.marks === 1) return "none";
+      if (pattern === "بيانات" || item.cognitiveLevel === "استدلال") return "line_graph";
+      if (pattern === "مقارنة" && officialIndex % 2 === 1) return "none";
       return "pressure_diagram";
     }
   }
-  if (item.cognitiveLevel === "استدلال" || deriveQuestionDesignPattern(item, officialIndex, subject) === "بيانات") {
+  if (item.cognitiveLevel === "استدلال" || pattern === "بيانات") {
     return officialIndex % 2 === 0 ? "line_graph" : "bar_chart";
   }
   return "none";

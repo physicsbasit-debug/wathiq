@@ -363,6 +363,25 @@ test("يبني الخادم الرسم الخطي والضغط بصورة حتم
   assert.equal(pressure.values.length, 2);
 });
 
+
+test("ينوّع الخادم مواصفات الرسم بين مفردات الضغط دون استدعاء نموذج إضافي", () => {
+  const request = {
+    subject: "الفيزياء",
+    topic: "الضغط",
+    references: [{ id: "R-1", content: "يعتمد الضغط على القوة والمساحة ويزداد في السائل بزيادة العمق." }],
+  };
+  const calculation = helpers.buildServerOwnedVisualSpec({
+    planItemId: "P-CALC", visualTarget: "pressure_diagram", sourceReferenceId: "R-1", lessonLabel: "حساب الضغط", styleTarget: "حسابي", cognitiveLevel: "تطبيق",
+  }, request);
+  const comparison = helpers.buildServerOwnedVisualSpec({
+    planItemId: "P-COMP", visualTarget: "pressure_diagram", sourceReferenceId: "R-1", lessonLabel: "الضغط في السوائل", styleTarget: "مقارنة", cognitiveLevel: "استدلال",
+  }, request);
+  assert.equal(calculation.variant, "force_area");
+  assert.equal(comparison.variant, "depth_comparison");
+  assert.notEqual(calculation.visualId, comparison.visualId);
+  assert.notDeepEqual(Array.from(calculation.annotations), Array.from(comparison.annotations));
+});
+
 test("يضبط التفكير والإخراج حسب ثقل المفردة بدل استهلاك مفتوح", () => {
   assert.equal(helpers.generationThinkingBudget([{ questionType: "اختيار من متعدد", cognitiveLevel: "معرفة", marks: 1 }]), 0);
   assert.equal(helpers.generationThinkingBudget([{ questionType: "إجابة طويلة", cognitiveLevel: "استدلال", marks: 3 }]), 768);

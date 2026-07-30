@@ -1,8 +1,9 @@
-import type { ExamDraft, ExamSourceReference, ExamTitleOption, ManagedSource } from "./types.js";
+import type { ExamDraft, ExamSourceReference, ExamTitleOption, ManagedSource, PlanItem } from "./types.js";
 import { applyOfficialAssessmentTemplate, createEmptyDraft, toDateInputValue } from "./domain.js";
 import { SCIENCE_ASSESSMENT_POLICY_ID, assessmentTypeForTitle, getOfficialAssessmentSpec, isExamTitleOption } from "./assessment-policy.js";
 import { normalizeManagedSource } from "./source-registry.js";
 import { SOURCE_GENERATION_VERSION } from "./question-generation.js";
+import { diversifyQuestionVisualSpec } from "./question-visual.js";
 
 const DRAFT_KEY = "wathiq.phase0b.latestDraft";
 const PROFILE_KEY = "wathiq.phase0b.profile";
@@ -49,6 +50,22 @@ function normalizeSourceReferences(value: unknown): ExamSourceReference[] {
   });
 }
 
+function normalizeStoredPlan(value: unknown): PlanItem[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry, index) => {
+    if (typeof entry !== "object" || entry === null) return [];
+    const item = entry as PlanItem;
+    if (typeof item.id !== "string" || !Array.isArray(item.proposals)) return [];
+    if (!item.visual || typeof item.visual !== "object") return [item];
+    try {
+      return [{ ...item, visual: diversifyQuestionVisualSpec(item.visual, index, item.id) }];
+    } catch {
+      const { visual: _visual, ...withoutVisual } = item;
+      return [withoutVisual];
+    }
+  });
+}
+
 export function normalizeExamDraft(value: unknown): ExamDraft | null {
   if (typeof value !== "object" || value === null) return null;
   const candidate = value as Partial<ExamDraft>;
@@ -81,13 +98,15 @@ export function normalizeExamDraft(value: unknown): ExamDraft | null {
       short: typeof candidate.counts?.short === "number" ? candidate.counts.short : base.counts.short,
       long: typeof candidate.counts?.long === "number" ? candidate.counts.long : base.counts.long,
     },
-    plan: Array.isArray(candidate.plan) ? candidate.plan : [],
+    plan: normalizeStoredPlan(candidate.plan),
     selectedProposalByPlanItem: typeof candidate.selectedProposalByPlanItem === "object" && candidate.selectedProposalByPlanItem !== null
       ? candidate.selectedProposalByPlanItem as Record<string, string>
       : {},
     generationVersion: typeof candidate.generationVersion === "string" ? candidate.generationVersion : "",
     generationModel: typeof candidate.generationModel === "string" ? candidate.generationModel : "",
     generatedAt: typeof candidate.generatedAt === "string" ? candidate.generatedAt : "",
+    approvedAt: typeof candidate.approvedAt === "string" ? candidate.approvedAt : "",
+    status: candidate.status === "معتمد" || candidate.status === "جاهز للمراجعة" ? candidate.status : "مسودة",
   };
   const officialSpec = getOfficialAssessmentSpec(draft.grade, draft.title);
   const requiresPolicyMigration = Boolean(officialSpec && candidatePolicyId !== SCIENCE_ASSESSMENT_POLICY_ID);
@@ -103,6 +122,8 @@ export function normalizeExamDraft(value: unknown): ExamDraft | null {
     draft.generationVersion = "";
     draft.generationModel = "";
     draft.generatedAt = "";
+    draft.approvedAt = "";
+    draft.status = "مسودة";
   } else if (draft.currentStep >= 3 && draft.generationVersion !== SOURCE_GENERATION_VERSION) {
     draft.currentStep = 2;
     draft.plan = [];
@@ -110,6 +131,8 @@ export function normalizeExamDraft(value: unknown): ExamDraft | null {
     draft.generationVersion = "";
     draft.generationModel = "";
     draft.generatedAt = "";
+    draft.approvedAt = "";
+    draft.status = "مسودة";
   }
   return draft;
 }
