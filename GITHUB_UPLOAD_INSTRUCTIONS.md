@@ -1,10 +1,11 @@
-# Phase 1-B — تعليمات الرفع
+# تعليمات رفع Phase 1-B2
 
-- الفرع المقترح: `fix/phase-1-b-gemini-provider`
-- رسالة الحفظ: `fix: استخدام Gemini لتوليد الأسئلة الموثقة`
-- ارفع محتويات حزمة الملفات المعدلة إلى جذر المستودع مع الاستبدال.
-- انتظر فحص GitHub Actions الأخضر ثم ادمج إلى `main`.
-- لا يوجد SQL جديد.
-- توجد Edge Function جديدة يجب نشرها بعد الدمج: `generate-source-questions`.
-- أضف سر Supabase باسم `GEMINI_API_KEY` قبل اختبار التوليد.
-- لم يتغير workflow الخاص بـ GitHub Pages.
+- اسم الفرع: `phase-1b2-official-assessment-policy`
+- رسالة الحفظ: `feat: apply official science assessment policy`
+- ارفع محتويات حزمة الملفات المعدلة إلى **جذر المستودع** مع الاستبدال.
+- انتظر GitHub Actions حتى تصبح خضراء، ثم ادمج الفرع في `main`.
+- لا يوجد SQL جديد، ولا تغيير في أسرار Supabase.
+- بعد الدمج افتح في GitHub:
+  `supabase/functions/generate-source-questions/index.ts`
+- انسخ الملف كاملًا عبر **Raw**، ثم الصقه في الوظيفة الموجودة بالاسم نفسه داخل محرر Supabase واضغط **Deploy function**.
+- بعد اكتمال GitHub Pages حدّث واثق تحديثًا قويًا واختبر الصف العاشر.

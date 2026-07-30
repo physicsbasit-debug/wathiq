@@ -25,5 +25,5 @@ test("Phase 1-A does not claim final scientific approval", () => {
   assert.doesNotMatch(app, /اعتماد النموذج أ/);
   assert.match(app, /تحتاج مراجعة المعلم قبل الاستخدام/);
   assert.match(domain, /sourceReferenceId/);
-  assert.equal(pkg.version, "0.0.27");
+  assert.equal(pkg.version, "0.0.28");
 });

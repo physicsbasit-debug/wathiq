@@ -1,5 +1,6 @@
 import type { ExamDraft, ExamSourceReference, ManagedSource } from "./types.js";
-import { createEmptyDraft } from "./domain.js";
+import { applyOfficialShortTestTemplate, createEmptyDraft } from "./domain.js";
+import { SCIENCE_ASSESSMENT_POLICY_ID, getOfficialShortTestSpec } from "./assessment-policy.js";
 import { normalizeManagedSource } from "./source-registry.js";
 
 const DRAFT_KEY = "wathiq.phase0b.latestDraft";
@@ -50,9 +51,12 @@ export function normalizeExamDraft(value: unknown): ExamDraft | null {
   if (typeof value !== "object" || value === null) return null;
   const candidate = value as Partial<ExamDraft>;
   const base = createEmptyDraft();
+  const candidatePolicyId = typeof candidate.assessmentPolicyId === "string" ? candidate.assessmentPolicyId : "";
   const draft: ExamDraft = {
     ...base,
     ...candidate,
+    assessmentType: "اختبار قصير رسمي",
+    assessmentPolicyId: candidatePolicyId || base.assessmentPolicyId,
     grade: typeof candidate.grade === "number" ? candidate.grade : null,
     subjectId: typeof candidate.subjectId === "string" ? candidate.subjectId : "",
     unitId: typeof candidate.unitId === "string" ? candidate.unitId : "",
@@ -73,6 +77,10 @@ export function normalizeExamDraft(value: unknown): ExamDraft | null {
     generationModel: typeof candidate.generationModel === "string" ? candidate.generationModel : "",
     generatedAt: typeof candidate.generatedAt === "string" ? candidate.generatedAt : "",
   };
+  const officialSpec = getOfficialShortTestSpec(draft.grade);
+  const requiresPolicyMigration = Boolean(officialSpec && candidatePolicyId !== SCIENCE_ASSESSMENT_POLICY_ID);
+  if (requiresPolicyMigration) applyOfficialShortTestTemplate(draft);
+
   if (!draft.topic.trim() || draft.sourceReferences.length === 0) {
     draft.currentStep = 1;
     draft.plan = [];
@@ -80,7 +88,7 @@ export function normalizeExamDraft(value: unknown): ExamDraft | null {
     draft.generationVersion = "";
     draft.generationModel = "";
     draft.generatedAt = "";
-  } else if (draft.currentStep >= 3 && draft.generationVersion !== "source-grounded-ai-1") {
+  } else if (draft.currentStep >= 3 && draft.generationVersion !== "source-grounded-policy-ai-2") {
     draft.currentStep = 2;
     draft.plan = [];
     draft.selectedProposalByPlanItem = {};

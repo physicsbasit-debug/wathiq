@@ -18,7 +18,7 @@ test("Phase 1-B يستبدل الصياغات الوهمية بخدمة تولي
 });
 
 test("Edge Function تستخدم Gemini Interactions API ومخطط JSON ومفتاحًا سريًا", () => {
-  assert.match(edge, /generativelanguage\.googleapis\.com\/v1beta\/interactions/);
+  assert.match(edge, /generativelanguage\.googleapis\.com\/v1\/interactions/);
   assert.match(edge, /GEMINI_API_KEY/);
   assert.match(edge, /x-goog-api-key/);
   assert.match(edge, /system_instruction/);
@@ -34,5 +34,5 @@ test("Edge Function تستخدم Gemini Interactions API ومخطط JSON ومف�
 test("تسجل Supabase الوظيفة الجديدة ويُرفع إصدار واثق", () => {
   assert.match(config, /\[functions\.generate-source-questions\]/);
   assert.match(config, /verify_jwt\s*=\s*false/);
-  assert.equal(pkg.version, "0.0.27");
+  assert.equal(pkg.version, "0.0.28");
 });

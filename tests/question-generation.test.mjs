@@ -70,6 +70,8 @@ test("يبني طلب التوليد من سياق المقطع الكامل ل�
   assert.equal(request.references.length, 1);
   assert.equal(request.references[0].content, "الشحنة الكهربائية خاصية فيزيائية للمادة وقد تكون موجبة أو سالبة.");
   assert.equal(request.items[0].sourceReferenceId, "ref-1");
+  assert.equal(request.assessmentType, "اختبار قصير رسمي");
+  assert.equal(request.assessmentPolicyId, "oman-science-assessment-2025-2026");
 });
 
 test("يتحقق من ثلاثة بدائل ثم يربطها بخطة الاختبار", () => {
@@ -90,7 +92,7 @@ test("يتحقق من ثلاثة بدائل ثم يربطها بخطة الاخ�
   assert.equal(generated[0].proposals.length, 3);
   assert.equal(generated[0].proposals[0].options.length, 4);
   assert.equal(generated[0].proposals[0].answer, "خاصية فيزيائية");
-  assert.equal(SOURCE_GENERATION_VERSION, "source-grounded-ai-1");
+  assert.equal(SOURCE_GENERATION_VERSION, "source-grounded-policy-ai-2");
 });
 
 test("يرفض سؤال اختيار من متعدد لا تطابق إجابته أحد البدائل", () => {
@@ -125,6 +127,8 @@ test("يرسل جلسة المالك إلى Edge Function ويقرأ النتي�
     },
   );
   const response = await service.generate({
+    assessmentType: "اختبار قصير رسمي",
+    assessmentPolicyId: "oman-science-assessment-2025-2026",
     topic: "الشحنة الكهربائية",
     grade: 10,
     subject: "الفيزياء",

@@ -8,8 +8,9 @@ import type {
 } from "./types.js";
 import type { OwnerSession } from "./central-source-store.js";
 import type { WathiqRuntimeConfig } from "./runtime-config.js";
+import { SCIENCE_ASSESSMENT_POLICY_ID } from "./assessment-policy.js";
 
-export const SOURCE_GENERATION_VERSION = "source-grounded-ai-1";
+export const SOURCE_GENERATION_VERSION = "source-grounded-policy-ai-2";
 
 export interface QuestionGenerationReference {
   id: string;
@@ -29,6 +30,8 @@ export interface QuestionGenerationItem {
 }
 
 export interface QuestionGenerationRequest {
+  assessmentType: "اختبار قصير رسمي";
+  assessmentPolicyId: string;
   topic: string;
   grade: number;
   subject: string;
@@ -176,7 +179,16 @@ export function buildQuestionGenerationRequest(
       sourceReferenceId: item.sourceReferenceId,
     };
   });
-  return { topic: topic.trim(), grade, subject, difficulty, references: requestReferences, items };
+  return {
+    assessmentType: "اختبار قصير رسمي",
+    assessmentPolicyId: SCIENCE_ASSESSMENT_POLICY_ID,
+    topic: topic.trim(),
+    grade,
+    subject,
+    difficulty,
+    references: requestReferences,
+    items,
+  };
 }
 
 export function applyGeneratedQuestions(
@@ -216,7 +228,7 @@ export class QuestionGenerationService {
   async generate(request: QuestionGenerationRequest): Promise<QuestionGenerationResponse> {
     const session = await this.sessionProvider();
     const controller = new AbortController();
-    const timeout = globalThis.setTimeout(() => controller.abort(), 90_000);
+    const timeout = globalThis.setTimeout(() => controller.abort(), 120_000);
     try {
       const response = await this.fetcher(this.endpoint, {
         method: "POST",

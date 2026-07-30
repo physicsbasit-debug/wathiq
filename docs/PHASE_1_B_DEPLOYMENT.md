@@ -1,60 +1,21 @@
-# Phase 1-B — النشر والتشغيل
+# Phase 1-B — النشر والتشغيل بعد اعتماد Gemini
 
-## 1. رفع التعديلات إلى GitHub
+هذه الوثيقة مصححة. لا يستخدم واثق OpenAI.
 
-ارفع الحزمة إلى فرع جديد، وانتظر نجاح GitHub Actions، ثم ادمجها في `main`. سيعيد workflow بناء GitHub Pages تلقائيًا.
+## الأسرار المطلوبة في Supabase
 
-لا يوجد SQL جديد في هذه المرحلة.
+- `GEMINI_API_KEY`
+- `WATHIQ_APP_URL`
+- `GEMINI_MODEL` اختياري، والقيمة الافتراضية `gemini-2.5-flash`.
 
-## 2. إضافة مفتاح Gemini إلى Supabase
+لا تضع المفتاح في GitHub أو `runtime-config.js`.
 
-من لوحة Supabase:
+## نشر الوظيفة بالطريقة المعتمدة للمشروع
 
-1. افتح مشروع واثق.
-2. انتقل إلى **Edge Functions → Secrets**، أو إلى صفحة إدارة أسرار الوظائف حسب واجهة Supabase الحالية.
-3. أضف:
+1. افتح ملف GitHub:
+   `supabase/functions/generate-source-questions/index.ts`
+2. اضغط **Raw** وانسخ الكود كاملًا.
+3. افتح Supabase ثم الوظيفة `generate-source-questions`.
+4. الصق الكود في المحرر واضغط **Deploy function**.
 
-```text
-GEMINI_API_KEY=ضع_المفتاح_هنا
-```
-
-اختياريًا:
-
-```text
-GEMINI_MODEL=gemini-2.5-flash
-```
-
-لا تضع المفتاح في GitHub أو في متغيرات GitHub Pages أو داخل `runtime-config.js`.
-
-## 3. نشر Edge Function
-
-من مجلد المشروع بعد تسجيل دخول Supabase CLI:
-
-```bash
-supabase functions deploy generate-source-questions --project-ref PROJECT_REF
-```
-
-إذا لم يكن سر رابط واثق موجودًا من مراحل Google Drive السابقة، أضفه أيضًا:
-
-```bash
-supabase secrets set WATHIQ_APP_URL="https://physicsbasit-debug.github.io/wathiq/" --project-ref PROJECT_REF
-```
-
-## 4. الاختبار التشغيلي
-
-1. افتح رابط واثق بعد اكتمال نشر GitHub Pages.
-2. نفّذ تحديثًا قويًا `Ctrl + F5`.
-3. سجّل دخول مالك المنصة.
-4. اختر الصف العاشر، الفيزياء، واكتب موضوعًا ظاهرًا في الكتاب مثل «الشحنة الكهربائية».
-5. انتقل إلى الإعداد، واضبط التاريخ والدرجات.
-6. اضغط «التالي».
-7. يجب أن تظهر رسالة إنشاء الأسئلة، ثم ثلاثة بدائل لكل مفردة مع الإجابة ودليل المصدر.
-8. اختر سؤالًا لكل مفردة وتحقق من صفحة المراجعة ونموذج الإجابة.
-
-## تشخيص الأخطاء
-
-- **يلزم تسجيل دخول مالك المنصة:** الجلسة غير موجودة أو منتهية.
-- **متغير الخادم GEMINI_API_KEY غير مضبوط:** السر لم يُضف إلى Supabase.
-- **404 للوظيفة:** لم تُنشر `generate-source-questions` في المشروع الصحيح.
-- **تعذر إثبات الاستناد إلى المصدر:** النموذج لم يُعد دليلًا حرفيًا صالحًا؛ ترفض الوظيفة النتيجة لحماية الجودة.
-- **429 أو تأخر:** حد أو ازدحام في خدمة النموذج؛ أعد المحاولة بعد قليل.
+لا يلزم Codespaces ولا طرفية ولا SQL لهذه الخطوة.

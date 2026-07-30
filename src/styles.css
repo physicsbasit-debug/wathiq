@@ -947,3 +947,180 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
     justify-content: flex-start;
   }
 }
+
+/* Phase 1-B2: official science assessment policy */
+.readonly-field input {
+  background: #f6f8fb;
+  color: #314866;
+  cursor: default;
+}
+
+.official-spec-card,
+.policy-reference-hero,
+.policy-section {
+  margin-top: 22px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: clamp(18px, 3vw, 28px);
+  box-shadow: 0 10px 28px rgba(28,55,93,.05);
+}
+
+.official-spec-card {
+  border-color: #c7decf;
+  background: linear-gradient(135deg, #f6fcf8 0%, #ffffff 70%);
+}
+
+.official-spec-head,
+.policy-reference-hero,
+.policy-source-split {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.official-spec-head h3,
+.policy-section h2,
+.policy-reference-hero h2 {
+  margin: 4px 0 7px;
+  color: var(--navy-deep);
+}
+
+.official-spec-head p,
+.policy-reference-hero p,
+.policy-count-card small,
+.policy-spec-card p,
+.policy-rule-card li,
+.policy-note-card p {
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.policy-metric-grid,
+.official-count-grid,
+.policy-goal-grid,
+.policy-spec-grid,
+.policy-rule-grid {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.policy-metric-grid { grid-template-columns: repeat(4, 1fr); }
+.official-count-grid { grid-template-columns: repeat(3, 1fr); }
+.policy-goal-grid { grid-template-columns: repeat(3, 1fr); }
+.policy-spec-grid { grid-template-columns: repeat(3, 1fr); }
+.policy-rule-grid { grid-template-columns: repeat(2, 1fr); }
+
+.policy-metric-grid > div,
+.policy-count-card,
+.policy-goal-grid article,
+.policy-spec-card,
+.policy-rule-card,
+.policy-source-split > div {
+  border: 1px solid #dce6ef;
+  border-radius: 15px;
+  background: #fff;
+  padding: 15px;
+}
+
+.policy-metric-grid > div,
+.policy-count-card {
+  display: grid;
+  gap: 4px;
+}
+
+.policy-metric-grid span,
+.policy-count-card span,
+.policy-spec-card > span {
+  color: #607086;
+  font-size: 13px;
+}
+
+.policy-metric-grid strong,
+.policy-count-card strong {
+  color: var(--navy-deep);
+  font-size: 24px;
+}
+
+.policy-metric-grid small,
+.policy-count-card small {
+  font-size: 12px;
+}
+
+.policy-lock-note {
+  margin: 15px 0 0;
+  padding-top: 13px;
+  border-top: 1px solid #d9e9de;
+  color: #3d6652;
+  line-height: 1.7;
+}
+
+.policy-reference-hero {
+  margin-top: 0;
+  background: linear-gradient(135deg, #eef4fb 0%, #fff 70%);
+}
+
+.policy-reference-hero > div:first-child { max-width: 760px; }
+.policy-reference-badge {
+  flex: 0 0 120px;
+  display: grid;
+  place-items: center;
+  min-height: 110px;
+  border-radius: 18px;
+  background: var(--navy-deep);
+  color: #fff;
+  font-size: 34px;
+  font-weight: 800;
+  text-align: center;
+}
+.policy-reference-badge small { font-size: 11px; font-weight: 500; }
+
+.policy-goal-grid article strong,
+.policy-rule-card h3,
+.policy-spec-card h3,
+.policy-source-split strong {
+  color: var(--navy-deep);
+}
+
+.policy-goal-grid article p,
+.policy-spec-card p,
+.policy-note-card p { margin: 7px 0 0; }
+
+.policy-spec-card > div {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  color: #3e5877;
+}
+.policy-spec-card > div b { color: var(--navy-deep); }
+.policy-spec-card ul,
+.policy-rule-card ul {
+  margin: 13px 0 0;
+  padding-right: 19px;
+  line-height: 1.75;
+}
+.policy-rule-card h3 { margin: 0 0 9px; }
+.policy-note-card { background: #fbfcfe; }
+.policy-source-split > div { flex: 1; }
+
+@media (max-width: 980px) {
+  .policy-metric-grid,
+  .policy-spec-grid { grid-template-columns: repeat(2, 1fr); }
+  .policy-goal-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 720px) {
+  .mobile-nav { grid-template-columns: repeat(5, 1fr); }
+  .official-spec-head,
+  .policy-reference-hero,
+  .policy-source-split { flex-direction: column; align-items: stretch; }
+  .policy-reference-badge { flex-basis: auto; min-height: 90px; }
+  .policy-metric-grid,
+  .official-count-grid,
+  .policy-spec-grid,
+  .policy-rule-grid { grid-template-columns: 1fr; }
+  .policy-heading > a { width: 100%; text-align: center; }
+}

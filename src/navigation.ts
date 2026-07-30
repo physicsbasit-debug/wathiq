@@ -4,6 +4,7 @@ const ROUTE_BY_VIEW: Record<ViewName, string> = {
   home: "home",
   wizard: "new-exam",
   library: "exams",
+  policy: "assessment-policy",
   admin: "content",
 };
 
@@ -12,7 +13,7 @@ const VIEW_BY_ROUTE = new Map<string, ViewName>(
 );
 
 export function isViewName(value: string | null | undefined): value is ViewName {
-  return value === "home" || value === "wizard" || value === "library" || value === "admin";
+  return value === "home" || value === "wizard" || value === "library" || value === "policy" || value === "admin";
 }
 
 export function viewHash(view: ViewName): string {

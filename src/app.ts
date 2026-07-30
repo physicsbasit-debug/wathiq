@@ -1,5 +1,6 @@
 import { MOCK_LIBRARY, MOCK_SOURCES, SUBJECTS } from "./data.js";
 import {
+  applyOfficialShortTestTemplate,
   buildPlan,
   createEmptyDraft,
   isPlanComplete,
@@ -24,6 +25,14 @@ import {
   QuestionGenerationService,
   SOURCE_GENERATION_VERSION,
 } from "./question-generation.js";
+import {
+  ASSESSMENT_ITEM_WRITING_RULES,
+  SCIENCE_ASSESSMENT_POLICY_DOCUMENT_PATH,
+  SCIENCE_ASSESSMENT_POLICY_PUBLISHED,
+  SCIENCE_ASSESSMENT_POLICY_TITLE,
+  SCIENCE_ASSESSMENT_POLICY_VERSION,
+  getOfficialShortTestSpec,
+} from "./assessment-policy.js";
 
 const appRoot = document.querySelector<HTMLDivElement>("#app");
 if (!appRoot) throw new Error("تعذر العثور على جذر التطبيق.");
@@ -234,6 +243,7 @@ function renderHeader(): string {
         ${navButton("home", "الرئيسية", "home")}
         ${navButton("wizard", "اختبار جديد", "plus")}
         ${navButton("library", "اختباراتي", "files")}
+        ${navButton("policy", "مرجع التقويم", "book")}
         ${navButton("admin", "إدارة المحتوى", "admin")}
       </nav>
       <div class="header-actions">
@@ -255,6 +265,7 @@ function renderMobileNav(): string {
       ${navButton("home", "الرئيسية", "home")}
       ${navButton("wizard", "جديد", "plus")}
       ${navButton("library", "اختباراتي", "files")}
+      ${navButton("policy", "المرجع", "book")}
       ${navButton("admin", "الإدارة", "admin")}
     </nav>
   `;
@@ -264,6 +275,7 @@ function renderView(): string {
   if (state.view === "home") return renderHome();
   if (state.view === "wizard") return renderWizard();
   if (state.view === "library") return renderLibrary();
+  if (state.view === "policy") return renderPolicyReference();
   return renderAdmin();
 }
 
@@ -272,7 +284,7 @@ function renderHome(): string {
   return `
     <section class="hero-panel">
       <div class="hero-copy">
-        <span class="eyebrow">Phase 1-B · توليد أسئلة موثقة من المصدر</span>
+        <span class="eyebrow">مرجع تقويم رسمي · توليد موثق من المصدر</span>
         <h1>أنشئ اختبارك القصير بثقة.</h1>
         <p>أربع خطوات واضحة. المصادر والفحوص وجدول المواصفات تعمل في الخلفية، حيث تنتمي التفاصيل المزعجة.</p>
         <div class="hero-actions">
@@ -286,6 +298,7 @@ function renderHome(): string {
           <li>${icon("check")} استرجاع المقاطع مع أرقام الصفحات</li>
           <li>${icon("check")} ثلاثة بدائل موثقة لكل مفردة</li>
           <li>${icon("check")} إجابة نموذجية ودليل من نص المصدر</li>
+          <li>${icon("check")} اختبار قصير مطابق لوثيقة تقويم العلوم</li>
         </ul>
       </div>
     </section>
@@ -300,6 +313,11 @@ function renderHome(): string {
         <span class="card-icon">${icon("files")}</span>
         <div><h2>اختباراتي</h2><p>مسوداتك واختباراتك المعتمدة في مكان واحد، بلا حفريات داخل المجلدات.</p></div>
         <button class="card-link" data-nav="library">فتح المكتبة ${icon("arrow")}</button>
+      </article>
+      <article class="action-card">
+        <span class="card-icon">${icon("book")}</span>
+        <div><h2>مرجع تقويم العلوم</h2><p>ملخص عملي للوثيقة الرسمية وضوابط بناء الاختبارات القصيرة للصفوف 5-10.</p></div>
+        <button class="card-link" data-nav="policy">فتح المرجع ${icon("arrow")}</button>
       </article>
     </section>
 
@@ -369,7 +387,7 @@ function renderContentStep(): string {
   return `
     <div class="section-intro"><h2>ما موضوع الاختبار؟</h2><p>ثلاثة حقول فقط. يطابق واثق الموضوع مع الصفحات المفهرسة عند الانتقال للخطوة التالية.</p></div>
     <div class="form-grid two-columns">
-      <label class="field"><span>الصف</span><select id="grade-select"><option value="">اختر الصف</option>${Array.from({ length: 12 }, (_, index) => index + 1).map((grade) => `<option value="${grade}" ${state.draft.grade === grade ? "selected" : ""}>الصف ${grade}</option>`).join("")}</select></label>
+      <label class="field"><span>الصف</span><select id="grade-select"><option value="">اختر الصف</option>${[5, 6, 7, 8, 9, 10].map((grade) => `<option value="${grade}" ${state.draft.grade === grade ? "selected" : ""}>الصف ${grade}</option>`).join("")}</select></label>
       <label class="field"><span>المادة</span><select id="subject-select" ${availableSubjects.length === 0 ? "disabled" : ""}><option value="">اختر المادة</option>${availableSubjects.map((item) => `<option value="${item.id}" ${state.draft.subjectId === item.id ? "selected" : ""}>${item.label}</option>`).join("")}</select></label>
       <label class="field full"><span>موضوع الاختبار أو اسم الدرس</span><input id="topic-input" type="text" value="${escapeHtml(state.draft.topic)}" placeholder="مثال: الشحنة الكهربائية" autocomplete="off"/><small>اكتب عبارة قصيرة وواضحة، ولا تحتاج إلى تحديد الوحدة أو أرقام الصفحات.</small></label>
     </div>
@@ -405,8 +423,38 @@ function renderSourceContextSummary(): string {
 
 function renderSetupStep(): string {
   const validation = validateExamSetup(state.draft);
+  const officialSpec = getOfficialShortTestSpec(state.draft.grade);
+  const officialSettings = officialSpec ? `
+    <section class="official-spec-card">
+      <div class="official-spec-head">
+        <div><span class="eyebrow">قالب واثق المتوافق مع الوثيقة</span><h3>اختبار قصير رسمي للصف ${state.draft.grade}</h3><p>${officialSpec.durationLabel} · ${officialSpec.totalMarks} درجات · ${officialSpec.minItems}-${officialSpec.maxItems} مفردات</p></div>
+        <button class="text-btn" data-nav="policy">عرض المرجع الكامل</button>
+      </div>
+      <div class="policy-metric-grid">
+        <div><span>المعرفة</span><strong>${officialSpec.cognitiveMarks.معرفة}</strong><small>40%</small></div>
+        <div><span>التطبيق</span><strong>${officialSpec.cognitiveMarks.تطبيق}</strong><small>40%</small></div>
+        <div><span>الاستدلال</span><strong>${officialSpec.cognitiveMarks.استدلال}</strong><small>20%</small></div>
+        <div><span>المجموع</span><strong>${officialSpec.totalMarks}</strong><small>درجة</small></div>
+      </div>
+      <div class="official-count-grid">
+        ${policyCountCard("اختيار من متعدد", officialSpec.counts.mcq, "درجة واحدة لكل مفردة")}
+        ${policyCountCard("إجابة قصيرة", officialSpec.counts.short, "درجة أو درجتان حسب الخطة")}
+        ${policyCountCard("إجابة طويلة", officialSpec.counts.long, officialSpec.counts.long ? "ثلاث درجات في القالب الحالي" : "غير مستخدمة لهذا الصف")}
+      </div>
+      <p class="policy-lock-note">اختار واثق عددًا صحيحًا داخل النطاق الرسمي، ثم وزع درجات المفردات لتحقيق 40% معرفة و40% تطبيق و20% استدلال. لا تحتاج إلى ضبط الأعداد يدويًا.</p>
+    </section>` : `
+    <div class="compact-section"><h3>مستوى الصعوبة</h3><div class="segmented">${["سهل", "متوسط", "متقدم"].map((level) => `<button data-difficulty="${level}" class="${state.draft.difficulty === level ? "active" : ""}">${level}</button>`).join("")}</div></div>
+    <div class="compact-section">
+      <div class="selection-header"><div><h3>أنواع الأسئلة</h3><p>هذا الصف خارج نطاق وثيقة العلوم للصفوف 5-10، لذلك تبقى الإعدادات يدوية.</p></div><span class="marks-summary">المجموع المحسوب: <b>${validation.computedMarks}</b></span></div>
+      <div class="count-grid">
+        ${countField("mcq", "اختيار من متعدد", state.draft.counts.mcq, "سؤال محدد بإجابة صحيحة واحدة")}
+        ${countField("short", "إجابة قصيرة", state.draft.counts.short, "كلمة أو تفسير مختصر أو إكمال")}
+        ${countField("long", "إجابة طويلة", state.draft.counts.long, "تحليل أو تفسير أو خطوات حل")}
+      </div>
+    </div>`;
+
   return `
-    <div class="section-intro"><h2>إعداد واضح بلا قوائم مرعبة</h2><p>حدد البيانات الأساسية وأنواع الأسئلة، وسيظهر التوافق فورًا.</p></div>
+    <div class="section-intro"><h2>إعداد الاختبار القصير</h2><p>${officialSpec ? "طُبقت مواصفات وثيقة تقويم العلوم تلقائيًا. أكمل بيانات المدرسة والتاريخ فقط." : "حدد البيانات الأساسية وأنواع الأسئلة."}</p></div>
     ${renderSourceContextSummary()}
     <div class="form-grid two-columns">
       ${inputField("title-input", "عنوان الاختبار", state.draft.title, "text", "مثال: الاختبار القصير الأول")}
@@ -415,25 +463,20 @@ function renderSetupStep(): string {
       ${inputField("directorate-input", "المديرية", state.draft.directorate, "text")}
       ${inputField("academic-year-input", "العام الدراسي", state.draft.academicYear, "text")}
       <label class="field"><span>الفصل الدراسي</span><select id="semester-select"><option ${state.draft.semester === "الأول" ? "selected" : ""}>الأول</option><option ${state.draft.semester === "الثاني" ? "selected" : ""}>الثاني</option></select></label>
-      ${inputField("duration-input", "الزمن بالدقائق", state.draft.durationMinutes, "number", "", "10")}
-      ${inputField("marks-input", "الدرجة الكلية", state.draft.totalMarks, "number", "", "5")}
+      ${officialSpec
+        ? `<label class="field readonly-field"><span>الزمن</span><input value="${officialSpec.durationLabel}" readonly/></label><label class="field readonly-field"><span>الدرجة الكلية</span><input value="${officialSpec.totalMarks}" readonly/></label>`
+        : `${inputField("duration-input", "الزمن بالدقائق", state.draft.durationMinutes, "number", "", "10")}${inputField("marks-input", "الدرجة الكلية", state.draft.totalMarks, "number", "", "5")}`}
     </div>
 
-    <div class="compact-section"><h3>مستوى الصعوبة</h3><div class="segmented">${["سهل", "متوسط", "متقدم"].map((level) => `<button data-difficulty="${level}" class="${state.draft.difficulty === level ? "active" : ""}">${level}</button>`).join("")}</div></div>
-
-    <div class="compact-section">
-      <div class="selection-header"><div><h3>أنواع الأسئلة</h3><p>الدرجات التجريبية: الاختيار من متعدد 1، القصيرة 2، الطويلة 4.</p></div><span class="marks-summary">المجموع المحسوب: <b>${validation.computedMarks}</b></span></div>
-      <div class="count-grid">
-        ${countField("mcq", "اختيار من متعدد", state.draft.counts.mcq, "سؤال محدد بإجابة صحيحة واحدة")}
-        ${countField("short", "إجابة قصيرة", state.draft.counts.short, "كلمة أو تفسير مختصر أو إكمال")}
-        ${countField("long", "إجابة طويلة", state.draft.counts.long, "تحليل أو تفسير أو خطوات حل")}
-      </div>
-    </div>
-
+    ${officialSettings}
     ${renderCompliance(validation)}
     ${state.questionGenerationMessage ? `<div class="generation-status ${state.questionGenerationBusy ? "busy" : "notice"}">${state.questionGenerationBusy ? icon("spark") : "!"}<div><strong>${state.questionGenerationBusy ? "مولد الأسئلة يعمل" : "حالة توليد الأسئلة"}</strong><p>${escapeHtml(state.questionGenerationMessage)}</p></div></div>` : ""}
     ${renderWizardFooter(2, validation.valid)}
   `;
+}
+
+function policyCountCard(label: string, count: number, note: string): string {
+  return `<div class="policy-count-card"><span>${label}</span><strong>${count}</strong><small>${note}</small></div>`;
 }
 
 function inputField(id: string, label: string, value: string | number, type: string, placeholder = "", min = ""): string {
@@ -446,7 +489,7 @@ function countField(key: keyof QuestionCounts, label: string, value: number, des
 
 function renderCompliance(validation: ReturnType<typeof validateExamSetup>): string {
   if (validation.valid) {
-    return `<div class="compliance success">${icon("check")}<div><strong>الخطة الأولية متوافقة</strong><p>يمكنك الانتقال لبناء خطة الاختبار واختيار المقترحات.</p></div></div>`;
+    return `<div class="compliance success">${icon("check")}<div><strong>الخطة مطابقة لمرجع التقويم</strong><p>يمكنك الانتقال لبناء مفردات الاختبار من صفحات المصدر.</p></div></div>`;
   }
   return `<div class="compliance warning"><div class="warning-mark">!</div><div><strong>تحتاج بعض البيانات إلى ضبط</strong><ul>${validation.issues.map((issue) => `<li>${escapeHtml(issue.message)}</li>`).join("")}</ul>${validation.suggestedCounts ? `<button class="secondary-btn compact" data-action="apply-suggestion">تطبيق التوزيع المقترح: ${validation.suggestedCounts.mcq} متعدد، ${validation.suggestedCounts.short} قصيرة، ${validation.suggestedCounts.long} طويلة</button>` : ""}</div></div>`;
 }
@@ -518,7 +561,7 @@ function renderReviewStep(): string {
       </section>
       <aside class="review-panel">
         <div class="final-check"><h3>حالة المسودة</h3>${checkRow("ارتباط الموضوع بالمصدر", state.draft.sourceReferences.length > 0)}${checkRow("مجموع الدرجات", true)}${checkRow("اختيار مفردات الخطة", isPlanComplete(state.draft))}${checkRow("توليد الأسئلة من المصدر", groundedGeneration)}</div>
-        <div class="review-summary"><span>الدرجة</span><strong>${state.draft.totalMarks}</strong><span>الأسئلة</span><strong>${state.draft.plan.length}</strong><span>الصعوبة</span><strong>${state.draft.difficulty}</strong></div>
+        <div class="review-summary"><span>الدرجة</span><strong>${state.draft.totalMarks}</strong><span>الأسئلة</span><strong>${state.draft.plan.length}</strong><span>المواصفة</span><strong>معتمدة</strong></div>
         ${renderAnswerKey(selected)}
         <button class="primary-btn full" data-action="save-now">${icon("save")} حفظ المسودة</button>
         <p class="muted-note">الأسئلة مولدة من نصوص المصدر مع مرجع صفحة ودليل نصي، لكنها تبقى مسودة تحتاج مراجعة المعلم قبل الاستخدام. التصدير النهائي لم يُفعّل بعد.</p>
@@ -542,6 +585,68 @@ function renderWizardFooter(step: WizardStep, canContinue = true): string {
       : `التالي ${icon("arrow")}`;
   const busy = retrieving || generating;
   return `<footer class="wizard-footer">${step > 1 ? `<button class="secondary-btn" data-action="previous-step" ${busy ? "disabled" : ""}>السابق</button>` : `<button class="secondary-btn" data-nav="home">إلغاء</button>`}<div>${step < 4 ? `<button class="primary-btn" data-action="next-step" ${canContinue && !busy ? "" : "disabled"}>${nextLabel}</button>` : `<button class="secondary-btn" data-nav="library">الذهاب إلى اختباراتي</button>`}</div></footer>`;
+}
+
+function renderPolicyReference(): string {
+  const grades58 = getOfficialShortTestSpec(5);
+  const grade9 = getOfficialShortTestSpec(9);
+  const grade10 = getOfficialShortTestSpec(10);
+  if (!grades58 || !grade9 || !grade10) throw new Error("تعذر تحميل مرجع تقويم العلوم.");
+  return `
+    <section class="page-heading policy-heading">
+      <div><span class="eyebrow">مرجع تنظيمي معتمد</span><h1>مرجع تقويم العلوم</h1><p>${escapeHtml(SCIENCE_ASSESSMENT_POLICY_TITLE)} · إصدار ${escapeHtml(SCIENCE_ASSESSMENT_POLICY_VERSION)} · ${escapeHtml(SCIENCE_ASSESSMENT_POLICY_PUBLISHED)}</p></div>
+      <a class="primary-btn" href="${SCIENCE_ASSESSMENT_POLICY_DOCUMENT_PATH}" target="_blank" rel="noreferrer">فتح الوثيقة الأصلية</a>
+    </section>
+
+    <section class="policy-reference-hero">
+      <div><h2>ما الذي يطبقه واثق الآن؟</h2><p>يستخدم واثق المرجع الرسمي لبناء الاختبار القصير أولًا، ثم يولد الأسئلة من صفحات الكتاب المفهرس. المرجع التقويمي يحدد البنية، والكتاب يحدد المحتوى العلمي.</p></div>
+      <div class="policy-reference-badge">5-10<br/><small>الصفوف المشمولة</small></div>
+    </section>
+
+    <section class="policy-section">
+      <div class="section-intro"><h2>أهداف التقويم</h2><p>توزع درجات الاختبار القصير بنسبة 40% معرفة، و40% تطبيق، و20% استدلال.</p></div>
+      <div class="policy-goal-grid">
+        <article><strong>المعرفة</strong><p>تذكر الحقائق والمصطلحات والقوانين ووصف الخصائص والعمليات.</p></article>
+        <article><strong>التطبيق</strong><p>استخدام المعرفة في مواقف جديدة وتفسير الجداول والرسوم وتحويل المعلومات.</p></article>
+        <article><strong>الاستدلال</strong><p>تحليل الأدلة، وتفسير النتائج، وحل المشكلات، والتبرير والتخطيط للاستقصاء.</p></article>
+      </div>
+    </section>
+
+    <section class="policy-section">
+      <div class="section-intro"><h2>مواصفات الاختبار القصير</h2><p>تعرض البطاقات النطاق الرسمي، ويستخدم واثق قالبًا ثابتًا متوافقًا داخله لتقليل التعقيد.</p></div>
+      <div class="policy-spec-grid">
+        ${renderPolicySpecCard("الصفوف 5-8", grades58)}
+        ${renderPolicySpecCard("الصف 9", grade9)}
+        ${renderPolicySpecCard("الصف 10", grade10)}
+      </div>
+    </section>
+
+    <section class="policy-section">
+      <div class="section-intro"><h2>ضوابط صياغة المفردات</h2><p>قواعد مختصرة يستخدمها مولد الأسئلة ويراجعها المعلم قبل الاعتماد.</p></div>
+      <div class="policy-rule-grid">
+        ${renderPolicyRuleCard("اختيار من متعدد", ASSESSMENT_ITEM_WRITING_RULES.multipleChoice)}
+        ${renderPolicyRuleCard("إجابة قصيرة", ASSESSMENT_ITEM_WRITING_RULES.shortAnswer)}
+        ${renderPolicyRuleCard("إجابة طويلة", ASSESSMENT_ITEM_WRITING_RULES.longAnswer)}
+        ${renderPolicyRuleCard("قواعد عامة", ASSESSMENT_ITEM_WRITING_RULES.general)}
+      </div>
+    </section>
+
+    <section class="policy-section policy-note-card">
+      <h2>الفصل بين المرجعين</h2>
+      <div class="policy-source-split">
+        <div><strong>وثيقة التقويم</strong><p>تحدد عدد المفردات والدرجات وأنواعها وأهداف التقويم وضوابط الصياغة.</p></div>
+        <div><strong>كتاب الطالب والمصادر العلمية</strong><p>توفر المعلومات العلمية والدليل النصي ورقم الصفحة الذي يبنى عليه السؤال.</p></div>
+      </div>
+    </section>
+  `;
+}
+
+function renderPolicySpecCard(label: string, spec: NonNullable<ReturnType<typeof getOfficialShortTestSpec>>): string {
+  return `<article class="policy-spec-card"><span>${label}</span><h3>${spec.totalMarks} درجات</h3><p>${spec.minItems}-${spec.maxItems} مفردات · ${spec.durationLabel}</p><div><small>قالب واثق المتوافق</small><br/><b>${spec.counts.mcq}</b> اختيار من متعدد <b>${spec.counts.short}</b> قصيرة <b>${spec.counts.long}</b> طويلة</div><ul>${spec.notes.map((note) => `<li>${escapeHtml(note)}</li>`).join("")}</ul></article>`;
+}
+
+function renderPolicyRuleCard(title: string, rules: readonly string[]): string {
+  return `<article class="policy-rule-card"><h3>${title}</h3><ul>${rules.map((rule) => `<li>${escapeHtml(rule)}</li>`).join("")}</ul></article>`;
 }
 
 function renderLibrary(): string {
@@ -1194,6 +1299,7 @@ function bindContentStep(): void {
   const gradeSelect = document.querySelector<HTMLSelectElement>("#grade-select");
   gradeSelect?.addEventListener("change", () => {
     state.draft.grade = gradeSelect.value ? Number(gradeSelect.value) : null;
+    applyOfficialShortTestTemplate(state.draft);
     state.draft.subjectId = "";
     state.draft.topic = "";
     invalidateSourceAndGeneratedQuestions();
@@ -1281,9 +1387,14 @@ function bindSetupStep(): void {
 }
 
 function applySuggestedCounts(): void {
-  const suggestion = validateExamSetup(state.draft).suggestedCounts;
-  if (!suggestion) return;
-  state.draft.counts = suggestion;
+  const officialSpec = getOfficialShortTestSpec(state.draft.grade);
+  if (officialSpec) {
+    applyOfficialShortTestTemplate(state.draft);
+  } else {
+    const suggestion = validateExamSetup(state.draft).suggestedCounts;
+    if (!suggestion) return;
+    state.draft.counts = suggestion;
+  }
   invalidateGeneratedQuestions();
   scheduleSave();
   render();
