@@ -41,6 +41,7 @@ async function loadEdgeHelpers() {
     buildFallbackMarkScheme,
     isMetaSourceQuestion,
     referenceSupportsLessonScope,
+    parseGenerationRequest,
     generateAndValidate,
   };\n`;
 
@@ -95,6 +96,102 @@ function noVisual() {
   };
 }
 
+
+
+test("يقبل المرجع المقيد بصفحات الدرس ولو لم يتكرر عنوان الدرس حرفيًا داخل المقطع", () => {
+  const reference = {
+    id: "R-PAGE",
+    sourceId: "SOURCE-10-PHYSICS",
+    sourceTitle: "كتاب الطالب للفيزياء",
+    sourceKind: "كتاب الطالب",
+    pageFrom: 93,
+    pageTo: 94,
+    content: "تنطلق جسيمات ألفا من بعض الأنوية غير المستقرة، وقد يصاحب التحلل إشعاع جاما.",
+    lessonTopic: "9-1 النشاط الإشعاعي في كل مكان",
+    lessonScopeMode: "page-range",
+    lessonPageFrom: 93,
+    lessonPageTo: 95,
+  };
+  assert.equal(helpers.referenceSupportsLessonScope("9-1 النشاط الإشعاعي في كل مكان", reference), true);
+
+  const outside = { ...reference, pageFrom: 101, pageTo: 102 };
+  assert.equal(helpers.referenceSupportsLessonScope("9-1 النشاط الإشعاعي في كل مكان", outside), false);
+});
+
+test("يبقي البحث الاحتياطي خارج نطاق الصفحات مشروطًا بتطابق عنوان الدرس", () => {
+  const fallback = {
+    id: "R-FALLBACK",
+    sourceId: "SOURCE-10-PHYSICS",
+    sourceTitle: "كتاب الطالب للفيزياء",
+    sourceKind: "كتاب الطالب",
+    pageFrom: 110,
+    pageTo: 110,
+    content: "يؤثر الضغط في السوائل مع زيادة العمق.",
+    lessonTopic: "9-1 النشاط الإشعاعي في كل مكان",
+    lessonScopeMode: "strict-title-fallback",
+  };
+  assert.equal(helpers.referenceSupportsLessonScope("9-1 النشاط الإشعاعي في كل مكان", fallback), false);
+});
+
+test("يتحقق الخادم من تطابق الدرس ونطاق الصفحة قبل استدعاء Gemini", () => {
+  const item = (planItemId, questionType, cognitiveLevel, marks, lessonLabel, sourceReferenceId) => ({
+    planItemId,
+    questionType,
+    cognitiveLevel,
+    marks,
+    sourceReferenceId,
+    lessonLabel,
+    styleTarget: questionType === "إجابة طويلة" ? "حسابي" : "مفهومي",
+    visualTarget: "none",
+  });
+  const sentItem = item(
+    "P-SCOPE",
+    "اختيار من متعدد",
+    "معرفة",
+    1,
+    "9-1 النشاط الإشعاعي في كل مكان",
+    "R-SCOPE",
+  );
+  const officialPlanItems = [
+    sentItem,
+    item("P-2", "اختيار من متعدد", "تطبيق", 1, "9-2 فهم النشاط الإشعاعي", "R-OTHER-2"),
+    item("P-3", "إجابة قصيرة", "معرفة", 1, "9-1 النشاط الإشعاعي في كل مكان", "R-OTHER-3"),
+    item("P-4", "إجابة قصيرة", "معرفة", 2, "9-1 النشاط الإشعاعي في كل مكان", "R-OTHER-4"),
+    item("P-5", "إجابة قصيرة", "استدلال", 2, "9-2 فهم النشاط الإشعاعي", "R-OTHER-5"),
+    item("P-6", "إجابة طويلة", "تطبيق", 3, "9-2 فهم النشاط الإشعاعي", "R-OTHER-6"),
+  ];
+  const raw = {
+    assessmentType: "اختبار قصير رسمي",
+    assessmentPolicyId: "oman-science-assessment-2025-2026",
+    topic: "النشاط الإشعاعي، فهم النشاط الإشعاعي",
+    lessons: ["9-1 النشاط الإشعاعي في كل مكان", "9-2 فهم النشاط الإشعاعي"],
+    grade: 10,
+    subject: "الفيزياء",
+    difficulty: "متوسط",
+    references: [{
+      id: "R-SCOPE",
+      sourceId: "SOURCE-10-PHYSICS",
+      sourceTitle: "كتاب الطالب للفيزياء",
+      sourceKind: "كتاب الطالب",
+      pageFrom: 93,
+      pageTo: 94,
+      content: "تنطلق جسيمات ألفا من بعض الأنوية غير المستقرة.",
+      lessonTopic: "9-1 النشاط الإشعاعي في كل مكان",
+      lessonScopeMode: "page-range",
+      lessonPageFrom: 93,
+      lessonPageTo: 95,
+    }],
+    officialPlanItems,
+    items: [sentItem],
+  };
+  const parsed = helpers.parseGenerationRequest(raw);
+  assert.equal(parsed.references[0].lessonScopeMode, "page-range");
+
+  const invalid = structuredClone(raw);
+  invalid.references[0].pageFrom = 110;
+  invalid.references[0].pageTo = 110;
+  assert.throws(() => helpers.parseGenerationRequest(invalid), /خارج نطاق الدرس الموثق/);
+});
 
 test("يجمع generateContent جميع أجزاء النص ثم يحلل JSON ذي المفتاح items", () => {
   const result = helpers.findGenerateContentOutputText({

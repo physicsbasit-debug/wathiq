@@ -13,19 +13,27 @@ import type {
 } from "./types.js";
 import type { OwnerSession } from "./central-source-store.js";
 import type { WathiqRuntimeConfig } from "./runtime-config.js";
+import type { LessonCatalogOption } from "./lesson-catalog.js";
 import { SCIENCE_ASSESSMENT_POLICY_ID } from "./assessment-policy.js";
 import { parseQuestionVisualSpec } from "./question-visual.js";
 
 export const SOURCE_GENERATION_VERSION = "source-grounded-policy-ai-10-strict-lesson-scope";
 export const GENERATION_BATCH_SIZE = 2;
 
+export type QuestionReferenceScopeMode = "page-range" | "page-neighborhood" | "strict-title-fallback" | "legacy-title";
+
 export interface QuestionGenerationReference {
   id: string;
+  sourceId: string;
   sourceTitle: string;
   sourceKind: string;
   pageFrom: number;
   pageTo: number;
   content: string;
+  lessonTopic: string;
+  lessonScopeMode: QuestionReferenceScopeMode;
+  lessonPageFrom?: number;
+  lessonPageTo?: number;
 }
 
 export interface QuestionRegenerationAnchor {
@@ -324,23 +332,50 @@ export function buildQuestionGenerationRequest(
   references: ExamSourceReference[],
   requestedPlan: PlanItem[],
   officialPlan: PlanItem[] = requestedPlan,
+  lessonCatalog: readonly LessonCatalogOption[] = [],
 ): QuestionGenerationRequest {
   const normalizedLessons = lessons.map((lesson) => lesson.trim()).filter(Boolean);
   if (normalizedLessons.length < 2 || normalizedLessons.length > 5) {
     throw new Error("يجب أن يحتوي الاختبار على درسين إلى خمسة دروس.");
   }
   const referenceById = new Map(references.map((reference) => [reference.id, reference]));
+  const lessonByReferenceId = new Map<string, string>();
+  for (const item of officialPlan) {
+    if (item.sourceReferenceId && !lessonByReferenceId.has(item.sourceReferenceId)) {
+      lessonByReferenceId.set(item.sourceReferenceId, item.lessonLabel);
+    }
+  }
+  const catalogByLessonAndSource = new Map(
+    lessonCatalog.map((lesson) => [`${lesson.sourceId}::${lesson.label}`, lesson] as const),
+  );
   const usedReferenceIds = new Set(requestedPlan.map((item) => item.sourceReferenceId).filter((id): id is string => Boolean(id)));
   const requestReferences = [...usedReferenceIds].map((referenceId) => {
     const reference = referenceById.get(referenceId);
     if (!reference) throw new Error("تعذر العثور على مرجع إحدى مفردات الخطة.");
+    const lessonTopic = (reference.lessonTopic ?? lessonByReferenceId.get(referenceId) ?? "").trim();
+    if (!lessonTopic) throw new Error("تعذر تحديد الدرس المرتبط بمرجع إحدى المفردات.");
+    const catalogLesson = catalogByLessonAndSource.get(`${reference.sourceId}::${lessonTopic}`);
+    const lessonPageFrom = catalogLesson?.pageStart;
+    const lessonPageTo = catalogLesson?.pageEnd ?? lessonPageFrom;
+    const overlaps = (from: number, to: number) => reference.pageFrom <= to && reference.pageTo >= from;
+    const lessonScopeMode: QuestionReferenceScopeMode = lessonPageFrom && lessonPageTo
+      ? overlaps(lessonPageFrom, lessonPageTo)
+        ? "page-range"
+        : overlaps(Math.max(1, lessonPageFrom - 3), lessonPageTo + 3)
+          ? "page-neighborhood"
+          : "strict-title-fallback"
+      : "legacy-title";
     return {
       id: reference.id,
+      sourceId: reference.sourceId,
       sourceTitle: reference.sourceTitle,
       sourceKind: reference.sourceKind,
       pageFrom: reference.pageFrom,
       pageTo: reference.pageTo,
       content: (reference.context ?? reference.excerpt).trim(),
+      lessonTopic,
+      lessonScopeMode,
+      ...(lessonPageFrom && lessonPageTo ? { lessonPageFrom, lessonPageTo } : {}),
     };
   });
   const officialIndexById = new Map(officialPlan.map((item, index) => [item.id, index]));

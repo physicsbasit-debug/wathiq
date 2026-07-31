@@ -125,6 +125,51 @@ test("يبني طلب الدفعة من سياق المقطع الكامل وم�
   assert.equal(request.assessmentPolicyId, "oman-science-assessment-2025-2026");
 });
 
+
+test("يرسل نطاق صفحات الدرس الموثق إلى Edge Function بدل طلب تكرار عنوان الدرس داخل النص", () => {
+  const item = planItem("plan-page", "9-1 النشاط الإشعاعي في كل مكان", "ref-page");
+  const request = buildQuestionGenerationRequest(
+    "اختبار قصير رسمي",
+    "النشاط الإشعاعي",
+    ["9-1 النشاط الإشعاعي في كل مكان", "9-2 فهم النشاط الإشعاعي"],
+    10,
+    "الفيزياء",
+    "متوسط",
+    [{
+      id: "ref-page",
+      sourceId: "source-physics-10",
+      sourceTitle: "كتاب الطالب للفيزياء",
+      sourceKind: "كتاب الطالب",
+      pageFrom: 93,
+      pageTo: 94,
+      excerpt: "تنطلق جسيمات ألفا من بعض الأنوية غير المستقرة.",
+      context: "تنطلق جسيمات ألفا من بعض الأنوية غير المستقرة، وقد يصاحب التحلل إشعاع جاما.",
+      lessonTopic: "9-1 النشاط الإشعاعي في كل مكان",
+      score: 96,
+    }],
+    [item],
+    [item],
+    [{
+      id: "lesson-source-physics-10-u9-l1",
+      sourceId: "source-physics-10",
+      sourceTitle: "كتاب الطالب للفيزياء",
+      label: "9-1 النشاط الإشعاعي في كل مكان",
+      code: "9-1",
+      title: "النشاط الإشعاعي في كل مكان",
+      pageStart: 93,
+      pageEnd: 95,
+      unitLabel: "الوحدة التاسعة: النشاط الإشعاعي",
+      origin: "curated-book-tree",
+    }],
+  );
+
+  assert.equal(request.references[0].sourceId, "source-physics-10");
+  assert.equal(request.references[0].lessonTopic, "9-1 النشاط الإشعاعي في كل مكان");
+  assert.equal(request.references[0].lessonScopeMode, "page-range");
+  assert.equal(request.references[0].lessonPageFrom, 93);
+  assert.equal(request.references[0].lessonPageTo, 95);
+});
+
 test("يقسم مفردات التوليد إلى دفعات صغيرة تحفظ ترتيبها", () => {
   const batches = splitQuestionGenerationBatches([1, 2, 3, 4, 5]);
   assert.equal(GENERATION_BATCH_SIZE, 2);

@@ -58,13 +58,20 @@ interface QuestionVisualSpec {
   annotations: string[];
 }
 
+type LessonScopeMode = "page-range" | "page-neighborhood" | "strict-title-fallback" | "legacy-title";
+
 interface GenerationReference {
   id: string;
+  sourceId: string;
   sourceTitle: string;
   sourceKind: string;
   pageFrom: number;
   pageTo: number;
   content: string;
+  lessonTopic: string;
+  lessonScopeMode: LessonScopeMode;
+  lessonPageFrom?: number;
+  lessonPageTo?: number;
 }
 
 interface RegenerationAnchor {
@@ -172,6 +179,7 @@ interface EvidenceCatalog {
   byId: Map<string, EvidenceFragment>;
   byReferenceId: Map<string, EvidenceFragment[]>;
   referenceContentById: Map<string, string>;
+  referenceById: Map<string, GenerationReference>;
 }
 
 Deno.serve(async (req) => {
@@ -850,19 +858,40 @@ function parseGenerationRequest(value: unknown): GenerationRequest {
     const item = requireRecord(entry, "أحد المراجع غير صالح.");
     const content = requireText(item.content, "نص أحد المراجع فارغ.", MAX_REFERENCE_CHARACTERS);
     totalReferenceCharacters += content.length;
+    const lessonScopeMode = requireEnum(
+      item.lessonScopeMode,
+      ["page-range", "page-neighborhood", "strict-title-fallback", "legacy-title"] as const,
+      "طريقة إثبات نطاق الدرس غير صالحة.",
+    );
+    const lessonPageFrom = item.lessonPageFrom === undefined
+      ? undefined
+      : requireInteger(item.lessonPageFrom, "بداية نطاق صفحات الدرس غير صالحة.", 1, 10_000);
+    const lessonPageTo = item.lessonPageTo === undefined
+      ? undefined
+      : requireInteger(item.lessonPageTo, "نهاية نطاق صفحات الدرس غير صالحة.", 1, 10_000);
+    if ((lessonScopeMode === "page-range" || lessonScopeMode === "page-neighborhood")
+      && (lessonPageFrom === undefined || lessonPageTo === undefined || lessonPageTo < lessonPageFrom)) {
+      throw httpError("مرجع الدرس المقيد بالصفحات لا يحتوي نطاق صفحات صالحًا.", 400);
+    }
     return {
       id: requireText(item.id, "معرف المرجع غير موجود.", 220),
+      sourceId: requireText(item.sourceId, "معرف مصدر المرجع غير موجود.", 220),
       sourceTitle: requireText(item.sourceTitle, "عنوان المرجع غير موجود.", 220),
       sourceKind: requireText(item.sourceKind, "نوع المرجع غير موجود.", 100),
       pageFrom: requireInteger(item.pageFrom, "بداية صفحات المرجع غير صالحة.", 1, 10_000),
       pageTo: requireInteger(item.pageTo, "نهاية صفحات المرجع غير صالحة.", 1, 10_000),
       content,
+      lessonTopic: requireText(item.lessonTopic, "الدرس المرتبط بالمرجع غير موجود.", 180),
+      lessonScopeMode,
+      ...(lessonPageFrom === undefined ? {} : { lessonPageFrom }),
+      ...(lessonPageTo === undefined ? {} : { lessonPageTo }),
     } satisfies GenerationReference;
   });
   if (totalReferenceCharacters > MAX_TOTAL_REFERENCE_CHARACTERS) {
     throw httpError("مجموع نصوص المراجع أكبر من الحد المسموح لدفعة توليد واحدة.", 413);
   }
   const referenceIds = new Set(references.map((reference) => reference.id));
+  const referenceById = new Map(references.map((reference) => [reference.id, reference]));
   if (referenceIds.size !== references.length) throw httpError("توجد مراجع مكررة في الطلب.", 400);
   references.forEach((reference) => {
     if (reference.pageTo < reference.pageFrom) throw httpError("نطاق صفحات أحد المراجع غير صالح.", 400);
@@ -877,6 +906,15 @@ function parseGenerationRequest(value: unknown): GenerationRequest {
     const lessonLabel = requireText(item.lessonLabel, "درس إحدى المفردات غير موجود.", 180);
     if (!lessonKeys.includes(normalizeForEvidence(lessonLabel))) {
       throw httpError("إحدى مفردات الخطة مرتبطة بدرس غير موجود في قائمة الدروس.", 400);
+    }
+    if (requireSentReference) {
+      const reference = referenceById.get(sourceReferenceId);
+      if (!reference || normalizeForEvidence(reference.lessonTopic) !== normalizeForEvidence(lessonLabel)) {
+        throw httpError("مرجع إحدى المفردات لا يطابق الدرس المحدد.", 400);
+      }
+      if (!referenceSupportsLessonScope(lessonLabel, reference)) {
+        throw httpError("مرجع إحدى المفردات خارج نطاق الدرس الموثق.", 400);
+      }
     }
     return {
       planItemId: requireText(item.planItemId, "معرف مفردة الخطة غير موجود.", 120),
@@ -1032,6 +1070,7 @@ function buildEvidenceCatalog(references: GenerationReference[]): EvidenceCatalo
     byId: new Map(fragments.map((fragment) => [fragment.id, fragment])),
     byReferenceId,
     referenceContentById: new Map(references.map((reference) => [reference.id, reference.content])),
+    referenceById: new Map(references.map((reference) => [reference.id, reference])),
   };
 }
 
@@ -1474,8 +1513,8 @@ function validateAndHydrateAlternative(
   if (!evidence || evidence.referenceId !== sourceReferenceId) {
     throw retryableError("اختار مولد الأسئلة دليلًا لا ينتمي إلى مرجع المفردة.");
   }
-  const referenceContent = evidenceCatalog.referenceContentById.get(sourceReferenceId) ?? evidence.text;
-  if (!referenceSupportsLessonScope(lessonLabel, referenceContent)) {
+  const reference = evidenceCatalog.referenceById.get(sourceReferenceId);
+  if (!reference || !referenceSupportsLessonScope(lessonLabel, reference)) {
     throw retryableError("المرجع المختار لا يثبت ارتباط السؤال بالدرس المحدد.");
   }
   const questionMaterial = `${alternative.stimulus} ${alternative.text} ${alternative.answer} ${alternative.rationale}`;
@@ -1519,8 +1558,7 @@ function canonicalEvidenceToken(token: string): string {
   return value;
 }
 
-function referenceSupportsLessonScope(lessonLabel: string | undefined, evidenceText: string): boolean {
-  if (!lessonLabel?.trim()) return true;
+function lessonTitleMatchesEvidence(lessonLabel: string, evidenceText: string): boolean {
   const stopWords = new Set(["درس", "الوحده", "موضوع", "في", "من", "الى", "على", "كل", "مكان", "داخل", "خارج"]);
   const lessonTokens = normalizeForEvidence(lessonLabel)
     .split(/\s+/u)
@@ -1530,6 +1568,39 @@ function referenceSupportsLessonScope(lessonLabel: string | undefined, evidenceT
   const evidenceTokens = new Set(normalizeForEvidence(evidenceText).split(/\s+/u).map(canonicalEvidenceToken));
   const matched = lessonTokens.filter((token) => evidenceTokens.has(token)).length;
   return matched >= Math.min(2, lessonTokens.length);
+}
+
+function pageRangesOverlap(fromA: number, toA: number, fromB: number, toB: number): boolean {
+  return fromA <= toB && toA >= fromB;
+}
+
+function referenceSupportsLessonScope(
+  lessonLabel: string | undefined,
+  referenceOrText: GenerationReference | string,
+): boolean {
+  if (!lessonLabel?.trim()) return true;
+  if (typeof referenceOrText === "string") {
+    return lessonTitleMatchesEvidence(lessonLabel, referenceOrText);
+  }
+
+  const reference = referenceOrText;
+  const scopedLessonTopic = typeof reference.lessonTopic === "string" ? reference.lessonTopic.trim() : "";
+  const scopeMode = reference.lessonScopeMode ?? "legacy-title";
+  if (scopedLessonTopic && normalizeForEvidence(scopedLessonTopic) !== normalizeForEvidence(lessonLabel)) return false;
+
+  if (scopeMode === "page-range" || scopeMode === "page-neighborhood") {
+    if (typeof reference.sourceId !== "string" || !reference.sourceId.trim()
+      || reference.lessonPageFrom === undefined || reference.lessonPageTo === undefined) return false;
+    const padding = scopeMode === "page-neighborhood" ? 3 : 0;
+    return pageRangesOverlap(
+      reference.pageFrom,
+      reference.pageTo,
+      Math.max(1, reference.lessonPageFrom - padding),
+      reference.lessonPageTo + padding,
+    );
+  }
+
+  return lessonTitleMatchesEvidence(lessonLabel, reference.content);
 }
 
 function hasRegenerationSimilarity(questionMaterial: string, anchor: RegenerationAnchor, lessonLabel: string): boolean {

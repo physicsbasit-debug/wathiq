@@ -1598,6 +1598,7 @@ async function generateQuestionsForPlan(plan: PlanItem[]): Promise<boolean> {
         state.draft.sourceReferences,
         batch,
         state.draft.plan,
+        state.lessonCatalog,
       );
       const response = await questionGenerationService.generate(request);
       const replacements = applyGeneratedQuestions(batch, response);
@@ -1647,6 +1648,7 @@ async function regeneratePlanItem(item: PlanItem): Promise<void> {
       state.draft.sourceReferences,
       [item],
       state.draft.plan,
+      state.lessonCatalog,
     );
     const anchor = selectedProposal(state.draft, item) ?? item.proposals[0];
     if (anchor && request.items[0]) {
