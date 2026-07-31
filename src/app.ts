@@ -94,6 +94,7 @@ interface AppState {
   lessonCatalogKey: string;
   lessonCatalogBusy: boolean;
   lessonCatalogMessage: string;
+  lessonCatalogActiveUnitKey: string;
   visualEnhancementBusyIds: Set<string>;
   visualEnhancementMessages: Record<string, string>;
   visualEnhancementAutoStarted: boolean;
@@ -162,6 +163,7 @@ const state: AppState = {
   lessonCatalogKey: "",
   lessonCatalogBusy: false,
   lessonCatalogMessage: "",
+  lessonCatalogActiveUnitKey: "",
   visualEnhancementBusyIds: new Set<string>(),
   visualEnhancementMessages: {},
   visualEnhancementAutoStarted: false,
@@ -426,13 +428,54 @@ function lessonCatalogSelectionKey(): string {
   return [state.draft.grade ?? "", state.draft.subjectId, ...eligibleSourcesForDraft().map((source) => `${source.id}:${source.updatedAt}`)].join("|");
 }
 
-function renderLessonOption(lesson: LessonCatalogOption, selectedLabels: Set<string>, selectedCount: number): string {
+interface LessonUnitGroup {
+  key: string;
+  sourceId: string;
+  sourceTitle: string;
+  unitLabel: string;
+  lessons: LessonCatalogOption[];
+}
+
+function lessonUnitKey(sourceId: string, unitLabel: string): string {
+  return `${sourceId}::${unitLabel}`;
+}
+
+function buildLessonUnitGroups(catalog: LessonCatalogOption[]): LessonUnitGroup[] {
+  const groups = new Map<string, LessonUnitGroup>();
+  catalog.forEach((lesson) => {
+    const unitLabel = lesson.unitLabel || "دروس الكتاب";
+    const key = lessonUnitKey(lesson.sourceId, unitLabel);
+    const group = groups.get(key) ?? {
+      key,
+      sourceId: lesson.sourceId,
+      sourceTitle: lesson.sourceTitle,
+      unitLabel,
+      lessons: [],
+    };
+    group.lessons.push(lesson);
+    groups.set(key, group);
+  });
+  return [...groups.values()];
+}
+
+function resolveActiveLessonUnitKey(groups: LessonUnitGroup[], selectedLabels: ReadonlySet<string>): string {
+  if (groups.some((group) => group.key === state.lessonCatalogActiveUnitKey)) return state.lessonCatalogActiveUnitKey;
+  const selectedGroup = groups.find((group) => group.lessons.some((lesson) => selectedLabels.has(lesson.label)));
+  return selectedGroup?.key ?? groups[0]?.key ?? "";
+}
+
+function renderLessonOption(
+  lesson: LessonCatalogOption,
+  selectedLabels: Set<string>,
+  selectedCount: number,
+  unitKey: string,
+): string {
   const checked = selectedLabels.has(lesson.label);
   const disabled = !checked && selectedCount >= MAX_LESSON_TOPICS;
   const pages = lesson.pageStart
     ? `<small>${lesson.pageStart === lesson.pageEnd || !lesson.pageEnd ? `ص ${lesson.pageStart}` : `ص ${lesson.pageStart}-${lesson.pageEnd}`}</small>`
-    : "";
-  return `<label class="lesson-catalog-option ${checked ? "selected" : ""} ${disabled ? "disabled" : ""}"><input type="checkbox" data-lesson-option-id="${escapeHtml(lesson.id)}" ${checked ? "checked" : ""} ${disabled ? "disabled" : ""}/><span><b>${escapeHtml(lesson.code)}</b><strong>${escapeHtml(lesson.title)}</strong>${pages}</span></label>`;
+    : `<small class="lesson-page-pending">صفحات مستخرجة من عنوان الدرس</small>`;
+  return `<label class="lesson-catalog-option ${checked ? "selected" : ""} ${disabled ? "disabled" : ""}"><input type="checkbox" data-lesson-option-id="${escapeHtml(lesson.id)}" data-lesson-unit-key="${escapeHtml(unitKey)}" ${checked ? "checked" : ""} ${disabled ? "disabled" : ""}/><span><b>${escapeHtml(lesson.code)}</b><strong>${escapeHtml(lesson.title)}</strong>${pages}</span></label>`;
 }
 
 function renderLessonCatalog(): string {
@@ -448,30 +491,40 @@ function renderLessonCatalog(): string {
     return `<div class="lesson-catalog-empty warning">${escapeHtml(state.lessonCatalogMessage || "لم يجد واثق شجرة دروس موثوقة للمصدر المطابق.")}</div>`;
   }
 
-  const bySource = new Map<string, LessonCatalogOption[]>();
-  state.lessonCatalog.forEach((lesson) => {
-    const group = bySource.get(lesson.sourceId) ?? [];
-    group.push(lesson);
-    bySource.set(lesson.sourceId, group);
-  });
+  const unitGroups = buildLessonUnitGroups(state.lessonCatalog);
+  const activeUnitKey = resolveActiveLessonUnitKey(unitGroups, selectedLabels);
+  state.lessonCatalogActiveUnitKey = activeUnitKey;
+  const activeIndex = Math.max(0, unitGroups.findIndex((group) => group.key === activeUnitKey));
+  const activeGroup = unitGroups[activeIndex] ?? unitGroups[0];
+  if (!activeGroup) return `<div class="lesson-catalog-empty warning">لا توجد وحدات قابلة للعرض.</div>`;
+  const previousGroup = unitGroups[activeIndex - 1];
+  const nextGroup = unitGroups[activeIndex + 1];
+  const sourceLessons = state.lessonCatalog.filter((lesson) => lesson.sourceId === activeGroup.sourceId);
+  const sourceUnits = unitGroups.filter((group) => group.sourceId === activeGroup.sourceId);
+  const selectedLessons = state.lessonCatalog.filter((lesson) => selectedLabels.has(lesson.label));
+  const multipleSources = new Set(unitGroups.map((group) => group.sourceId)).size > 1;
 
-  return `<div class="lesson-book-tree">${[...bySource.entries()].map(([sourceId, lessons], sourceIndex) => {
-    const sourceTitle = lessons[0]?.sourceTitle ?? "كتاب المصدر";
-    const selectedInSource = lessons.some((lesson) => selectedLabels.has(lesson.label));
-    const byUnit = new Map<string, LessonCatalogOption[]>();
-    lessons.forEach((lesson) => {
-      const unitLabel = lesson.unitLabel || "دروس الكتاب";
-      const group = byUnit.get(unitLabel) ?? [];
-      group.push(lesson);
-      byUnit.set(unitLabel, group);
-    });
-    const unitMarkup = [...byUnit.entries()].map(([unitLabel, unitLessons], unitIndex) => {
-      const selectedInUnit = unitLessons.some((lesson) => selectedLabels.has(lesson.label));
-      const shouldOpen = selectedInUnit || (sourceIndex === 0 && unitIndex === 0);
-      return `<details class="lesson-unit-tree" ${shouldOpen ? "open" : ""}><summary><span>${icon("book")}</span><strong>${escapeHtml(unitLabel)}</strong><small>${unitLessons.length} ${unitLessons.length === 1 ? "درس" : "دروس"}</small></summary><div class="lesson-unit-items">${unitLessons.map((lesson) => renderLessonOption(lesson, selectedLabels, selectedCount)).join("")}</div></details>`;
-    }).join("");
-    return `<details class="lesson-source-tree" ${selectedInSource || sourceIndex === 0 ? "open" : ""}><summary><span class="lesson-source-icon">${icon("book")}</span><div><strong>${escapeHtml(sourceTitle)}</strong><small>${byUnit.size} وحدات · ${lessons.length} درسًا</small></div></summary><div class="lesson-source-units" data-source-tree-id="${escapeHtml(sourceId)}">${unitMarkup}</div></details>`;
-  }).join("")}</div>`;
+  return `
+    <div class="lesson-unit-navigation" aria-label="التنقل بين وحدات الكتاب">
+      <button type="button" class="lesson-unit-nav-button" data-lesson-unit-target="${escapeHtml(previousGroup?.key ?? "")}" ${previousGroup ? "" : "disabled"}><span aria-hidden="true">→</span><b>الوحدة السابقة</b></button>
+      <label class="lesson-unit-jump"><span>انتقل إلى وحدة</span><select id="lesson-unit-select">${unitGroups.map((group, index) => `<option value="${escapeHtml(group.key)}" ${group.key === activeGroup.key ? "selected" : ""}>${index + 1}. ${escapeHtml(multipleSources ? `${group.sourceTitle} — ${group.unitLabel}` : group.unitLabel)}</option>`).join("")}</select><small>الوحدة ${activeIndex + 1} من ${unitGroups.length}</small></label>
+      <button type="button" class="lesson-unit-nav-button" data-lesson-unit-target="${escapeHtml(nextGroup?.key ?? "")}" ${nextGroup ? "" : "disabled"}><b>الوحدة التالية</b><span aria-hidden="true">←</span></button>
+    </div>
+    <div class="lesson-selected-summary ${selectedLessons.length ? "has-selection" : ""}">
+      <div><strong>الدروس المحددة</strong><small>${selectedLessons.length ? "تبقى اختياراتك محفوظة عند الانتقال بين الوحدات." : "حدد الدروس المطلوبة، ثم تنقل إلى أي وحدة أخرى دون فقدان الاختيار."}</small></div>
+      <div class="lesson-selected-chips">${selectedLessons.length ? selectedLessons.map((lesson) => `<button type="button" data-lesson-unit-target="${escapeHtml(lessonUnitKey(lesson.sourceId, lesson.unitLabel || "دروس الكتاب"))}">${escapeHtml(lesson.label)}</button>`).join("") : `<span>لم تحدد أي درس بعد</span>`}</div>
+    </div>
+    <div class="lesson-book-tree" data-active-unit-key="${escapeHtml(activeGroup.key)}">
+      <details class="lesson-source-tree" open>
+        <summary><span class="lesson-source-icon">${icon("book")}</span><div><strong>${escapeHtml(activeGroup.sourceTitle)}</strong><small>${sourceUnits.length} وحدات · ${sourceLessons.length} درسًا مدرجًا</small></div></summary>
+        <div class="lesson-source-units" data-source-tree-id="${escapeHtml(activeGroup.sourceId)}">
+          <details class="lesson-unit-tree" data-unit-key="${escapeHtml(activeGroup.key)}" open>
+            <summary><span>${icon("book")}</span><strong>${escapeHtml(activeGroup.unitLabel)}</strong><small>${activeGroup.lessons.length} ${activeGroup.lessons.length === 1 ? "درس" : "دروس"}</small></summary>
+            <div class="lesson-unit-items">${activeGroup.lessons.map((lesson) => renderLessonOption(lesson, selectedLabels, selectedCount, activeGroup.key)).join("")}</div>
+          </details>
+        </div>
+      </details>
+    </div>`;
 }
 
 function renderContentStep(): string {
@@ -1958,25 +2011,18 @@ async function loadLessonCatalogForCurrentSelection(force = false): Promise<void
     if (centralSourceStore?.currentSession && state.sourceStorageStatus === "متصل") {
       const loaded = await Promise.all(eligible.map(async (source) => {
         try {
-          let nodes = await centralSourceStore.listSourceStructure(source.id);
-          let existingCatalog = buildLessonCatalog([source], new Map([[source.id, nodes]]));
-          if (existingCatalog.length < MIN_LESSON_TOPICS) {
-            const curated = buildCuratedBookStructure(source);
-            if (curated.length) {
-              nodes = curated;
-              existingCatalog = buildLessonCatalog([source], new Map([[source.id, nodes]]));
-            }
-          }
-          if (existingCatalog.length < MIN_LESSON_TOPICS) {
-            const chunks = await centralSourceStore.listSourceChunks(source.id);
-            const extracted = extractSourceStructure(
-              source.id,
-              chunks,
-              source.extractedPageCount ?? 0,
-              { allowUnitHeadingFallback: false },
-            );
-            if (extracted.reliableTocFound) nodes = extracted.nodes;
-          }
+          const storedNodes = await centralSourceStore.listSourceStructure(source.id);
+          const curatedNodes = buildCuratedBookStructure(source);
+          let nodes = [...storedNodes, ...curatedNodes];
+          // ندمج البنية المستخرجة الموثوقة بدل استبدال شجرة بأخرى؛ فالاستبدال كان يسقط دروسًا صحيحة.
+          const chunks = await centralSourceStore.listSourceChunks(source.id);
+          const extracted = extractSourceStructure(
+            source.id,
+            chunks,
+            source.extractedPageCount ?? 0,
+            { allowUnitHeadingFallback: false },
+          );
+          if (extracted.reliableTocFound) nodes = [...nodes, ...extracted.nodes];
           return [source.id, nodes] as const;
         } catch {
           return [source.id, [] as SourceStructureNode[]] as const;
@@ -1985,6 +2031,11 @@ async function loadLessonCatalogForCurrentSelection(force = false): Promise<void
       loaded.forEach(([sourceId, nodes]) => structures.set(sourceId, nodes));
     }
     state.lessonCatalog = buildLessonCatalog(eligible, structures);
+    const unitGroups = buildLessonUnitGroups(state.lessonCatalog);
+    state.lessonCatalogActiveUnitKey = resolveActiveLessonUnitKey(
+      unitGroups,
+      new Set(normalizeLessonTopics(state.draft.lessonTopics)),
+    );
     const validLabels = new Set(state.lessonCatalog.map((lesson) => lesson.label));
     const retained = normalizeLessonTopics(state.draft.lessonTopics).filter((label) => validLabels.has(label));
     if (retained.length !== normalizeLessonTopics(state.draft.lessonTopics).length) {
@@ -1994,10 +2045,10 @@ async function loadLessonCatalogForCurrentSelection(force = false): Promise<void
       scheduleSave();
     }
     const curatedCount = state.lessonCatalog.filter((lesson) => lesson.origin === "curated-book-tree").length;
+    const detectedCount = state.lessonCatalog.filter((lesson) => lesson.origin === "detected-heading").length;
+    const unitCount = buildLessonUnitGroups(state.lessonCatalog).length;
     state.lessonCatalogMessage = state.lessonCatalog.length
-      ? curatedCount
-        ? `تم تجهيز شجرة الكتاب المعتمدة: ${state.lessonCatalog.length} درسًا.`
-        : `تم تجهيز شجرة المصدر: ${state.lessonCatalog.length} درسًا.`
+      ? `${curatedCount ? "تم تجهيز شجرة الكتاب المعتمدة" : "تم تجهيز شجرة المصدر"}: ${unitCount} وحدات و${state.lessonCatalog.length} درسًا${detectedCount ? `، منها ${detectedCount} دروس مكتملة من عناوين المصدر` : ""}.`
       : "لا توجد شجرة محتوى موثوقة لهذا الكتاب بعد.";
   } finally {
     state.lessonCatalogBusy = false;
@@ -2016,6 +2067,7 @@ function bindContentStep(): void {
     state.lessonCatalog = [];
     state.lessonCatalogKey = "";
     state.lessonCatalogMessage = "";
+    state.lessonCatalogActiveUnitKey = "";
     invalidateSourceAndGeneratedQuestions();
     scheduleSave();
     render();
@@ -2029,15 +2081,33 @@ function bindContentStep(): void {
     state.lessonCatalog = [];
     state.lessonCatalogKey = "";
     state.lessonCatalogMessage = "";
+    state.lessonCatalogActiveUnitKey = "";
     invalidateSourceAndGeneratedQuestions();
     scheduleSave();
     render();
+  });
+
+  document.querySelectorAll<HTMLElement>("[data-lesson-unit-target]").forEach((control) => {
+    control.addEventListener("click", () => {
+      const target = control.dataset.lessonUnitTarget;
+      if (!target || target === state.lessonCatalogActiveUnitKey) return;
+      state.lessonCatalogActiveUnitKey = target;
+      render();
+      document.querySelector<HTMLElement>(".lesson-catalog-field")?.scrollIntoView({ block: "start" });
+    });
+  });
+
+  document.querySelector<HTMLSelectElement>("#lesson-unit-select")?.addEventListener("change", (event) => {
+    state.lessonCatalogActiveUnitKey = (event.target as HTMLSelectElement).value;
+    render();
+    document.querySelector<HTMLElement>(".lesson-catalog-field")?.scrollIntoView({ block: "start" });
   });
 
   document.querySelectorAll<HTMLInputElement>("[data-lesson-option-id]").forEach((input) => {
     input.addEventListener("change", () => {
       const option = state.lessonCatalog.find((lesson) => lesson.id === input.dataset.lessonOptionId);
       if (!option) return;
+      state.lessonCatalogActiveUnitKey = input.dataset.lessonUnitKey ?? state.lessonCatalogActiveUnitKey;
       const selected = new Set(normalizeLessonTopics(state.draft.lessonTopics));
       if (input.checked) {
         if (selected.size >= MAX_LESSON_TOPICS) {
