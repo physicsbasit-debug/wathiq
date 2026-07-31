@@ -26,5 +26,5 @@ test("يتحقق أن الدليل المختار ينتمي إلى مرجع ا�
 
 test("يبقي عقد الأدلة المرقمة داخل الإصدار الأسلوبي الأحدث", () => {
   assert.match(generator, /source-grounded-policy-ai-(?:9-visual-svg|10-strict-lesson-scope)/);
-  assert.match(pkg.version, /^0\.0\.(?:34|35|36|37|38|39)$/);
+  assert.match(pkg.version, /^0\.0\.(?:34|35|36|37|38|39|40)$/);
 });

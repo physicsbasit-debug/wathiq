@@ -30,7 +30,7 @@ test("يبني شجرة كتاب فيزياء الصف العاشر من 11 وح
   assert.equal(lessons.length, 29);
   assert.equal(units[0].title, "الوحدة الأولى: الشحنة الكهربائية");
   assert.equal(units[8].title, "الوحدة التاسعة: النشاط الإشعاعي");
-  assert.ok(lessons.some((lesson) => lesson.title === "9-3 استخدام النظائر المشعة" && lesson.pageStart === 97));
+  assert.ok(lessons.some((lesson) => lesson.title === "9-3 استخدام النظائر المشعة" && lesson.pageStart === 100));
   assert.ok(lessons.every((lesson) => lesson.reviewStatus === "معتمد" && lesson.extractionMethod.startsWith("curated:")));
 });
 
@@ -42,8 +42,8 @@ test("ينقل الشجرة المعتمدة إلى قائمة الدروس مع
   const lesson = catalog.find((item) => item.code === "9-2");
   assert.equal(lesson?.title, "فهم النشاط الإشعاعي");
   assert.equal(lesson?.unitLabel, "الوحدة التاسعة: النشاط الإشعاعي");
-  assert.equal(lesson?.pageStart, 93);
-  assert.equal(lesson?.pageEnd, 96);
+  assert.equal(lesson?.pageStart, 96);
+  assert.equal(lesson?.pageEnd, 99);
   assert.equal(lesson?.origin, "curated-book-tree");
 });
 
@@ -51,4 +51,14 @@ test("لا يطبق شجرة الفيزياء على مصدر أو فصل مخت
   assert.equal(buildCuratedBookStructure(physicsBook({ subjectId: "chemistry" })).length, 0);
   assert.equal(buildCuratedBookStructure(physicsBook({ semester: "الفصل الثاني" })).length, 0);
   assert.equal(buildCuratedBookStructure(physicsBook({ kind: "دليل المعلم" })).length, 0);
+});
+
+
+test("يحوّل ترقيم الكتاب المطبوع إلى صفحات PDF الفعلية بإزاحة ثابتة", () => {
+  const nodes = buildCuratedBookStructure(physicsBook());
+  const lesson71 = nodes.find((node) => node.nodeType === "درس" && node.title.startsWith("7-1 "));
+  const lesson31 = nodes.find((node) => node.nodeType === "درس" && node.title.startsWith("3-1 "));
+  assert.equal(lesson71?.pageStart, 82);
+  assert.equal(lesson31?.pageStart, 41);
+  assert.match(lesson71?.extractionMethod ?? "", /pdf-offset-3/);
 });

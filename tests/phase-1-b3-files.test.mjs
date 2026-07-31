@@ -15,7 +15,7 @@ test("Phase 1-B3 تقبل من درسين إلى خمسة وتربط كل درس
   assert.match(domain, /MIN_LESSON_TOPICS\s*=\s*2/);
   assert.match(domain, /MAX_LESSON_TOPICS\s*=\s*5/);
   assert.match(app, /افتح اسم الكتاب، ثم الوحدة، وحدد من درسين إلى خمسة دروس/);
-  assert.match(app, /rankSourceChunks\(query, scopedCandidates, 2\)/);
+  assert.match(app, /rankSourceChunks\(query, exactPageScoped, 2\)/);
   assert.match(app, /lessonTopic:\s*lesson/);
   assert.match(styles, /\.lesson-book-tree/);
   assert.match(storage, /lessonTopics/);
@@ -38,5 +38,5 @@ test("تقوي قراءة JSON من Gemini وتبقي النشر من محرر S
   assert.match(deployment, /محرر Supabase/);
   assert.match(deployment, /GEMINI_API_KEY/);
   assert.doesNotMatch(`${edge}\n${deployment}`, /OPENAI_API_KEY|api\.openai\.com/);
-  assert.match(pkg.version, /^0\.0\.(?:32|33|34|35|36|37|38|39)$/);
+  assert.match(pkg.version, /^0\.0\.(?:32|33|34|35|36|37|38|39|40)$/);
 });

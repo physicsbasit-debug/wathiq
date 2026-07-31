@@ -1,42 +1,24 @@
-Phase 1-C2 Fix 3 — Hierarchical Book Tree
-
-Branch: phase-1c2-fix3-hierarchical-book-tree
-Commit: feat: add hierarchical book unit lesson tree
-Version: 0.0.39
-
-Core changes:
-- src/book-content-tree.ts (new)
-- src/app.ts
-- src/lesson-catalog.ts
-- src/source-retrieval.ts
-- src/styles.css
-- package.json
-
-Deployment assets:
-- dist/assets/book-content-tree.js
-- dist/assets/book-content-tree.js.map
-- dist/assets/app.js
-- dist/assets/app.js.map
-- dist/assets/lesson-catalog.js
-- dist/assets/lesson-catalog.js.map
-- dist/assets/source-retrieval.js
-- dist/assets/source-retrieval.js.map
-- dist/assets/styles.css
-
-Documentation:
-- README.md
-- GITHUB_UPLOAD_INSTRUCTIONS.md
-- docs/PHASE_1_C2_FIX3_HIERARCHICAL_BOOK_TREE.md
-- docs/PHASE_1_C2_FIX3_TEST_REPORT.md
-
-Tests:
-- tests/book-content-tree.test.mjs (new)
-- tests/phase-1-c2-fix3-files.test.mjs (new)
-- legacy phase tests updated only to accept version 0.0.39 and the new tree wording
-- tests/source-retrieval.test.mjs updated for strict-lesson-scope-2-tree-pages
-
-Unchanged:
-- supabase/functions/generate-source-questions/index.ts
-- all SQL files
-- .github/workflows/pages.yml
-- secrets and runtime configuration
+GITHUB_UPLOAD_INSTRUCTIONS.md
+docs/PHASE_1_C2_FIX4_PDF_PAGE_MAPPING.md
+docs/PHASE_1_C2_FIX4_TEST_REPORT.md
+package.json
+src/app.ts
+src/book-content-tree.ts
+src/source-retrieval.ts
+tests/book-content-tree.test.mjs
+tests/phase-1-a-simple-source-brief.test.mjs
+tests/phase-1-b-files.test.mjs
+tests/phase-1-b3-files.test.mjs
+tests/phase-1-b4-files.test.mjs
+tests/phase-1-b5-files.test.mjs
+tests/phase-1-b6-files.test.mjs
+tests/phase-1-b7-files.test.mjs
+tests/phase-1-b8-files.test.mjs
+tests/phase-1-c1-files.test.mjs
+tests/phase-1-c1-fix2-files.test.mjs
+tests/phase-1-c2-files.test.mjs
+tests/phase-1-c2-fix1-files.test.mjs
+tests/phase-1-c2-fix2-files.test.mjs
+tests/phase-1-c2-fix3-files.test.mjs
+tests/phase-1-c2-fix4-files.test.mjs
+tests/source-retrieval.test.mjs
