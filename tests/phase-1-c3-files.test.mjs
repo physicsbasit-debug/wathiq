@@ -9,7 +9,7 @@ test("يثبت الإصدار ومحرك المرئيات التقويمية ا�
   const pkg = JSON.parse(await text("package.json"));
   const types = await text("src/types.ts");
   const visual = await text("src/question-visual.ts");
-  assert.match(pkg.version, /^0\.0\.(?:44|45|46|47)$/);
+  assert.match(pkg.version, /^0\.0\.(?:44|45|46|47|48)$/);
   for (const type of ["data_table", "instrument_scale", "ray_diagram", "force_diagram", "flow_diagram"]) {
     assert.match(types, new RegExp(type));
     assert.match(visual, new RegExp(type));
@@ -22,7 +22,7 @@ test("يثبت الإصدار ومحرك المرئيات التقويمية ا�
 test("يربط التوليد والخادم بأدوار المرئي وقوالبه الحتمية", async () => {
   const generator = await text("src/question-generation.ts");
   const edge = await text("supabase/functions/generate-source-questions/index.ts");
-  assert.match(generator, /source-grounded-policy-ai-(?:12-advanced-visuals|13-trusted-enrichment|14-contextual-stimulus-alignment|15-controlled-hybrid-visuals)/);
+  assert.match(generator, /source-grounded-policy-ai-(?:12-advanced-visuals|13-trusted-enrichment|14-contextual-stimulus-alignment|15-controlled-hybrid-visuals|16-assessment-quality-context-diversity)/);
   assert.match(generator, /instrument_scale/);
   assert.match(generator, /ray_diagram/);
   assert.match(generator, /force_diagram/);

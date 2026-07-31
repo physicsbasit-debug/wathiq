@@ -11,7 +11,7 @@ const generator = await text("supabase/functions/generate-source-questions/index
 
 test("يثبت Fix 1 توافق المتن البصري ويحافظ على مسودات C4 الجزئية", () => {
   assert.ok(Number(pkg.version.split(".").at(-1)) >= 46);
-  assert.match(client, /source-grounded-policy-ai-(?:14-contextual-stimulus-alignment|15-controlled-hybrid-visuals)/);
+  assert.match(client, /source-grounded-policy-ai-(?:14-contextual-stimulus-alignment|15-controlled-hybrid-visuals|16-assessment-quality-context-diversity)/);
   assert.match(storage, /source-grounded-policy-ai-13-trusted-enrichment/);
   assert.match(generator, /hasSufficientQuestionContext/);
 });

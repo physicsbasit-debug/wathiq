@@ -1715,3 +1715,40 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
     grid-template-columns: auto minmax(0, 1fr);
   }
 }
+
+/* Phase 1-D2: مشاهد حياتية حتمية متنوعة تبقى خلف الصورة المولدة. */
+.qv-context-object,
+.qv-context-panel,
+.qv-context-instrument,
+.qv-context-flask,
+.qv-context-hole,
+.qv-context-wheel,
+.qv-context-person,
+.qv-context-sun {
+  fill: #fff;
+  stroke: #182536;
+  stroke-width: 3;
+}
+.qv-context-hole { fill: none; }
+.qv-context-wheel { fill: #f8fafc; }
+.qv-context-person { fill: #eef3f8; }
+.qv-context-sun { fill: #f4e6b5; }
+.qv-context-panel { fill: #e8eef7; }
+.qv-context-instrument { fill: #eef3f8; }
+.qv-context-flask { fill: #e8f4f3; }
+.qv-context-line,
+.qv-context-grid,
+.qv-context-emphasis,
+.qv-context-motion,
+.qv-context-road-line {
+  fill: none;
+  stroke: #182536;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.qv-context-emphasis { stroke-width: 6; }
+.qv-context-motion { stroke-dasharray: 8 7; }
+.qv-context-grid { stroke-width: 1.5; }
+.qv-context-road { fill: #f2f4f7; stroke: #182536; stroke-width: 3; }
+.qv-context-road-line { stroke-dasharray: 12 10; }

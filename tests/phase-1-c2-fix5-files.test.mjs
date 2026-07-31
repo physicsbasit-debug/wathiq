@@ -6,7 +6,7 @@ const edge = await readFile(new URL("../supabase/functions/generate-source-quest
 const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 
 test("يثبت Fix 5 عقد نقاط التصحيح الدقيق والإصدار الجديد", () => {
-  assert.match(pkg.version, /^0\.0\.(?:41|42|43|44|45|46|47)$/);
+  assert.match(pkg.version, /^0\.0\.(?:41|42|43|44|45|46|47|48)$/);
   assert.match(edge, /prefixItems:\s*requestedItems\.map/);
   assert.match(edge, /minItems:\s*markCount/);
   assert.match(edge, /maxItems:\s*markCount/);

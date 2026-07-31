@@ -1,23 +1,18 @@
-# Phase 1-D1 — Changed Files Manifest
+# Phase 1-D2 — Changed Files Manifest
 
-تُرفع هذه الملفات فوق Phase 1-C4 Fix 1 (`0.0.46`) مع الحفاظ على المسارات:
+تُرفع هذه الملفات فوق Phase 1-D1 (`0.0.47`) مع الحفاظ على المسارات:
 
 - CHANGED_FILES_MANIFEST.txt
 - GITHUB_UPLOAD_INSTRUCTIONS.md
 - README.md
-- docs/PHASE_1_D1_CONTROLLED_HYBRID_VISUALS.md
-- docs/PHASE_1_D1_TEST_REPORT.md
+- docs/PHASE_1_D2_ASSESSMENT_QUALITY_CONTEXT_DIVERSITY.md
+- docs/PHASE_1_D2_TEST_REPORT.md
 - package.json
-- src/app.ts
-- src/domain.ts
-- src/exam-export.ts
 - src/question-generation.ts
 - src/question-visual.ts
-- src/storage.ts
 - src/styles.css
 - src/types.ts
 - supabase/functions/generate-source-questions/index.ts
-- tests/gemini-generate-content-edge.test.mjs
 - tests/phase-1-a-simple-source-brief.test.mjs
 - tests/phase-1-b-files.test.mjs
 - tests/phase-1-b3-files.test.mjs
@@ -40,6 +35,7 @@
 - tests/phase-1-c4-files.test.mjs
 - tests/phase-1-c4-fix1-files.test.mjs
 - tests/phase-1-d1-files.test.mjs
+- tests/phase-1-d2-files.test.mjs
 - tests/question-generation.test.mjs
 - tests/question-visual.test.mjs
 - tests/storage-draft.test.mjs
@@ -50,11 +46,12 @@
 - لا تعديل على GitHub workflow.
 - لا ملف أسرار أو `.env`.
 - لا إعادة فهرسة.
-- `dist/` يبنى تلقائيًا من المصدر في GitHub Actions ولا يدخل حزمة الملفات المعدلة فقط.
+- لا تعديل في الاعتماد أو Word أو PDF.
+- `dist/` يُبنى تلقائيًا من المصدر في GitHub Actions ولا يدخل حزمة الملفات المعدلة فقط.
 
 ## نتيجة الفحص
 
 ```text
-320 passed
+328 passed
 0 failed
 ```
