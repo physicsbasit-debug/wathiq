@@ -5,6 +5,7 @@ import {
   buildQuestionGenerationRequest,
   GENERATION_BATCH_SIZE,
   parseQuestionGenerationResponse,
+  parseVisualIllustrationResponse,
   QuestionGenerationService,
   SOURCE_GENERATION_VERSION,
   splitQuestionGenerationBatches,
@@ -198,7 +199,7 @@ test("يتحقق من ثلاثة بدائل ثم يربطها بخطة الاخ�
   assert.equal(generated[0].proposals[0].answer, "خاصية فيزيائية");
   assert.equal(generated[0].proposals[0].questionForm, "مفهومي");
   assert.deepEqual(generated[0].proposals[0].markScheme, ["تحديد العبارة العلمية الصحيحة."]);
-  assert.equal(SOURCE_GENERATION_VERSION, "source-grounded-policy-ai-14-contextual-stimulus-alignment");
+  assert.equal(SOURCE_GENERATION_VERSION, "source-grounded-policy-ai-15-controlled-hybrid-visuals");
   assert.equal(parsed.requestId, "WQ-TEST1234");
 });
 
@@ -540,4 +541,28 @@ test("يختار عائلات المرئيات المتقدمة من محتوى 
     );
     assert.equal(request.items[0].visualTarget, expected, excerpt);
   }
+});
+
+
+test("يتحقق من استجابة تحسين الصورة ويقبل الرجوع الحتمي الآمن", () => {
+  const ready = parseVisualIllustrationResponse({
+    status: "ready",
+    reason: "تم التدقيق",
+    requestId: "WQ-IMG0001",
+    illustration: {
+      url: "https://example.supabase.co/storage/v1/object/public/wathiq-question-visuals/user/item.png",
+      assetPath: "user/item.png",
+      mimeType: "image/png",
+      model: "gemini-3.1-flash-image",
+      generatedAt: "2026-07-31T12:00:00.000Z",
+      promptVersion: "wathiq-controlled-2d-v1",
+      validated: true,
+    },
+  });
+  assert.equal(ready.status, "ready");
+  assert.equal(ready.illustration.validated, true);
+  const fallback = parseVisualIllustrationResponse({ status: "fallback", reason: "فشل التدقيق", requestId: "WQ-IMG0002" });
+  assert.equal(fallback.status, "fallback");
+  assert.equal(fallback.illustration, undefined);
+  assert.throws(() => parseVisualIllustrationResponse({ status: "ready" }), /صورة صالحة/);
 });

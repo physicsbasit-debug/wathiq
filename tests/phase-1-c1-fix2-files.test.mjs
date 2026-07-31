@@ -11,7 +11,8 @@ test("يجعل الخادم مالك مواصفة الرسم بدل شراء ا�
   assert.match(edge, /fixedVisual/);
   assert.match(edge, /لا تنشئ visual ولا تعدله ولا تعيده في JSON/);
   assert.doesNotMatch(edge, /required: \["planItemId", "visual", "alternatives"\]/);
-  assert.match(edge, /visual: buildServerOwnedVisualSpec\(requested, request\)/);
+  assert.match(edge, /const visual = buildServerOwnedVisualSpec\(requested, request\)/);
+  assert.match(edge, /visual,/);
 });
 
 test("يضبط تكلفة التفكير وحجم الإخراج ويسجل بيانات الاستخدام", () => {
@@ -24,7 +25,7 @@ test("يضبط تكلفة التفكير وحجم الإخراج ويسجل بي
 });
 
 test("يحافظ على المسودات المكتملة ويرفع إصدار التطبيق فقط", () => {
-  assert.match(pkg.version, /^0\.0\.(?:36|37|38|39|40|41|42|43|44|45|46)$/);
-  assert.match(generator, /source-grounded-policy-ai-(?:9-visual-svg|10-strict-lesson-scope|11-visual-enforced|12-advanced-visuals|13-trusted-enrichment|14-contextual-stimulus-alignment)/);
+  assert.match(pkg.version, /^0\.0\.(?:36|37|38|39|40|41|42|43|44|45|46|47)$/);
+  assert.match(generator, /source-grounded-policy-ai-(?:9-visual-svg|10-strict-lesson-scope|11-visual-enforced|12-advanced-visuals|13-trusted-enrichment|14-contextual-stimulus-alignment|15-controlled-hybrid-visuals)/);
   assert.match(pkg.description, /تقليل استهلاك Gemini/);
 });

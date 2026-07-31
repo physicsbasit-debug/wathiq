@@ -49,6 +49,11 @@ async function loadEdgeHelpers() {
     hasEvidenceAffinity,
     isTransportRetryExhausted,
     hasSufficientQuestionContext,
+    parseVisualIllustrationRequest,
+    isControlledIllustrationEligible,
+    buildControlledIllustrationPrompt,
+    findGeneratedImagePart,
+    fixedVisualContainsCalculationData,
   };\n`;
 
   const javascript = ts.transpileModule(source, {
@@ -903,4 +908,52 @@ test("تمرر المحاولة الثانية سبب رفض stimulus بدل إ�
   assert.equal(fetchCount, 2);
   assert.match(secondPrompt.previousValidationError, /لا يحتوي متنًا أو بيانات كافية/);
   assert.match(result.items[0].alternatives[0].stimulus, /سطحين مختلفي المساحة/);
+});
+
+test("يقصر الصور الحرة على مشاهد سياقية آمنة ويمنع الرسوم الحسابية", () => {
+  assert.equal(helpers.isControlledIllustrationEligible({ type: "electrostatic_diagram", variant: "charge_transfer", role: "interpret" }), true);
+  assert.equal(helpers.isControlledIllustrationEligible({ type: "pressure_diagram", variant: "submerged_object", role: "read" }), true);
+  assert.equal(helpers.isControlledIllustrationEligible({ type: "force_diagram", variant: "free_body", role: "calculate" }), false);
+  assert.equal(helpers.isControlledIllustrationEligible({ type: "electrostatic_diagram", variant: "electric_field", role: "interpret" }), false);
+});
+
+test("يبني مطالبة صورة 2D بلا نصوص أو أرقام أو أسهم", () => {
+  const request = {
+    action: "generate_visual_illustration",
+    draftId: "draft-1",
+    planItemId: "plan-1",
+    grade: 10,
+    subject: "الفيزياء",
+    lessonLabel: "الشحنة الكهربائية",
+    questionText: "بالاعتماد على الشكل استنتج أثر دلك المسطرة.",
+    sourceSupport: "تكتسب المسطرة شحنة عند دلكها بقطعة قماش وتنجذب إليها قصاصات الورق.",
+    previousAssetPath: "",
+    visual: { type: "electrostatic_diagram", variant: "charge_transfer", role: "interpret", title: "شحن جسم بالدلك", altText: "مسطرة وقماش وقصاصات ورق" },
+  };
+  const prompt = helpers.buildControlledIllustrationPrompt(request);
+  assert.match(prompt, /2D educational textbook illustration/);
+  assert.match(prompt, /no words, no letters, no numbers, no units, no arrows/);
+  assert.match(prompt, /Do not show plus or minus charge symbols/);
+  assert.match(prompt, /landscape 4:3/);
+});
+
+test("يقرأ صورة Gemini المضمنة ويتجاهل الأجزاء النصية", () => {
+  const found = helpers.findGeneratedImagePart({
+    candidates: [{ content: { parts: [{ text: "done" }, { inlineData: { mimeType: "image/png", data: "A".repeat(1200) } }] } }],
+  });
+  assert.equal(found.mimeType, "image/png");
+  assert.equal(found.data.length, 1200);
+  assert.equal(helpers.findGeneratedImagePart({ candidates: [{ content: { parts: [{ text: "no image" }] } }] }), null);
+});
+
+test("يفرض القيم العددية على الرسوم الحسابية قبل قبول السؤال", () => {
+  assert.equal(helpers.fixedVisualContainsCalculationData({
+    type: "force_diagram", role: "calculate", vectors: [
+      { magnitude: 8, dx: 1, dy: 0 },
+      { magnitude: 6, dx: -1, dy: 0 },
+    ],
+  }), true);
+  assert.equal(helpers.fixedVisualContainsCalculationData({ type: "force_diagram", role: "calculate", vectors: [] }), false);
+  assert.equal(helpers.fixedVisualContainsCalculationData({ type: "pressure_diagram", variant: "force_area", role: "calculate", values: [80, 0.02] }), true);
+  assert.equal(helpers.fixedVisualContainsCalculationData({ type: "pressure_diagram", variant: "force_area", role: "calculate", values: [80, 0] }), false);
 });

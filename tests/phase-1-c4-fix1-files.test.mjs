@@ -10,8 +10,8 @@ const storage = await text("src/storage.ts");
 const generator = await text("supabase/functions/generate-source-questions/index.ts");
 
 test("يثبت Fix 1 توافق المتن البصري ويحافظ على مسودات C4 الجزئية", () => {
-  assert.equal(pkg.version, "0.0.46");
-  assert.match(client, /source-grounded-policy-ai-14-contextual-stimulus-alignment/);
+  assert.ok(Number(pkg.version.split(".").at(-1)) >= 46);
+  assert.match(client, /source-grounded-policy-ai-(?:14-contextual-stimulus-alignment|15-controlled-hybrid-visuals)/);
   assert.match(storage, /source-grounded-policy-ai-13-trusted-enrichment/);
   assert.match(generator, /hasSufficientQuestionContext/);
 });

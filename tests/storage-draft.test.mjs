@@ -129,7 +129,7 @@ test("يرقي مسودة C3 المكتملة إلى عقد C4 دون حذف ا�
   });
   assert.ok(draft);
   assert.equal(draft.currentStep, 3);
-  assert.equal(draft.generationVersion, "source-grounded-policy-ai-14-contextual-stimulus-alignment");
+  assert.equal(draft.generationVersion, "source-grounded-policy-ai-15-controlled-hybrid-visuals");
   assert.equal(draft.plan.length, 1);
   assert.equal(draft.plan[0].proposals.length, 1);
 });
@@ -162,4 +162,20 @@ test("يرحّل المسودة القديمة إلى قالب التقويم ا
   assert.deepEqual(draft.counts, { mcq: 2, short: 3, long: 1 });
   assert.equal(draft.currentStep, 1);
   assert.deepEqual(draft.plan, []);
+});
+
+
+test("يفعل الرسوم الهجينة افتراضيًا ويحافظ على تعطيلها الصريح", () => {
+  const base = {
+    id: "hybrid-default",
+    grade: 10,
+    subjectId: "physics",
+    assessmentPolicyId: "oman-science-assessment-2025-2026",
+    lessonTopics: ["1-1 الشحنة الكهربائية", "1-2 التأثيرات الكهربائية"],
+    sourceReferences: twoLessonReferences(),
+    sourceRetrievalVersion: SOURCE_RETRIEVAL_VERSION,
+    currentStep: 2,
+  };
+  assert.equal(normalizeExamDraft(base)?.visualEnhancementEnabled, true);
+  assert.equal(normalizeExamDraft({ ...base, visualEnhancementEnabled: false })?.visualEnhancementEnabled, false);
 });

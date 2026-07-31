@@ -4,6 +4,7 @@ const SUPABASE_URL = requiredEnv("SUPABASE_URL");
 const SUPABASE_SERVICE_ROLE_KEY = requiredEnv("SUPABASE_SERVICE_ROLE_KEY");
 const GEMINI_API_KEY = requiredEnv("GEMINI_API_KEY");
 const GEMINI_MODEL = Deno.env.get("GEMINI_MODEL")?.trim() || "gemini-2.5-flash";
+const GEMINI_IMAGE_MODEL = Deno.env.get("GEMINI_IMAGE_MODEL")?.trim() || "gemini-3.1-flash-image";
 const WATHIQ_APP_URL = requiredEnv("WATHIQ_APP_URL");
 const appOrigin = new URL(WATHIQ_APP_URL).origin;
 const MAX_BATCH_ITEMS = 2;
@@ -17,7 +18,13 @@ const ENRICHMENT_CACHE_TTL_MS = 20 * 60_000;
 const ENRICHMENT_MAX_SEGMENTS = 6;
 const MARK_SCHEME_REPAIR_TIMEOUT_MS = 12_000;
 const MARK_SCHEME_REPAIR_MAX_OUTPUT_TOKENS = 900;
+const IMAGE_GENERATION_TIMEOUT_MS = 48_000;
+const IMAGE_VALIDATION_TIMEOUT_MS = 18_000;
+const QUESTION_VISUAL_BUCKET = "wathiq-question-visuals";
+const VISUAL_PROMPT_VERSION = "wathiq-controlled-2d-v1";
+const MAX_IMAGE_BASE64_CHARACTERS = 16_000_000;
 const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent`;
+const GEMINI_IMAGE_API_URL = `https://generativelanguage.googleapis.com/v1/models/${encodeURIComponent(GEMINI_IMAGE_MODEL)}:generateContent`;
 
 const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
@@ -133,6 +140,35 @@ interface GenerationRequest {
   items: GenerationItem[];
 }
 
+interface VisualIllustrationRequest {
+  action: "generate_visual_illustration";
+  draftId: string;
+  planItemId: string;
+  grade: number;
+  subject: string;
+  lessonLabel: string;
+  questionText: string;
+  sourceSupport: string;
+  previousAssetPath: string;
+  visual: QuestionVisualSpec;
+}
+
+interface VisualIllustrationAsset {
+  url: string;
+  assetPath: string;
+  mimeType: string;
+  model: string;
+  generatedAt: string;
+  promptVersion: string;
+  validated: true;
+}
+
+interface VisualIllustrationResult {
+  status: "ready" | "fallback";
+  illustration?: VisualIllustrationAsset;
+  reason: string;
+}
+
 interface ModelGeneratedMarkSchemeSlots {
   point1: string;
   point2: string;
@@ -238,9 +274,20 @@ Deno.serve(async (req) => {
 
   logStage(requestId, "request_received");
   try {
-    await requireUser(req);
+    const userId = await requireUser(req);
     logStage(requestId, "authentication_passed");
-    const request = parseGenerationRequest(await req.json());
+    const rawPayload = await req.json();
+    if (asRecord(rawPayload)?.action === "generate_visual_illustration") {
+      const illustrationRequest = parseVisualIllustrationRequest(rawPayload);
+      const result = await generateControlledVisualIllustration(illustrationRequest, userId, requestId);
+      logStage(requestId, "visual_illustration_response_sent", {
+        status: result.status,
+        visualType: illustrationRequest.visual.type,
+        visualVariant: illustrationRequest.visual.variant,
+      });
+      return json(req, { ...result, requestId });
+    }
+    const request = parseGenerationRequest(rawPayload);
     logStage(requestId, "payload_validated", {
       itemCount: request.items.length,
       referenceCount: request.references.length,
@@ -267,6 +314,324 @@ Deno.serve(async (req) => {
   }
 });
 
+
+function visualIllustrationTextArray(value: unknown, maxItems: number, maxLength = 100): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim().slice(0, maxLength))
+    .filter(Boolean)
+    .slice(0, maxItems);
+}
+
+function parseVisualIllustrationRequest(value: unknown): VisualIllustrationRequest {
+  const record = requireRecord(value, "طلب تحسين الرسم غير صالح.");
+  const visualRecord = requireRecord(record.visual, "مواصفة الرسم المطلوب تحسينه غير صالحة.");
+  const visualType = requireEnum(visualRecord.type, VISUAL_TYPES, "نوع الرسم المطلوب تحسينه غير صالح.");
+  const variant = requireText(visualRecord.variant, "نسخة الرسم المطلوب تحسينها غير محددة.", 60) as QuestionVisualVariant;
+  const role = requireText(visualRecord.role, "دور الرسم التقويمي غير محدد.", 40) as QuestionVisualRole;
+  const visual: QuestionVisualSpec = {
+    ...emptyVisualSpec(),
+    type: visualType,
+    visualId: requireText(visualRecord.visualId, "معرف الرسم غير صالح.", 80),
+    variant,
+    role,
+    purpose: typeof visualRecord.purpose === "string" ? visualRecord.purpose.trim().slice(0, 180) : "",
+    title: requireText(visualRecord.title, "عنوان الرسم غير صالح.", 180),
+    altText: requireText(visualRecord.altText, "الوصف البديل للرسم غير صالح.", 280),
+    labels: visualIllustrationTextArray(visualRecord.labels, 8, 80),
+    annotations: visualIllustrationTextArray(visualRecord.annotations, 8, 100),
+  };
+  if (!isControlledIllustrationEligible(visual)) {
+    throw httpError("هذا الرسم يجب أن يبقى حتميًا لحماية الدقة العلمية والتقويمية.", 422);
+  }
+  return {
+    action: "generate_visual_illustration",
+    draftId: requireText(record.draftId, "معرف المسودة غير صالح.", 100),
+    planItemId: requireText(record.planItemId, "معرف المفردة غير صالح.", 100),
+    grade: requireInteger(record.grade, "الصف الدراسي غير صالح.", 1, 12),
+    subject: requireText(record.subject, "المادة غير محددة.", 100),
+    lessonLabel: requireText(record.lessonLabel, "الدرس غير محدد.", 180),
+    questionText: requireText(record.questionText, "نص السؤال غير محدد.", 1_200),
+    sourceSupport: requireText(record.sourceSupport, "دليل المصدر المدرسي غير محدد.", 2_400),
+    previousAssetPath: typeof record.previousAssetPath === "string" ? record.previousAssetPath.trim().slice(0, 300) : "",
+    visual,
+  };
+}
+
+function isControlledIllustrationEligible(visual: QuestionVisualSpec): boolean {
+  if (visual.type === "electrostatic_diagram" && visual.variant === "charge_transfer") {
+    return !["calculate", "complete", "draw"].includes(visual.role);
+  }
+  if (visual.type === "pressure_diagram" && visual.variant === "submerged_object") {
+    return ["read", "interpret", "evaluate"].includes(visual.role);
+  }
+  return false;
+}
+
+function controlledIllustrationScene(request: VisualIllustrationRequest): string {
+  if (request.visual.type === "electrostatic_diagram") {
+    return [
+      "A plastic ruler is being rubbed firmly with a small dry cloth.",
+      "Several tiny lightweight paper pieces lie close to the ruler and are visibly attracted toward it.",
+      "Show one ruler, one cloth, and a small group of paper pieces only.",
+      "Do not show plus or minus charge symbols because the assessment does not require the charge type to be revealed.",
+    ].join(" ");
+  }
+  return [
+    "A transparent classroom science vessel contains a clear liquid with a clearly visible horizontal surface.",
+    "One simple solid object is fully submerged below the surface at a visually clear depth.",
+    "The vessel, liquid surface, and object must be scientifically plausible and easy to distinguish.",
+  ].join(" ");
+}
+
+function buildControlledIllustrationPrompt(request: VisualIllustrationRequest): string {
+  return [
+    "Create a precise 2D educational textbook illustration for a school science assessment in Oman.",
+    `Grade: ${request.grade}. Subject: ${request.subject}. Lesson: ${request.lessonLabel}.`,
+    `Scientific scene: ${controlledIllustrationScene(request)}`,
+    `Reference-grounded context: ${request.sourceSupport}`,
+    "Visual style: clean flat vector-style illustration, crisp outlines, restrained natural colors, white background, landscape 4:3 composition, suitable for clear A4 printing.",
+    "Scientific constraints: preserve the exact object count and relationships; do not invent apparatus, forces, particles, labels, measurements, or effects not requested.",
+    "Assessment constraints: no words, no letters, no numbers, no units, no arrows, no captions, no watermarks, no decorative border, and no photorealistic rendering.",
+    "Make the scientific action unmistakable through the objects and their positions alone.",
+  ].join("\n");
+}
+
+function findGeneratedImagePart(payload: unknown): { data: string; mimeType: string } | null {
+  const record = asRecord(payload);
+  if (!record || !Array.isArray(record.candidates)) return null;
+  for (const candidateValue of record.candidates) {
+    const candidate = asRecord(candidateValue);
+    const content = asRecord(candidate?.content);
+    if (!Array.isArray(content?.parts)) continue;
+    for (const partValue of content.parts) {
+      const part = asRecord(partValue);
+      const inline = asRecord(part?.inlineData) ?? asRecord(part?.inline_data);
+      const data = typeof inline?.data === "string" ? inline.data.trim() : "";
+      const mimeType = typeof inline?.mimeType === "string"
+        ? inline.mimeType.trim()
+        : typeof inline?.mime_type === "string"
+          ? inline.mime_type.trim()
+          : "";
+      if (data && ["image/png", "image/jpeg", "image/webp"].includes(mimeType)) return { data, mimeType };
+    }
+  }
+  return null;
+}
+
+async function requestControlledIllustrationImage(
+  request: VisualIllustrationRequest,
+  requestId: string,
+): Promise<{ data: string; mimeType: string }> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), IMAGE_GENERATION_TIMEOUT_MS);
+  const startedAt = Date.now();
+  try {
+    const response = await fetch(GEMINI_IMAGE_API_URL, {
+      method: "POST",
+      headers: {
+        "x-goog-api-key": GEMINI_API_KEY,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: buildControlledIllustrationPrompt(request) }] }],
+        generationConfig: {
+          responseModalities: ["IMAGE"],
+          responseFormat: { image: { aspectRatio: "4:3", imageSize: "1K" } },
+        },
+      }),
+      signal: controller.signal,
+    });
+    const payload = await response.json() as unknown;
+    if (!response.ok) throw new Error(geminiError(payload, `تعذر إنشاء الصورة (${response.status}).`));
+    const image = findGeneratedImagePart(payload);
+    if (!image || image.data.length < 1_000 || image.data.length > MAX_IMAGE_BASE64_CHARACTERS) {
+      throw new Error("لم يُرجع نموذج الصور ملفًا صالحًا بالحجم المتوقع.");
+    }
+    logStage(requestId, "visual_image_generated", {
+      model: GEMINI_IMAGE_MODEL,
+      mimeType: image.mimeType,
+      base64Characters: image.data.length,
+      durationMs: Date.now() - startedAt,
+    });
+    return image;
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error("تأخر نموذج الصور أكثر من المدة المسموحة.");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+const visualValidationSchema = {
+  type: "object",
+  properties: {
+    approved: { type: "boolean" },
+    requiredObjectsPresent: { type: "boolean" },
+    scientificRelationshipCorrect: { type: "boolean" },
+    forbiddenTextDetected: { type: "boolean" },
+    reason: { type: "string" },
+  },
+  required: ["approved", "requiredObjectsPresent", "scientificRelationshipCorrect", "forbiddenTextDetected", "reason"],
+  additionalProperties: false,
+};
+
+async function validateControlledIllustration(
+  request: VisualIllustrationRequest,
+  image: { data: string; mimeType: string },
+  requestId: string,
+): Promise<{ approved: boolean; reason: string }> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), IMAGE_VALIDATION_TIMEOUT_MS);
+  const startedAt = Date.now();
+  try {
+    const response = await fetch(GEMINI_API_URL, {
+      method: "POST",
+      headers: {
+        "x-goog-api-key": GEMINI_API_KEY,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: "أنت مدقق علمي بصري صارم لصور اختبارات العلوم المدرسية. لا تجامل الصورة." }] },
+        contents: [{
+          role: "user",
+          parts: [
+            { text: [
+              "افحص الصورة وفق المتطلبات الآتية:",
+              controlledIllustrationScene(request),
+              "يجب أن تكون صورة ثنائية الأبعاد واضحة على خلفية بيضاء.",
+              "ارفضها إذا ظهر أي نص أو حرف أو رقم أو وحدة أو سهم أو رمز شحنة أو عنصر علمي زائد.",
+              "وافق فقط إذا ظهرت العناصر المطلوبة والعلاقة العلمية بينها بوضوح ودون تضليل.",
+            ].join("\n") },
+            { inlineData: { mimeType: image.mimeType, data: image.data } },
+          ],
+        }],
+        generationConfig: {
+          candidateCount: 1,
+          maxOutputTokens: 400,
+          thinkingConfig: { thinkingBudget: 0 },
+          responseMimeType: "application/json",
+          responseJsonSchema: visualValidationSchema,
+        },
+      }),
+      signal: controller.signal,
+    });
+    const payload = await response.json() as unknown;
+    if (!response.ok) throw new Error(geminiError(payload, `تعذر تدقيق الصورة (${response.status}).`));
+    const output = findGenerateContentOutputText(payload);
+    if (!output.text) throw new Error("لم يُرجع المدقق البصري نتيجة قابلة للقراءة.");
+    const parsed = asRecord(parseGeneratedJson(output.text));
+    const approved = parsed?.approved === true
+      && parsed.requiredObjectsPresent === true
+      && parsed.scientificRelationshipCorrect === true
+      && parsed.forbiddenTextDetected === false;
+    const reason = typeof parsed?.reason === "string" ? parsed.reason.trim().slice(0, 240) : "";
+    logStage(requestId, "visual_image_validated", { approved, reason, durationMs: Date.now() - startedAt });
+    return { approved, reason };
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error("تأخر التدقيق العلمي للصورة أكثر من المدة المسموحة.");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function decodeBase64Image(data: string): Uint8Array {
+  const binary = atob(data);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
+
+function storageSegment(value: string): string {
+  return value.replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "item";
+}
+
+function extensionForImageMime(mimeType: string): string {
+  if (mimeType === "image/jpeg") return "jpg";
+  if (mimeType === "image/webp") return "webp";
+  return "png";
+}
+
+async function ensureQuestionVisualBucket(): Promise<void> {
+  const { error } = await admin.storage.getBucket(QUESTION_VISUAL_BUCKET);
+  if (!error) return;
+  const created = await admin.storage.createBucket(QUESTION_VISUAL_BUCKET, {
+    public: true,
+    fileSizeLimit: 12 * 1024 * 1024,
+    allowedMimeTypes: ["image/png", "image/jpeg", "image/webp"],
+  });
+  if (created.error && !/already exists|duplicate/i.test(created.error.message)) {
+    throw new Error(`تعذر تجهيز مخزن الصور: ${created.error.message}`);
+  }
+}
+
+async function storeControlledIllustration(
+  request: VisualIllustrationRequest,
+  userId: string,
+  image: { data: string; mimeType: string },
+): Promise<VisualIllustrationAsset> {
+  await ensureQuestionVisualBucket();
+  const extension = extensionForImageMime(image.mimeType);
+  const assetPath = `${storageSegment(userId)}/${storageSegment(request.draftId)}/${storageSegment(request.planItemId)}/${Date.now()}-${crypto.randomUUID()}.${extension}`;
+  const uploaded = await admin.storage.from(QUESTION_VISUAL_BUCKET).upload(assetPath, decodeBase64Image(image.data), {
+    contentType: image.mimeType,
+    cacheControl: "31536000",
+    upsert: false,
+  });
+  if (uploaded.error) throw new Error(`تعذر حفظ الصورة التعليمية: ${uploaded.error.message}`);
+  const publicUrl = admin.storage.from(QUESTION_VISUAL_BUCKET).getPublicUrl(assetPath).data.publicUrl;
+  if (!publicUrl?.startsWith("https://")) throw new Error("تعذر إنشاء رابط آمن للصورة التعليمية.");
+
+  const previous = request.previousAssetPath;
+  if (previous && previous !== assetPath && previous.startsWith(`${storageSegment(userId)}/`)) {
+    void admin.storage.from(QUESTION_VISUAL_BUCKET).remove([previous]);
+  }
+  return {
+    url: publicUrl,
+    assetPath,
+    mimeType: image.mimeType,
+    model: GEMINI_IMAGE_MODEL,
+    generatedAt: new Date().toISOString(),
+    promptVersion: VISUAL_PROMPT_VERSION,
+    validated: true,
+  };
+}
+
+async function generateControlledVisualIllustration(
+  request: VisualIllustrationRequest,
+  userId: string,
+  requestId: string,
+): Promise<VisualIllustrationResult> {
+  try {
+    logStage(requestId, "visual_illustration_started", {
+      visualType: request.visual.type,
+      visualVariant: request.visual.variant,
+      model: GEMINI_IMAGE_MODEL,
+    });
+    const image = await requestControlledIllustrationImage(request, requestId);
+    const validation = await validateControlledIllustration(request, image, requestId);
+    if (!validation.approved) {
+      return {
+        status: "fallback",
+        reason: validation.reason || "لم تجتز الصورة فحص الدقة العلمية؛ أبقى واثق الرسم الحتمي الآمن.",
+      };
+    }
+    const illustration = await storeControlledIllustration(request, userId, image);
+    return { status: "ready", illustration, reason: "تم إنشاء صورة ثنائية الأبعاد وتدقيقها علميًا." };
+  } catch (error) {
+    logStage(requestId, "visual_illustration_fallback", { message: errorMessage(error) });
+    return {
+      status: "fallback",
+      reason: `تعذر اعتماد الصورة المحسنة؛ أبقى واثق الرسم الحتمي دون تعطيل الاختبار. ${errorMessage(error)}`.slice(0, 360),
+    };
+  }
+}
 
 function trustedEnrichmentCacheKey(request: GenerationRequest): string {
   return JSON.stringify({
@@ -1415,9 +1780,10 @@ function validateAndHydrateGeneratedPayload(
       throw retryableError("مولد الأسئلة لم يلتزم بثلاثة بدائل لكل مفردة.");
     }
     seen.add(generatedItem.planItemId);
+    const visual = buildServerOwnedVisualSpec(requested, request);
     hydratedItems.push({
       planItemId: generatedItem.planItemId,
-      visual: buildServerOwnedVisualSpec(requested, request),
+      visual,
       alternatives: generatedItem.alternatives.map((alternative) =>
         validateAndHydrateAlternative(
           alternative,
@@ -1430,6 +1796,7 @@ function validateAndHydrateGeneratedPayload(
           requested.lessonLabel,
           requested.regenerationAnchor,
           enrichment,
+          visual,
         )
       ),
     });
@@ -1626,7 +1993,7 @@ function buildServerOwnedVisualSpec(item: GenerationItem, request: GenerationReq
   const reference = referenceForVisual(item, request);
   const context = normalizeVisualContext(`${request.subject} ${request.topic} ${item.lessonLabel} ${reference?.content ?? ""}`);
   const seed = visualSeed(`${item.planItemId}|${item.lessonLabel}|${item.visualTarget}|${item.styleTarget}`);
-  const titleSuffix = item.lessonLabel ? ` - ${item.lessonLabel}` : "";
+  const titleSuffix = "";
   const visualId = `visual-${item.planItemId}`;
   const role = visualRoleForItem(item);
 
@@ -1763,7 +2130,7 @@ function buildServerOwnedVisualSpec(item: GenerationItem, request: GenerationReq
         purpose: "تمثيل القوة العمودية ومساحة التلامس في علاقة الضغط",
         title: `القوة والمساحة في حساب الضغط${titleSuffix}`,
         altText: "جسم يؤثر بقوة عمودية على سطح ذي مساحة تلامس محددة",
-        values: [liquidLevel, 0.5],
+        values: [80 + (seed % 5) * 10, Number((0.02 + (seed % 3) * 0.01).toFixed(2))],
         annotations: ["القوة F", "المساحة A"],
       };
     }
@@ -2001,6 +2368,16 @@ function hasSufficientQuestionContext(
     && /(عندما|اثناء|لاحظ|قام|استخدم|وضع|تعرض|في موقف|لدى|يمر|يعمل)/u.test(normalized);
 }
 
+function fixedVisualContainsCalculationData(visual: QuestionVisualSpec): boolean {
+  if (visual.type === "force_diagram" && visual.role === "calculate") {
+    return visual.vectors.length >= 2 && visual.vectors.every((vector) => vector.magnitude > 0);
+  }
+  if (visual.type === "pressure_diagram" && visual.variant === "force_area" && visual.role === "calculate") {
+    return visual.values.length >= 2 && visual.values[0] > 0 && visual.values[1] > 0;
+  }
+  return true;
+}
+
 function validateAndHydrateAlternative(
   alternative: ModelGeneratedAlternative,
   questionType: QuestionType,
@@ -2012,6 +2389,7 @@ function validateAndHydrateAlternative(
   lessonLabel: string,
   regenerationAnchor?: RegenerationAnchor,
   enrichment: TrustedEnrichmentContext = { segments: [], attempted: false },
+  fixedVisual: QuestionVisualSpec = emptyVisualSpec(),
 ): GeneratedAlternative {
   if (!alternative || typeof alternative !== "object") throw retryableError("أحد بدائل الأسئلة غير صالح.");
   for (const field of ["text", "answer", "rationale", "sourceEvidenceId"] as const) {
@@ -2040,6 +2418,9 @@ function validateAndHydrateAlternative(
   }
   if (alternative.questionForm === "حسابي" && !alternative.workingRequired) {
     throw retryableError("السؤال الحسابي لا يطلب إظهار خطوات الحل.");
+  }
+  if (alternative.questionForm === "حسابي" && !fixedVisualContainsCalculationData(fixedVisual)) {
+    throw retryableError("الرسم الحسابي لا يحتوي جميع القيم والوحدات اللازمة للحل.");
   }
   if (requestedVisualTarget !== "none") {
     const visualReference = normalizeForEvidence(`${alternative.stimulus} ${alternative.text}`);
@@ -2304,12 +2685,13 @@ function geminiError(payload: unknown, fallback: string): string {
   return typeof error?.message === "string" && error.message ? error.message : fallback;
 }
 
-async function requireUser(req: Request): Promise<void> {
+async function requireUser(req: Request): Promise<string> {
   const authorization = req.headers.get("Authorization") ?? "";
   if (!authorization.startsWith("Bearer ")) throw httpError("يلزم تسجيل دخول مالك المنصة.", 401);
   const token = authorization.slice("Bearer ".length);
   const { data, error } = await admin.auth.getUser(token);
   if (error || !data.user) throw httpError("جلسة مالك المنصة غير صالحة أو منتهية.", 401);
+  return data.user.id;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

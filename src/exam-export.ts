@@ -75,8 +75,12 @@ const EXPORT_STYLES = `
   .plan-shared-visual { margin: 3mm 7mm; padding: 2mm; border: 1px solid #aab3bd; border-radius: 3mm; break-inside: avoid; page-break-inside: avoid; }
   .visual-heading { display: none; }
   .question-visual { margin: 0 auto; max-width: 165mm; }
-  .question-visual svg, .question-visual-raster { display: block; width: 100%; height: auto; max-height: 88mm; margin: 0 auto; font-family: Tahoma, Arial, sans-serif; direction: ltr; }
-  .question-visual figcaption { text-align: center; font-size: 9px; margin-top: 1mm; }
+  .question-visual svg, .question-visual-raster { display: block; width: 100%; height: auto; max-height: 70mm; margin: 0 auto; font-family: Tahoma, Arial, sans-serif; direction: ltr; }
+  .question-visual-hybrid { position: relative; width: 100%; aspect-ratio: 4 / 3; max-height: 70mm; overflow: hidden; background: #fff; }
+  .question-visual-deterministic-fallback { position: absolute; inset: 0; display: grid; place-items: center; }
+  .question-visual-deterministic-fallback svg { width: 100%; height: 100%; max-height: none; object-fit: contain; }
+  .question-visual-illustration { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; background: #fff; }
+  .question-visual figcaption { display: none; text-align: center; font-size: 9px; margin-top: 1mm; }
   .qv-title { font-size: 16px; font-weight: 800; fill: #172b45; direction: rtl; unicode-bidi: plaintext; }
   .qv-axis, .qv-component, .qv-wire, .qv-vessel, .qv-depth, .qv-surface { fill: none; stroke: #182536; stroke-width: 2; }
   .qv-grid { stroke: #c9ced5; stroke-width: 1; }
@@ -188,8 +192,32 @@ async function svgElementToPngDataUrl(svg: SVGSVGElement): Promise<string> {
   }
 }
 
+async function imageUrlToDataUrl(url: string): Promise<string> {
+  const response = await fetch(url, { mode: "cors", credentials: "omit" });
+  if (!response.ok) throw new Error(`تعذر تنزيل الصورة (${response.status}).`);
+  const blob = await response.blob();
+  if (!blob.type.startsWith("image/")) throw new Error("الملف المستلم ليس صورة صالحة.");
+  return await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => typeof reader.result === "string" ? resolve(reader.result) : reject(new Error("تعذر قراءة الصورة."));
+    reader.onerror = () => reject(new Error("تعذر قراءة الصورة."));
+    reader.readAsDataURL(blob);
+  });
+}
+
 export async function prepareWordHtml(html: string): Promise<string> {
   const parsed = new DOMParser().parseFromString(html, "text/html");
+  const illustrations = [...parsed.querySelectorAll<HTMLImageElement>("img.question-visual-illustration")];
+  for (const image of illustrations) {
+    const hybrid = image.closest<HTMLElement>(".question-visual-hybrid");
+    try {
+      image.src = await imageUrlToDataUrl(image.src);
+      hybrid?.querySelector(".question-visual-deterministic-fallback")?.remove();
+    } catch {
+      image.remove();
+      if (hybrid) hybrid.dataset.hybridVisual = "fallback";
+    }
+  }
   const svgs = [...parsed.querySelectorAll("svg")];
   for (const svg of svgs) {
     try {
@@ -203,7 +231,7 @@ export async function prepareWordHtml(html: string): Promise<string> {
       // يبقى SVG مضمنًا في ملف Word بدل إلغاء التصدير كله بسبب رسم واحد.
       svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
       svg.setAttribute("role", svg.getAttribute("role") ?? "img");
-      svg.setAttribute("style", "display:block;width:100%;height:auto;max-height:88mm;margin:0 auto;");
+      svg.setAttribute("style", "display:block;width:100%;height:auto;max-height:70mm;margin:0 auto;");
     }
   }
   return `<!doctype html>${parsed.documentElement.outerHTML}`;

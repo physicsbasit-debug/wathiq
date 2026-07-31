@@ -17,7 +17,7 @@ import {
 import { clearDraft, loadDraft, loadProfile, loadSources, saveDraft, saveProfile, saveSources } from "./storage.js";
 import type { ExamDraft, ExamTitleOption, ManagedSource, PlanItem, QuestionCounts, SourceDraft, SourceStatus, SourceExtractionResult, SourceStructureNode, ViewName, WizardStep } from "./types.js";
 import { escapeHtml, formatArabicDate, icon } from "./ui.js";
-import { questionVisualTypeLabel, renderQuestionVisualSvg, validateQuestionVisualSpec } from "./question-visual.js";
+import { isAiIllustrationEligible, questionVisualTypeLabel, renderQuestionVisualSvg, stripQuestionVisualIllustration, validateQuestionVisualSpec } from "./question-visual.js";
 import { buildStandaloneExamDocument, downloadWordHtml, interleaveAssessmentItems, printHtmlDocument, safeExportFileName } from "./exam-export.js";
 import { buildSourceDrivePath, changeSourceStatus, createEmptySourceDraft, createManagedSource, findDuplicateContentSource, findDuplicateSource, sourceSubjectLabel, SOURCE_KINDS, SOURCE_SEMESTERS, validateSourceDraft } from "./source-domain.js";
 import { createRegistryBackup, mergeSourceRegistry, parseRegistryBackup } from "./source-registry.js";
@@ -94,6 +94,9 @@ interface AppState {
   lessonCatalogKey: string;
   lessonCatalogBusy: boolean;
   lessonCatalogMessage: string;
+  visualEnhancementBusyIds: Set<string>;
+  visualEnhancementMessages: Record<string, string>;
+  visualEnhancementAutoStarted: boolean;
 }
 
 
@@ -159,6 +162,9 @@ const state: AppState = {
   lessonCatalogKey: "",
   lessonCatalogBusy: false,
   lessonCatalogMessage: "",
+  visualEnhancementBusyIds: new Set<string>(),
+  visualEnhancementMessages: {},
+  visualEnhancementAutoStarted: false,
 };
 
 let saveTimer: number | undefined;
@@ -577,6 +583,12 @@ function renderSetupStep(): string {
       <span><strong>الإثراء من مصادر علمية رسمية وموثوقة</strong><small>يبقى الكتاب المدرسي المرجع الحاكم، ويستخدم واثق البحث الموثق فقط لتنويع السياقات والبيانات والرسوم دون إضافة معرفة مطلوبة خارج المنهج.</small></span>
     </label>
 
+    <label class="trusted-enrichment-card visual-enhancement-card ${state.draft.visualEnhancementEnabled ? "enabled" : ""}">
+      <input id="visual-enhancement-toggle" type="checkbox" ${state.draft.visualEnhancementEnabled ? "checked" : ""}/>
+      <span class="trusted-enrichment-check">${state.draft.visualEnhancementEnabled ? icon("check") : ""}</span>
+      <span><strong>الرسوم الهجينة المنضبطة</strong><small>يحافظ واثق على الرسم العلمي الحتمي أساسًا، ويضيف صورة ثنائية الأبعاد جميلة فقط للمشاهد السياقية الآمنة بعد فحصها علميًا. عند أي فشل يبقى الرسم الأصلي دون تعطيل الاختبار.</small></span>
+    </label>
+
     ${officialSettings}
     ${renderCompliance(validation)}
     ${state.questionGenerationMessage ? `<div class="generation-status ${state.questionGenerationBusy ? "busy" : "notice"}">${state.questionGenerationBusy ? icon("spark") : "!"}<div><strong>${state.questionGenerationBusy ? "مولد الأسئلة يعمل" : "حالة توليد الأسئلة"}</strong><p>${escapeHtml(state.questionGenerationMessage)}</p></div></div>` : ""}
@@ -631,7 +643,22 @@ function renderMarkScheme(points: string[] | undefined): string {
 
 function renderPlanVisual(item: PlanItem, compact = false): string {
   if (!item.visual || item.visual.type === "none") return "";
-  return `<section class="plan-shared-visual ${compact ? "compact" : ""}"><div class="visual-heading"><strong>${escapeHtml(questionVisualTypeLabel(item.visual.type))}</strong><span>رسم آمن مولّد من مواصفة منظمة، لا صورة حرة.</span></div>${renderQuestionVisualSvg(item.visual)}</section>`;
+  const eligible = isAiIllustrationEligible(item.visual);
+  const hasIllustration = Boolean(item.visual.illustration?.validated && eligible);
+  const busy = state.visualEnhancementBusyIds.has(item.id);
+  const modeLabel = hasIllustration
+    ? "صورة 2D مولدة ومدققة علميًا مع رسم حتمي احتياطي"
+    : eligible
+      ? "رسم علمي حتمي، ويمكن تحسين المشهد بصريًا دون المساس بالبيانات"
+      : "رسم علمي حتمي قابل للتحقق";
+  const controls = !compact && eligible && state.draft.visualEnhancementEnabled ? `<div class="visual-action-row">
+    <button class="secondary-btn compact" data-action="${hasIllustration ? "regenerate-visual" : "enhance-visual"}" data-plan-id="${escapeHtml(item.id)}" ${(busy || state.draft.status === "معتمد") ? "disabled" : ""}>${icon("spark")} ${busy ? "جارٍ تحسين الصورة…" : hasIllustration ? "إعادة توليد الصورة" : "تحسين الصورة ثنائية الأبعاد"}</button>
+    ${hasIllustration ? `<button class="text-btn" data-action="restore-deterministic-visual" data-plan-id="${escapeHtml(item.id)}" ${(busy || state.draft.status === "معتمد") ? "disabled" : ""}>استخدام الرسم الحتمي فقط</button>` : ""}
+  </div>` : "";
+  const message = !compact && state.visualEnhancementMessages[item.id]
+    ? `<p class="visual-enhancement-message" aria-live="polite">${escapeHtml(state.visualEnhancementMessages[item.id]!)}</p>`
+    : "";
+  return `<section class="plan-shared-visual ${compact ? "compact" : ""}"><div class="visual-heading"><strong>${escapeHtml(questionVisualTypeLabel(item.visual.type))}</strong><span>${escapeHtml(modeLabel)}</span></div>${renderQuestionVisualSvg(item.visual)}${controls}${message}</section>`;
 }
 
 function renderPlanItem(item: PlanItem, index: number): string {
@@ -753,7 +780,7 @@ function selectedPaperItems(): SelectedPaperItem[] {
 
 function visualSignature(item: PlanItem): string {
   if (!item.visual || item.visual.type === "none") return "";
-  const { visualId: _visualId, title: _title, altText: _altText, purpose: _purpose, ...structural } = item.visual;
+  const { visualId: _visualId, title: _title, altText: _altText, purpose: _purpose, illustration: _illustration, ...structural } = item.visual;
   return JSON.stringify(structural);
 }
 
@@ -792,7 +819,7 @@ function renderStudentPaper(subject: string, paperLayout: PaperLayout): string {
     <div class="paper-title"><h2>${escapeHtml(state.draft.title)}</h2><p>${subject} · الصف ${state.draft.grade} · الفصل الدراسي ${escapeHtml(state.draft.semester)} · ${escapeHtml(state.draft.academicYear)}</p></div>
     <div class="student-row"><span>اسم الطالب: ____________________</span><span>التاريخ: ${formatArabicDate(state.draft.examDate)}</span><span>الزمن: ${state.draft.durationMinutes} دقيقة</span></div>
     <div class="paper-questions">${paperLayout.html}</div>
-    <footer class="paper-footer">- 1 -</footer>
+    <footer class="paper-footer">انتهت الأسئلة</footer>
   </section>`;
 }
 
@@ -1327,6 +1354,9 @@ function handleAction(action: string, element: HTMLElement): void {
     state.questionGenerationBusy = false;
     state.questionGenerationMessage = "";
     state.sourceRetrievalMessage = "";
+    state.visualEnhancementBusyIds.clear();
+    state.visualEnhancementMessages = {};
+    state.visualEnhancementAutoStarted = false;
     if (profile) {
       state.draft.school = profile.school;
       state.draft.directorate = profile.directorate;
@@ -1338,6 +1368,9 @@ function handleAction(action: string, element: HTMLElement): void {
   if (action === "resume-draft") {
     const loaded = loadDraft();
     if (loaded) state.draft = loaded;
+    state.visualEnhancementBusyIds.clear();
+    state.visualEnhancementMessages = {};
+    state.visualEnhancementAutoStarted = false;
     navigate("wizard");
     return;
   }
@@ -1345,6 +1378,9 @@ function handleAction(action: string, element: HTMLElement): void {
     const loaded = loadDraft();
     if (!loaded) return showToast("تعذر العثور على الاختبار المحفوظ.");
     state.draft = loaded;
+    state.visualEnhancementBusyIds.clear();
+    state.visualEnhancementMessages = {};
+    state.visualEnhancementAutoStarted = false;
     state.draft.currentStep = 4;
     navigate("wizard");
     return;
@@ -1362,6 +1398,16 @@ function handleAction(action: string, element: HTMLElement): void {
     } else if (!printHtmlDocument(document.fileName, document.html)) {
       showToast("تعذر فتح نافذة الطباعة. اسمح بالنوافذ المنبثقة ثم أعد المحاولة.");
     }
+    return;
+  }
+  if (action === "enhance-visual" || action === "regenerate-visual") {
+    const planItemId = element.dataset.planId ?? "";
+    if (planItemId) void enhancePlanVisual(planItemId);
+    return;
+  }
+  if (action === "restore-deterministic-visual") {
+    const planItemId = element.dataset.planId ?? "";
+    if (planItemId) restoreDeterministicVisual(planItemId);
     return;
   }
   if (action === "save-now") return saveNow();
@@ -1409,6 +1455,9 @@ function handleAction(action: string, element: HTMLElement): void {
     state.questionGenerationBusy = false;
     state.questionGenerationMessage = "";
     state.sourceRetrievalMessage = "";
+    state.visualEnhancementBusyIds.clear();
+    state.visualEnhancementMessages = {};
+    state.visualEnhancementAutoStarted = false;
     showToast("تم حذف المسودة المحلية.");
     return;
   }
@@ -1512,6 +1561,95 @@ function handleAction(action: string, element: HTMLElement): void {
   if (action === "index-source" && sourceId) { void extractAndIndexSource(sourceId); return; }
 }
 
+const MAX_AUTO_VISUAL_ENHANCEMENTS = 3;
+
+function visualEnhancementProposal(item: PlanItem): PlanItem["proposals"][number] | undefined {
+  return selectedProposal(state.draft, item) ?? item.proposals[0];
+}
+
+async function enhancePlanVisual(planItemId: string, automatic = false): Promise<boolean> {
+  const item = state.draft.plan.find((entry) => entry.id === planItemId);
+  if (!item?.visual || item.visual.type === "none" || !isAiIllustrationEligible(item.visual)) {
+    if (!automatic) showToast("هذا الرسم يجب أن يبقى حتميًا لحماية دقته العلمية.");
+    return false;
+  }
+  if (!state.draft.visualEnhancementEnabled) {
+    if (!automatic) showToast("فعّل خيار الرسوم الهجينة أولًا؛ بقي الرسم العلمي الحتمي مستخدمًا.");
+    return false;
+  }
+  if (state.draft.status === "معتمد" || state.visualEnhancementBusyIds.has(planItemId)) return false;
+  if (!questionGenerationService || !centralSourceStore?.currentSession || state.sourceStorageStatus !== "متصل") {
+    const message = "يلزم تسجيل دخول مالك المنصة لتوليد الصورة؛ بقي الرسم العلمي الحتمي محفوظًا.";
+    state.visualEnhancementMessages[planItemId] = message;
+    if (!automatic) showToast(message);
+    render();
+    return false;
+  }
+  const proposal = visualEnhancementProposal(item);
+  if (!proposal || state.draft.grade === null) return false;
+  const subject = SUBJECTS.find((entry) => entry.id === state.draft.subjectId)?.label ?? state.draft.subjectId;
+  const previousAssetPath = item.visual.illustration?.assetPath ?? "";
+  const startedDraftId = state.draft.id;
+  state.visualEnhancementBusyIds.add(planItemId);
+  state.visualEnhancementMessages[planItemId] = "جارٍ إنشاء صورة 2D ثم فحصها علميًا؛ الرسم الحتمي باقٍ كخطة رجوع.";
+  render();
+  try {
+    const result = await questionGenerationService.generateIllustration({
+      action: "generate_visual_illustration",
+      draftId: state.draft.id,
+      planItemId: item.id,
+      grade: state.draft.grade,
+      subject,
+      lessonLabel: item.lessonLabel,
+      questionText: `${proposal.stimulus ? `${proposal.stimulus} ` : ""}${proposal.text}`.trim(),
+      sourceSupport: proposal.sourceSupport || item.outcomeLabel || item.lessonLabel,
+      ...(previousAssetPath ? { previousAssetPath } : {}),
+      visual: stripQuestionVisualIllustration(item.visual),
+    });
+    if (state.draft.id !== startedDraftId) return false;
+    if (result.status === "ready" && result.illustration) {
+      item.visual = { ...stripQuestionVisualIllustration(item.visual), illustration: result.illustration };
+      state.visualEnhancementMessages[planItemId] = "تم اعتماد صورة 2D بعد الفحص العلمي، مع الاحتفاظ بالرسم الحتمي خلفها.";
+      scheduleSave();
+      if (!automatic) showToast("تم تحسين الرسم بصريًا واعتماده علميًا.");
+      return true;
+    }
+    state.visualEnhancementMessages[planItemId] = result.reason || "لم تجتز الصورة الفحص؛ استخدم واثق الرسم الحتمي دون تعطيل الاختبار.";
+    if (!automatic) showToast("لم تعتمد الصورة الجديدة؛ بقي الرسم الحتمي الآمن.");
+    return false;
+  } catch (error) {
+    if (state.draft.id !== startedDraftId) return false;
+    const message = error instanceof Error ? error.message : "تعذر تحسين الصورة.";
+    state.visualEnhancementMessages[planItemId] = `${message} بقي الرسم الحتمي محفوظًا.`;
+    if (!automatic) showToast(state.visualEnhancementMessages[planItemId]!);
+    return false;
+  } finally {
+    state.visualEnhancementBusyIds.delete(planItemId);
+    if (state.draft.id === startedDraftId) render();
+  }
+}
+
+async function enhanceEligibleVisuals(): Promise<void> {
+  if (state.visualEnhancementAutoStarted || !state.draft.visualEnhancementEnabled || state.draft.status === "معتمد") return;
+  state.visualEnhancementAutoStarted = true;
+  const candidates = state.draft.plan
+    .filter((item) => item.visual && item.visual.type !== "none" && isAiIllustrationEligible(item.visual) && !item.visual.illustration?.validated)
+    .slice(0, MAX_AUTO_VISUAL_ENHANCEMENTS);
+  for (const item of candidates) {
+    await enhancePlanVisual(item.id, true);
+  }
+}
+
+function restoreDeterministicVisual(planItemId: string): void {
+  const item = state.draft.plan.find((entry) => entry.id === planItemId);
+  if (!item?.visual || state.draft.status === "معتمد") return;
+  item.visual = stripQuestionVisualIllustration(item.visual);
+  state.visualEnhancementMessages[planItemId] = "تمت العودة إلى الرسم العلمي الحتمي فقط.";
+  scheduleSave();
+  render();
+  showToast("تم استخدام الرسم الحتمي فقط.");
+}
+
 function mergeReusablePlan(expected: PlanItem[], existing: PlanItem[]): PlanItem[] {
   const existingById = new Map(existing.map((item) => [item.id, item]));
   return expected.map((item) => {
@@ -1522,7 +1660,7 @@ function mergeReusablePlan(expected: PlanItem[], existing: PlanItem[]): PlanItem
       && saved.cognitiveLevel === item.cognitiveLevel
       && saved.marks === item.marks
       && saved.sourceReferenceId === item.sourceReferenceId;
-    return sameStructure ? { ...item, proposals: saved.proposals } : item;
+    return sameStructure ? { ...item, proposals: saved.proposals, ...(saved.visual ? { visual: saved.visual } : {}) } : item;
   });
 }
 
@@ -1555,7 +1693,9 @@ async function nextStep(): Promise<void> {
     );
     const generated = await generateQuestionsForPlan(state.draft.plan);
     if (!generated) return;
-    return setStep(3);
+    setStep(3);
+    void enhanceEligibleVisuals();
+    return;
   }
   if (step === 3) {
     if (!isPlanComplete(state.draft)) return showToast("اختر سؤالًا واحدًا لكل مفردة.");
@@ -1971,6 +2111,16 @@ function bindSetupStep(): void {
     state.questionGenerationMessage = state.draft.trustedEnrichmentEnabled
       ? "سيستخدم واثق إثراءً موثقًا في المفردات الجديدة أو المعاد توليدها، مع بقاء صفحات الكتاب حاكمة للسؤال والإجابة."
       : "تم إيقاف الإثراء الخارجي للمفردات الجديدة أو المعاد توليدها؛ ولن تُحذف الأسئلة المكتملة.";
+    scheduleSave();
+    render();
+  });
+
+  document.querySelector<HTMLInputElement>("#visual-enhancement-toggle")?.addEventListener("change", (event) => {
+    state.draft.visualEnhancementEnabled = (event.target as HTMLInputElement).checked;
+    state.visualEnhancementAutoStarted = false;
+    state.questionGenerationMessage = state.draft.visualEnhancementEnabled
+      ? "سيحافظ واثق على الرسوم الحتمية، ويضيف صورًا ثنائية الأبعاد مدققة للمشاهد المؤهلة فقط."
+      : "تم إيقاف تحسين الصور الجديدة؛ وتبقى الرسوم الحالية والأسئلة المكتملة محفوظة.";
     scheduleSave();
     render();
   });

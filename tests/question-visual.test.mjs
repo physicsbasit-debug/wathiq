@@ -3,9 +3,12 @@ import assert from "node:assert/strict";
 import {
   diversifyQuestionVisualSpec,
   emptyQuestionVisualSpec,
+  isAiIllustrationEligible,
+  parseQuestionVisualIllustration,
   parseQuestionVisualSpec,
   questionVisualTypeLabel,
   renderQuestionVisualSvg,
+  stripQuestionVisualIllustration,
 } from "../dist/assets/question-visual.js";
 
 function lineVisual() {
@@ -214,4 +217,86 @@ test("يرسم مخططات الأشعة والقوى والعمليات بصي�
   assert.match(renderQuestionVisualSvg(parseQuestionVisualSpec(ray, "ray_diagram")), /qv-mirror/);
   assert.match(renderQuestionVisualSvg(parseQuestionVisualSpec(force, "force_diagram")), /qv-force-arrow/);
   assert.match(renderQuestionVisualSvg(parseQuestionVisualSpec(flow, "flow_diagram")), /qv-flow-node/);
+});
+
+
+test("يستخدم صورة 2D مدققة للمشهد المؤهل ويبقي SVG حتميًا خلفها", () => {
+  const visual = parseQuestionVisualSpec({
+    ...emptyQuestionVisualSpec(),
+    type: "electrostatic_diagram",
+    variant: "charge_transfer",
+    role: "interpret",
+    visualId: "hybrid-charge-1",
+    title: "شحن مسطرة بالدلك",
+    altText: "مسطرة بلاستيكية تدلك بقطعة قماش قرب قصاصات ورق",
+    labels: ["المسطرة البلاستيكية", "قطعة القماش"],
+    values: [1],
+    annotations: ["اتجاه الدلك"],
+    illustration: {
+      url: "https://example.supabase.co/storage/v1/object/public/wathiq-question-visuals/user/draft/item.png",
+      assetPath: "user/draft/item.png",
+      mimeType: "image/png",
+      model: "gemini-3.1-flash-image",
+      generatedAt: "2026-07-31T12:00:00.000Z",
+      promptVersion: "wathiq-controlled-2d-v1",
+      validated: true,
+    },
+  }, "electrostatic_diagram");
+  assert.equal(isAiIllustrationEligible(visual), true);
+  const html = renderQuestionVisualSvg(visual);
+  assert.match(html, /question-visual-hybrid/);
+  assert.match(html, /question-visual-illustration/);
+  assert.match(html, /question-visual-deterministic-fallback/);
+  assert.match(html, /qv-rod/);
+  assert.match(html, /data-visual-mode="hybrid"/);
+  const stripped = stripQuestionVisualIllustration(visual);
+  assert.equal(stripped.illustration, undefined);
+  assert.match(renderQuestionVisualSvg(stripped), /data-visual-mode="deterministic"/);
+});
+
+test("يرفض بيانات صورة غير آمنة ولا يحول مخطط القوى إلى صورة حرة", () => {
+  assert.equal(parseQuestionVisualIllustration({ url: "javascript:alert(1)", validated: true }), undefined);
+  const force = parseQuestionVisualSpec({
+    ...emptyQuestionVisualSpec(),
+    type: "force_diagram",
+    variant: "free_body",
+    role: "calculate",
+    title: "مخطط جسم حر",
+    altText: "جسم تؤثر عليه قوتان أفقيتان",
+    labels: ["الصندوق"],
+    vectors: [
+      { label: "القوة المؤثرة", x: 0, y: 0, dx: 80, dy: 0, magnitude: 8 },
+      { label: "الاحتكاك", x: 0, y: 0, dx: -60, dy: 0, magnitude: 6 },
+    ],
+    illustration: {
+      url: "https://example.test/force.png",
+      assetPath: "force.png",
+      mimeType: "image/png",
+      model: "gemini-test",
+      generatedAt: "2026-07-31T12:00:00.000Z",
+      promptVersion: "test",
+      validated: true,
+    },
+  }, "force_diagram");
+  assert.equal(isAiIllustrationEligible(force), false);
+  const html = renderQuestionVisualSvg(force);
+  assert.doesNotMatch(html, /question-visual-illustration/);
+  assert.match(html, /القوة المؤثرة \(8 N\)/);
+  assert.match(html, /الاحتكاك \(6 N\)/);
+});
+
+test("يعرض مخطط حساب الضغط القوة والمساحة ووحداتهما", () => {
+  const pressure = parseQuestionVisualSpec({
+    ...emptyQuestionVisualSpec(),
+    type: "pressure_diagram",
+    variant: "force_area",
+    role: "calculate",
+    title: "حساب الضغط",
+    altText: "قوة تؤثر على مساحة تلامس معلومة",
+    labels: ["القوة", "المساحة"],
+    values: [80, 0.02],
+  }, "pressure_diagram");
+  const html = renderQuestionVisualSvg(pressure);
+  assert.match(html, /القوة F = 80 N/);
+  assert.match(html, /مساحة التلامس A = 0\.02 m²/);
 });
