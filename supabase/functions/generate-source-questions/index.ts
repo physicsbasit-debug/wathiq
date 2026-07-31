@@ -21,7 +21,7 @@ const MARK_SCHEME_REPAIR_MAX_OUTPUT_TOKENS = 900;
 const IMAGE_GENERATION_TIMEOUT_MS = 48_000;
 const IMAGE_VALIDATION_TIMEOUT_MS = 18_000;
 const QUESTION_VISUAL_BUCKET = "wathiq-question-visuals";
-const VISUAL_PROMPT_VERSION = "wathiq-controlled-2d-v1";
+const VISUAL_PROMPT_VERSION = "wathiq-controlled-2d-v2-context-diversity";
 const MAX_IMAGE_BASE64_CHARACTERS = 16_000_000;
 const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent`;
 const GEMINI_IMAGE_API_URL = `https://generativelanguage.googleapis.com/v1/models/${encodeURIComponent(GEMINI_IMAGE_MODEL)}:generateContent`;
@@ -36,10 +36,13 @@ type Difficulty = "سهل" | "متوسط" | "متقدم";
 type ItemDifficulty = "منخفض" | "متوسط" | "مرتفع";
 type AssessmentType = "اختبار قصير رسمي" | "امتحان نهاية الفصل الدراسي";
 type QuestionDesignPattern = "مفهومي" | "سياقي" | "حسابي" | "بيانات" | "استقصائي" | "مقارنة";
-type QuestionVisualType = "none" | "line_graph" | "bar_chart" | "pressure_diagram" | "circuit_diagram" | "electrostatic_diagram" | "data_table" | "instrument_scale" | "ray_diagram" | "force_diagram" | "flow_diagram";
-type QuestionVisualVariant = "default" | "submerged_object" | "depth_comparison" | "force_area" | "liquid_column" | "series_circuit" | "measurement_circuit" | "charge_transfer" | "attraction_repulsion" | "electric_field" | "trend" | "comparison" | "multi_series" | "table_completion" | "table_comparison" | "thermometer" | "burette" | "measuring_cylinder" | "meter_scale" | "reflection" | "refraction" | "converging_lens" | "prism" | "free_body" | "balanced_forces" | "moments" | "linear_flow" | "cycle_flow" | "state_change";
+type QuestionVisualType = "none" | "context_scene" | "line_graph" | "bar_chart" | "pressure_diagram" | "circuit_diagram" | "electrostatic_diagram" | "data_table" | "instrument_scale" | "ray_diagram" | "force_diagram" | "flow_diagram";
+type QuestionVisualVariant = "default" | "door_handle" | "playground_seesaw" | "wrench_tool" | "bicycle_brake" | "shopping_trolley" | "school_bag" | "water_tank" | "solar_panel" | "laboratory_setup" | "road_safety" | "submerged_object" | "depth_comparison" | "force_area" | "liquid_column" | "series_circuit" | "measurement_circuit" | "charge_transfer" | "attraction_repulsion" | "electric_field" | "trend" | "comparison" | "multi_series" | "table_completion" | "table_comparison" | "thermometer" | "burette" | "measuring_cylinder" | "meter_scale" | "reflection" | "refraction" | "converging_lens" | "prism" | "free_body" | "balanced_forces" | "moments" | "linear_flow" | "cycle_flow" | "state_change";
 type QuestionVisualRole = "read" | "calculate" | "interpret" | "compare" | "complete" | "draw" | "evaluate";
 type CircuitComponent = "battery" | "switch_open" | "switch_closed" | "lamp" | "resistor" | "ammeter" | "voltmeter";
+type QuestionScenarioTarget = "scientific_abstract" | "door_handle" | "playground_seesaw" | "wrench_tool" | "bicycle_brake" | "shopping_trolley" | "school_bag" | "water_tank" | "solar_panel" | "laboratory_setup" | "road_safety";
+type QuestionStimulusTarget = "concise_text" | "real_life_scene" | "scientific_diagram" | "data_table" | "graph" | "instrument" | "experiment" | "decision_case";
+type QuestionSkillTarget = "recognize" | "apply" | "calculate" | "interpret" | "compare" | "evaluate" | "investigate";
 
 interface QuestionVisualPoint {
   x: number;
@@ -121,8 +124,13 @@ interface GenerationItem {
   marks: number;
   sourceReferenceId: string;
   lessonLabel: string;
+  outcomeLabel: string;
   styleTarget: QuestionDesignPattern;
   visualTarget: QuestionVisualType;
+  scenarioTarget: QuestionScenarioTarget;
+  stimulusTarget: QuestionStimulusTarget;
+  skillTarget: QuestionSkillTarget;
+  diversityKey: string;
   regenerationAnchor?: RegenerationAnchor;
 }
 
@@ -360,6 +368,9 @@ function parseVisualIllustrationRequest(value: unknown): VisualIllustrationReque
 }
 
 function isControlledIllustrationEligible(visual: QuestionVisualSpec): boolean {
+  if (visual.type === "context_scene") {
+    return ["read", "interpret", "compare", "evaluate"].includes(visual.role);
+  }
   if (visual.type === "electrostatic_diagram" && visual.variant === "charge_transfer") {
     return !["calculate", "complete", "draw"].includes(visual.role);
   }
@@ -370,6 +381,22 @@ function isControlledIllustrationEligible(visual: QuestionVisualSpec): boolean {
 }
 
 function controlledIllustrationScene(request: VisualIllustrationRequest): string {
+  if (request.visual.type === "context_scene") {
+    const sceneByVariant: Partial<Record<QuestionVisualVariant, string>> = {
+      door_handle: "A school-age student opens a simple classroom door by pushing or pulling at the handle far from the hinges. Show the door, hinges, handle, and the student's hand clearly.",
+      playground_seesaw: "Two school-age children sit safely on opposite sides of a playground seesaw with a clear central pivot. Show visibly different distances from the pivot without any labels.",
+      wrench_tool: "A school-age learner uses a correctly sized wrench on a large nut in a supervised workshop-style classroom activity. Show the nut, wrench, hand position, and turning action clearly.",
+      bicycle_brake: "A bicycle handlebar with a learner's hand operating a brake lever. Show the lever, cable, handlebar, and bicycle context clearly without text.",
+      shopping_trolley: "A learner pushes a shopping trolley along a level store floor. Show the handle, trolley, wheels, and direction of motion through posture only, with no arrows.",
+      school_bag: "A school bag with two shoulder straps and books inside, shown beside a student preparing to wear it correctly. Make strap width and load placement visually clear.",
+      water_tank: "A clean water tank with a visible outlet pipe or tap at a lower level, in a school or home setting. Show the tank, water level, and outlet clearly.",
+      solar_panel: "A clean school or home rooftop solar panel receiving sunlight in Oman. Show the panel, sun, roof, and simple electrical connection without labels.",
+      laboratory_setup: "A simple supervised school laboratory setup with one measuring instrument, one sample, and clear safe arrangement on a bench. Do not add extra apparatus.",
+      road_safety: "A clear road-safety scene involving a vehicle, mirror or reflective surface, and a school-age observer at a safe distance. Keep the scientific relationship visually obvious.",
+    };
+    return sceneByVariant[request.visual.variant]
+      ?? "A simple everyday school science situation with exactly the objects required by the question, shown clearly and safely.";
+  }
   if (request.visual.type === "electrostatic_diagram") {
     return [
       "A plastic ruler is being rubbed firmly with a small dry cloth.",
@@ -390,11 +417,13 @@ function buildControlledIllustrationPrompt(request: VisualIllustrationRequest): 
     "Create a precise 2D educational textbook illustration for a school science assessment in Oman.",
     `Grade: ${request.grade}. Subject: ${request.subject}. Lesson: ${request.lessonLabel}.`,
     `Scientific scene: ${controlledIllustrationScene(request)}`,
+    `Question-specific context: ${request.questionText}`,
     `Reference-grounded context: ${request.sourceSupport}`,
     "Visual style: clean flat vector-style illustration, crisp outlines, restrained natural colors, white background, landscape 4:3 composition, suitable for clear A4 printing.",
     "Scientific constraints: preserve the exact object count and relationships; do not invent apparatus, forces, particles, labels, measurements, or effects not requested.",
     "Assessment constraints: no words, no letters, no numbers, no units, no arrows, no captions, no watermarks, no decorative border, and no photorealistic rendering.",
     "Make the scientific action unmistakable through the objects and their positions alone.",
+    "Do not reuse the ruler-and-paper composition or any other stock composition unless the requested scene explicitly requires it. Match the requested variant and question-specific context.",
   ].join("\n");
 }
 
@@ -1256,6 +1285,70 @@ function extractFirstJsonObject(value: string): string | null {
   return null;
 }
 
+const SCENARIO_GUIDANCE: Record<QuestionScenarioTarget, string> = {
+  scientific_abstract: "موقف علمي مباشر بلا قصة حياتية مصطنعة",
+  door_handle: "فتح باب أو بوابة من المقبض ومقارنة أثر موضع القوة",
+  playground_seesaw: "أرجوحة توازن في حديقة أو ساحة مدرسة مع نقطة ارتكاز واضحة",
+  wrench_tool: "استخدام مفتاح ربط أو أداة يدوية لإدارة صامولة بأمان",
+  bicycle_brake: "دراجة أو ذراع مكبح وموقف حركة أو أمان مناسب للطالب",
+  shopping_trolley: "دفع عربة تسوق أو نقل أغراض في متجر مع قوة واتجاه واضحين",
+  school_bag: "حقيبة مدرسية أو حمالاتها أو توزيع الكتب والضغط على الكتف",
+  water_tank: "خزان ماء أو أنبوب أو صنبور في منزل أو مدرسة أو بيئة عُمانية",
+  solar_panel: "لوح شمسي أو استخدام الطاقة الشمسية في المدرسة أو المنزل",
+  laboratory_setup: "تجربة مدرسية قصيرة بأداة قياس ومتغيرات واضحة",
+  road_safety: "موقف طريق أو مركبة أو مرآة أو إضاءة مرتبط بالسلامة اليومية",
+};
+
+const STIMULUS_GUIDANCE: Record<QuestionStimulusTarget, string> = {
+  concise_text: "نص علمي موجز بلا حشو، لا يقتصر على تعريف محفوظ إلا عند الحاجة",
+  real_life_scene: "موقف من حياة الطالب يكون جزءًا من التفكير المطلوب لا زينة لغوية",
+  scientific_diagram: "مخطط علمي حتمي لا يمكن حل السؤال دون قراءته",
+  data_table: "جدول بيانات بوحدات واضحة يتطلب قراءة أو حسابًا أو استنتاجًا",
+  graph: "رسم بياني يتطلب تفسير اتجاه أو مقارنة أو استنتاجًا",
+  instrument: "تدريج جهاز قياس مع وحدة وأصغر تدريج واضحين",
+  experiment: "إجراء أو تجربة قصيرة تتضمن متغيرًا أو قياسًا أو تحسينًا للطريقة",
+  decision_case: "موقف يتطلب اختيارًا أو حكمًا أو مقارنة مع تعليل علمي",
+};
+
+const SKILL_GUIDANCE: Record<QuestionSkillTarget, string> = {
+  recognize: "تعرّف مفهوم أساسي أو معنى أو وحدة دون نسخ عبارة الكتاب",
+  apply: "تطبيق المفهوم في موقف جديد قريب من حياة الطالب",
+  calculate: "حساب من معطيات مكتملة مع إظهار الطريقة والوحدة",
+  interpret: "تفسير بيانات أو نمط أو ظاهرة اعتمادًا على دليل معطى",
+  compare: "مقارنة محددة بمعايير واضحة ونقاط تصحيح مستقلة",
+  evaluate: "إصدار حكم أو اقتراح تحسين مع تبرير علمي",
+  investigate: "تحديد متغير أو طريقة قياس أو ضبط أو موثوقية تجربة",
+};
+
+const SCENARIO_KEYWORDS: Record<QuestionScenarioTarget, readonly string[]> = {
+  scientific_abstract: [],
+  door_handle: ["باب", "مقبض", "بوابه", "خزانه"],
+  playground_seesaw: ["ارجوح", "طفلان", "طفلين", "حديقه", "ساحه المدرسه"],
+  wrench_tool: ["مفتاح ربط", "صاموله", "مسمار", "مفتاح الصواميل"],
+  bicycle_brake: ["دراج", "مكبح", "فرامل", "مقود", "عجله"],
+  shopping_trolley: ["عربه", "تسوق", "متجر", "سوق", "دفع"],
+  school_bag: ["حقيبه", "حمال", "كتب", "كتف"],
+  water_tank: ["خزان", "ماء", "صنبور", "انبوب"],
+  solar_panel: ["لوح شمسي", "طاقه شمسيه", "الشمس", "خليه شمسيه"],
+  laboratory_setup: ["مختبر", "تجرب", "اداه", "قياس", "عينة", "عينه"],
+  road_safety: ["طريق", "سيار", "مركب", "مرآه", "مراه", "اشاره", "سلامه"],
+};
+
+function assessmentDiversityBlueprint(request: GenerationRequest): Array<Record<string, string | number>> {
+  return request.officialPlanItems.map((item, index) => ({
+    order: index + 1,
+    planItemId: item.planItemId,
+    lesson: item.lessonLabel,
+    learningOutcome: item.outcomeLabel,
+    style: item.styleTarget,
+    visual: item.visualTarget,
+    scenario: SCENARIO_GUIDANCE[item.scenarioTarget],
+    stimulus: STIMULUS_GUIDANCE[item.stimulusTarget],
+    skill: SKILL_GUIDANCE[item.skillTarget],
+    diversityKey: item.diversityKey,
+  }));
+}
+
 function buildSystemInstructions(): string {
   return [
     "أنت محرر اختبارات علوم مدرسية باللغة العربية لسلطنة عُمان.",
@@ -1265,6 +1358,11 @@ function buildSystemInstructions(): string {
     "قد يرفق الخادم trustedEnrichment من بحث موثق في مصادر علمية رسمية. استخدمه فقط لإثراء السياق أو البيانات أو المثال أو التجربة، ولا تجعله يضيف معرفة مطلوبة خارج ما يثبته المرجع المدرسي.",
     "إذا استخدمت trustedEnrichment في بديل، أعد enrichmentEvidenceId المطابق. إذا لم تستخدمه فأعد سلسلة فارغة. لا تعتبر ذاكرة النموذج مصدرًا ولا تخترع روابط أو حقائق.",
     "أنشئ ثلاثة بدائل مختلفة لكل مفردة مرسلة في هذه الدفعة فقط، مع الحفاظ حرفيًا على الدرس ونوع السؤال وهدف التقويم ومستوى الصعوبة والدرجة ونمط styleTarget.",
+    "تتضمن كل مفردة learningOutcome وscenarioTarget وstimulusTarget وskillTarget وdiversityKey. اجعل المطلوب والإجابة يقيسان learningOutcome فعليًا؛ فهذه خطة جودة وتنوع للاختبار كله وليست اقتراحات شكلية.",
+    "لا تكرر الأسرة السياقية نفسها بين مفردات الاختبار ما دام لكل مفردة diversityKey مختلف. إذا كانت المفردة عن العزم مثلًا، نوّع بين الباب والأرجوحة ومفتاح الربط والدراجة وعربة التسوق بدل إعادة عارضة مجردة.",
+    "اجعل البدائل الثلاثة للمفردة الواحدة مختلفة في تفاصيل الموقف والقيم وطريقة التفكير، لا مجرد تبديل كلمات في السؤال نفسه.",
+    "في الاختبار القصير لا تجعل أكثر من مفردة واحدة تعريفًا أو سؤال وحدة مباشرًا، واجعل بقية المفردات تطبيقًا أو تفسيرًا أو بيانات أو قرارًا أو استقصاءً وفق الخطة.",
+    "السياق الحياتي يجب أن يكون ضروريًا للإجابة، قصيرًا، واقعيًا، مناسبًا لعمر الطالب، ومتصلًا مباشرة بالمفهوم العلمي؛ لا تضع قصة زخرفية يمكن حذفها دون أن يتغير السؤال.",
     "لا تخلط بين الدروس؛ كل مفردة مرتبطة باسم درس ومرجع صفحة محددين في الخطة.",
     "يُمنع إنشاء أسئلة عن اسم الوحدة أو رقمها أو اسم الكتاب أو الصفحة أو موضع الدرس في المنهج؛ المطلوب قياس المحتوى العلمي للدرس فقط.",
     "إذا وُجد regenerationAnchor فأنشئ البدائل الجديدة مشابهة له في المفهوم العلمي ونمط السؤال ومستوى العمق، مع تغيير الصياغة أو القيم فقط عندما يدعم المرجع ذلك. لا تنتقل إلى مفهوم آخر داخل الكتاب.",
@@ -1277,7 +1375,7 @@ function buildSystemInstructions(): string {
     "لكل مفردة قد يرفق الخادم fixedVisual جاهزًا وحتميًا. لا تنشئ visual ولا تعدله ولا تعيده في JSON؛ ابنِ البدائل الثلاثة بالاعتماد على fixedVisual نفسه.",
     "إذا كان fixedVisual.type لا يساوي none، فيجب أن يشير متن السؤال أو المطلوب بوضوح إلى الشكل أو الرسم أو البيانات، وأن تكون الإجابة متسقة حرفيًا مع القيم والعناصر الواردة في fixedVisual.",
     "التزم بدور fixedVisual.role: read للقراءة، calculate للحساب، interpret للتفسير، compare للمقارنة، complete لإكمال جدول أو تسلسل، draw لإضافة جزء إلى الشكل، وevaluate لتقييم طريقة أو بيانات.",
-    "في data_table استخدم عناوين الأعمدة والوحدات والخلايا المخفية كما هي. في instrument_scale اطلب قراءة التدريج مع الوحدة. في ray_diagram وforce_diagram وflow_diagram اجعل السؤال غير قابل للحل دون الرجوع إلى الشكل.",
+    "في context_scene اجعل المشهد الحياتي المحدد في scenarioTarget مدخلًا حقيقيًا لتطبيق المفهوم، ولا تطلب منه حسابًا يحتاج أرقامًا غير موجودة. في data_table استخدم عناوين الأعمدة والوحدات والخلايا المخفية كما هي. في instrument_scale اطلب قراءة التدريج مع الوحدة. في ray_diagram وforce_diagram وflow_diagram اجعل السؤال غير قابل للحل دون الرجوع إلى الشكل.",
     "لا تضف إلى السؤال قيمة بصرية غير موجودة في fixedVisual، ولا تجعل الرسم يكشف الإجابة مباشرة. الرسم مملوك للخادم ومناسب للطباعة بالأبيض والأسود.",
     "مفردة الاختيار من متعدد درجتها واحدة وتقيس هدفًا واحدًا، ولها أربعة بدائل وإجابة صحيحة واحدة فقط.",
     "ابنِ مشتتات الاختيار من متعدد من أخطاء مفاهيمية أو عددية شائعة، واجعلها متجانسة في النوع والوحدة والطول، ولا تستخدم: جميع ما سبق، لا شيء مما سبق، أو الأول والثاني فقط.",
@@ -1331,15 +1429,24 @@ function buildUserPrompt(request: GenerationRequest, evidenceCatalog: EvidenceCa
     },
     references,
     trustedEnrichment,
+    assessmentDiversityBlueprint: assessmentDiversityBlueprint(request),
     officialPlanSummary: request.officialPlanItems.map((item) => ({
       planItemId: item.planItemId,
       lessonLabel: item.lessonLabel,
+      learningOutcome: item.outcomeLabel,
       questionType: item.questionType,
       cognitiveLevel: item.cognitiveLevel,
       difficultyLevel: item.difficultyLevel ?? null,
       marks: item.marks,
       styleTarget: item.styleTarget,
       visualTarget: item.visualTarget,
+      scenarioTarget: item.scenarioTarget,
+      scenarioGuidance: SCENARIO_GUIDANCE[item.scenarioTarget],
+      stimulusTarget: item.stimulusTarget,
+      stimulusGuidance: STIMULUS_GUIDANCE[item.stimulusTarget],
+      skillTarget: item.skillTarget,
+      skillGuidance: SKILL_GUIDANCE[item.skillTarget],
+      diversityKey: item.diversityKey,
     })),
     batchPlanItems: request.items.map((item) => ({
       ...item,
@@ -1354,7 +1461,7 @@ function buildUserPrompt(request: GenerationRequest, evidenceCatalog: EvidenceCa
       alternativesPerItem: 3,
       exactPlanItemIds: request.items.map((item) => item.planItemId),
       evidenceRule: "أعد sourceEvidenceId من allowedEvidenceIds الخاصة بالمفردة فقط. أعد enrichmentEvidenceId من allowedEnrichmentIds عند استخدام إثراء خارجي، وإلا فأعد سلسلة فارغة.",
-      styleRule: "اجعل questionForm مطابقًا حرفيًا لـ styleTarget. أعد markScheme كمصفوفة طولها يساوي marks تمامًا، وكل عنصر فيها معيار مستقل غير فارغ لدرجة واحدة. في الأسئلة غير المفهومية اجعل stimulus غير فارغ، إلا إذا كان fixedVisual يحمل السياق أو البيانات ويشير text إليه صراحة، أو كان text نفسه يتضمن السياق كاملًا.",
+      styleRule: "اجعل questionForm مطابقًا حرفيًا لـ styleTarget، ونفذ scenarioTarget وstimulusTarget وskillTarget. أعد markScheme كمصفوفة طولها يساوي marks تمامًا، وكل عنصر فيها معيار مستقل غير فارغ لدرجة واحدة. في الأسئلة غير المفهومية اجعل stimulus غير فارغ، إلا إذا كان fixedVisual يحمل السياق أو البيانات ويشير text إليه صراحة، أو كان text نفسه يتضمن السياق كاملًا.",
       visualRule: "لا تعد visual في JSON. إذا كان fixedVisual.type لا يساوي none، يجب أن تعتمد جميع البدائل الثلاثة على الشكل نفسه اعتمادًا جوهريًا وتذكر الشكل أو الرسم أو الجدول أو التدريج في نص السؤال؛ وإلا فستُرفض المفردة.",
     },
   });
@@ -1552,8 +1659,15 @@ function parseGenerationRequest(value: unknown): GenerationRequest {
       marks: requireInteger(item.marks, "درجة السؤال غير صالحة.", 1, 20),
       sourceReferenceId,
       lessonLabel,
+      outcomeLabel: typeof item.outcomeLabel === "string" && item.outcomeLabel.trim()
+        ? item.outcomeLabel.trim().slice(0, 220)
+        : lessonLabel,
       styleTarget: requireEnum(item.styleTarget, ["مفهومي", "سياقي", "حسابي", "بيانات", "استقصائي", "مقارنة"] as const, "نمط بناء السؤال غير صالح."),
-      visualTarget: requireEnum(item.visualTarget, ["none", "line_graph", "bar_chart", "pressure_diagram", "circuit_diagram", "electrostatic_diagram", "data_table", "instrument_scale", "ray_diagram", "force_diagram", "flow_diagram"] as const, "نوع الرسم التعليمي غير صالح."),
+      visualTarget: requireEnum(item.visualTarget, ["none", "context_scene", "line_graph", "bar_chart", "pressure_diagram", "circuit_diagram", "electrostatic_diagram", "data_table", "instrument_scale", "ray_diagram", "force_diagram", "flow_diagram"] as const, "نوع الرسم التعليمي غير صالح."),
+      scenarioTarget: item.scenarioTarget === undefined ? "scientific_abstract" : requireEnum(item.scenarioTarget, ["scientific_abstract", "door_handle", "playground_seesaw", "wrench_tool", "bicycle_brake", "shopping_trolley", "school_bag", "water_tank", "solar_panel", "laboratory_setup", "road_safety"] as const, "سياق السؤال المستهدف غير صالح."),
+      stimulusTarget: item.stimulusTarget === undefined ? "concise_text" : requireEnum(item.stimulusTarget, ["concise_text", "real_life_scene", "scientific_diagram", "data_table", "graph", "instrument", "experiment", "decision_case"] as const, "نوع مثير السؤال المستهدف غير صالح."),
+      skillTarget: item.skillTarget === undefined ? "recognize" : requireEnum(item.skillTarget, ["recognize", "apply", "calculate", "interpret", "compare", "evaluate", "investigate"] as const, "مهارة السؤال المستهدفة غير صالحة."),
+      diversityKey: typeof item.diversityKey === "string" && item.diversityKey.trim() ? item.diversityKey.trim().slice(0, 240) : `legacy:${requireText(item.planItemId, "معرف مفردة الخطة غير موجود.", 120)}`,
       ...(item.regenerationAnchor === undefined ? {} : {
         regenerationAnchor: (() => {
           const anchor = requireRecord(item.regenerationAnchor, "مرساة إعادة التوليد غير صالحة.");
@@ -1577,6 +1691,7 @@ function parseGenerationRequest(value: unknown): GenerationRequest {
     throw httpError("توجد مفردات مكررة في دفعة التوليد.", 400);
   }
   validateOfficialAssessmentPlan(assessmentType, grade, officialPlanItems);
+  validateOfficialAssessmentDiversity(assessmentType, officialPlanItems);
   for (const lessonKey of lessonKeys) {
     if (!officialPlanItems.some((item) => normalizeForEvidence(item.lessonLabel) === lessonKey)) {
       throw httpError("خطة الاختبار لا توزع المفردات على جميع الدروس المدخلة.", 400);
@@ -1592,13 +1707,54 @@ function parseGenerationRequest(value: unknown): GenerationRequest {
       || official.difficultyLevel !== item.difficultyLevel
       || official.marks !== item.marks
       || official.sourceReferenceId !== item.sourceReferenceId
+      || normalizeForEvidence(official.outcomeLabel) !== normalizeForEvidence(item.outcomeLabel)
       || official.styleTarget !== item.styleTarget
       || official.visualTarget !== item.visualTarget
+      || official.scenarioTarget !== item.scenarioTarget
+      || official.stimulusTarget !== item.stimulusTarget
+      || official.skillTarget !== item.skillTarget
+      || official.diversityKey !== item.diversityKey
       || normalizeForEvidence(official.lessonLabel) !== normalizeForEvidence(item.lessonLabel)) {
       throw httpError("دفعة التوليد لا تطابق خطة الاختبار الرسمية.", 400);
     }
   }
   return { assessmentType, assessmentPolicyId, topic, lessons, grade, subject, difficulty, trustedEnrichmentEnabled, references, officialPlanItems, items };
+}
+
+function validateOfficialAssessmentDiversity(assessmentType: AssessmentType, items: GenerationItem[]): void {
+  const modernItems = items.filter((item) => !item.diversityKey.startsWith("legacy:"));
+  if (modernItems.length < 4) return;
+
+  const uniqueDiversityKeys = new Set(modernItems.map((item) => item.diversityKey));
+  if (uniqueDiversityKeys.size !== modernItems.length) {
+    throw httpError("خطة تنوع الاختبار تحتوي بصمات مكررة لمفردات مختلفة.", 400);
+  }
+
+  const styleCount = new Set(modernItems.map((item) => item.styleTarget)).size;
+  const skillCount = new Set(modernItems.map((item) => item.skillTarget)).size;
+  if (modernItems.length >= 6 && styleCount < 4) {
+    throw httpError("خطة الاختبار لا تنوع أساليب القياس بما يكفي بين الفهم والتطبيق والبيانات والاستدلال.", 400);
+  }
+  if (modernItems.length >= 6 && skillCount < 3) {
+    throw httpError("خطة الاختبار تكرر المهارة نفسها ولا تقيس تعلم الطلبة بصورة متوازنة.", 400);
+  }
+
+  const appliedContexts = modernItems.filter((item) => item.scenarioTarget !== "scientific_abstract");
+  const distinctContexts = new Set(appliedContexts.map((item) => item.scenarioTarget)).size;
+  const minimumContexts = assessmentType === "اختبار قصير رسمي"
+    ? Math.min(3, Math.max(1, Math.floor(modernItems.length / 3)))
+    : Math.min(6, Math.max(3, Math.floor(modernItems.length / 6)));
+  if (distinctContexts < minimumContexts) {
+    throw httpError("خطة الاختبار لا تتضمن تنوعًا كافيًا في مواقف الحياة اليومية والتطبيقات العلمية.", 400);
+  }
+
+  const directRecognitionCount = modernItems.filter((item) => item.skillTarget === "recognize").length;
+  const directRecognitionLimit = assessmentType === "اختبار قصير رسمي"
+    ? 1
+    : Math.max(2, Math.ceil(modernItems.length * 0.18));
+  if (directRecognitionCount > directRecognitionLimit) {
+    throw httpError("خطة الاختبار تعتمد على الاستدعاء المباشر أكثر من الحد المسموح لجودة القياس.", 400);
+  }
 }
 
 function validateOfficialAssessmentPlan(assessmentType: AssessmentType, grade: number, items: GenerationItem[]): void {
@@ -1781,31 +1937,37 @@ function validateAndHydrateGeneratedPayload(
     }
     seen.add(generatedItem.planItemId);
     const visual = buildServerOwnedVisualSpec(requested, request);
+    const alternatives = generatedItem.alternatives.map((alternative) =>
+      validateAndHydrateAlternative(
+        alternative,
+        requested.questionType,
+        requested.sourceReferenceId,
+        evidenceCatalog,
+        requested.styleTarget,
+        requested.visualTarget,
+        requested.marks,
+        requested.lessonLabel,
+        requested.regenerationAnchor,
+        enrichment,
+        visual,
+        requested.scenarioTarget,
+        requested.stimulusTarget,
+        requested.skillTarget,
+        requested.diversityKey,
+      )
+    );
+    validateAlternativeDiversity(alternatives, requested.diversityKey);
     hydratedItems.push({
       planItemId: generatedItem.planItemId,
       visual,
-      alternatives: generatedItem.alternatives.map((alternative) =>
-        validateAndHydrateAlternative(
-          alternative,
-          requested.questionType,
-          requested.sourceReferenceId,
-          evidenceCatalog,
-          requested.styleTarget,
-          requested.visualTarget,
-          requested.marks,
-          requested.lessonLabel,
-          requested.regenerationAnchor,
-          enrichment,
-          visual,
-        )
-      ),
+      alternatives,
     });
   }
   if (seen.size !== requestedById.size) throw retryableError("مولد الأسئلة لم يُعد جميع مفردات الخطة.");
   return { items: hydratedItems };
 }
 
-const VISUAL_TYPES: readonly QuestionVisualType[] = ["none", "line_graph", "bar_chart", "pressure_diagram", "circuit_diagram", "electrostatic_diagram", "data_table", "instrument_scale", "ray_diagram", "force_diagram", "flow_diagram"];
+const VISUAL_TYPES: readonly QuestionVisualType[] = ["none", "context_scene", "line_graph", "bar_chart", "pressure_diagram", "circuit_diagram", "electrostatic_diagram", "data_table", "instrument_scale", "ray_diagram", "force_diagram", "flow_diagram"];
 const CIRCUIT_COMPONENTS: readonly CircuitComponent[] = ["battery", "switch_open", "switch_closed", "lamp", "resistor", "ammeter", "voltmeter"];
 
 function emptyVisualSpec(): QuestionVisualSpec {
@@ -1940,6 +2102,13 @@ function scientificTableProfile(context: string): {
   rows: string[];
   cells: string[][];
 } {
+  if (/(عزم|ارتكاز|ذراع القوه)/u.test(context)) {
+    return {
+      columns: ["الموقف", "القوة (N)", "المسافة العمودية عن الارتكاز (m)"],
+      rows: ["أ", "ب", "ج", "د"],
+      cells: [["فتح باب", "18", "0.75"], ["مفتاح ربط", "30", "0.25"], ["أرجوحة", "220", "1.2"], ["ذراع مكبح", "12", "0.08"]],
+    };
+  }
   if (/(حرار|تبريد|تسخين|درجه)/u.test(context)) {
     return {
       columns: ["الزمن (min)", "درجة الحرارة (°C)"],
@@ -1996,6 +2165,35 @@ function buildServerOwnedVisualSpec(item: GenerationItem, request: GenerationReq
   const titleSuffix = "";
   const visualId = `visual-${item.planItemId}`;
   const role = visualRoleForItem(item);
+
+  if (item.visualTarget === "context_scene") {
+    const variant = item.scenarioTarget === "scientific_abstract" ? "laboratory_setup" : item.scenarioTarget;
+    const sceneLabels: Record<QuestionScenarioTarget, [string, string]> = {
+      scientific_abstract: ["موقف علمي", "عنصران مرتبطان"],
+      door_handle: ["الباب", "المقبض"],
+      playground_seesaw: ["نقطة الارتكاز", "أرجوحة التوازن"],
+      wrench_tool: ["الصامولة", "مفتاح الربط"],
+      bicycle_brake: ["الدراجة", "ذراع المكبح"],
+      shopping_trolley: ["عربة التسوق", "قوة الدفع"],
+      school_bag: ["الحقيبة المدرسية", "الحمالات"],
+      water_tank: ["خزان الماء", "مخرج الماء"],
+      solar_panel: ["اللوح الشمسي", "ضوء الشمس"],
+      laboratory_setup: ["التجربة المدرسية", "أداة القياس"],
+      road_safety: ["موقف الطريق", "عنصر السلامة"],
+    };
+    return {
+      ...emptyVisualSpec(),
+      type: "context_scene",
+      visualId,
+      variant,
+      role: ["calculate", "complete", "draw"].includes(role) ? "interpret" : role,
+      purpose: `تطبيق المفهوم العلمي في ${SCENARIO_GUIDANCE[item.scenarioTarget]}`,
+      title: "موقف علمي من الحياة اليومية",
+      altText: `مشهد ثنائي الأبعاد يوضح ${SCENARIO_GUIDANCE[item.scenarioTarget]}`,
+      labels: sceneLabels[item.scenarioTarget],
+      annotations: [SKILL_GUIDANCE[item.skillTarget]],
+    };
+  }
 
   if (item.visualTarget === "data_table") {
     const profile = scientificTableProfile(context);
@@ -2348,7 +2546,7 @@ function hasSufficientQuestionContext(
   if (stimulus.trim().length >= 12) return true;
 
   const normalized = normalizeForEvidence(text);
-  const referencesVisual = /(الشكل|الرسم|المخطط|الدائره|الجدول|البيانات الممثله|التمثيل|التدريج)/u.test(normalized);
+  const referencesVisual = /(الشكل|الرسم|المخطط|الدائره|الجدول|البيانات الممثله|التمثيل|التدريج|المشهد)/u.test(normalized);
   if (visualTarget !== "none" && referencesVisual) return true;
 
   const digitCount = (text.match(/[0-9٠-٩]/g) ?? []).length;
@@ -2378,6 +2576,67 @@ function fixedVisualContainsCalculationData(visual: QuestionVisualSpec): boolean
   return true;
 }
 
+function validateAssessmentQuality(
+  alternative: ModelGeneratedAlternative,
+  scenarioTarget: QuestionScenarioTarget,
+  stimulusTarget: QuestionStimulusTarget,
+  skillTarget: QuestionSkillTarget,
+  diversityKey: string,
+): void {
+  if (!diversityKey || diversityKey.startsWith("legacy:")) return;
+  const material = normalizeForEvidence(`${alternative.stimulus} ${alternative.text}`);
+  const directRecall = /(ما المقصود|عرف|اكتب تعريف|اذكر وحده|ما وحده قياس|حدد المصطلح)/u.test(material);
+  if (skillTarget !== "recognize" && directRecall) {
+    throw retryableError("السؤال يعيد استدعاء تعريف أو وحدة بدل قياس المهارة التقويمية المحددة.");
+  }
+  if (["real_life_scene", "decision_case"].includes(stimulusTarget)) {
+    if (`${alternative.stimulus} ${alternative.text}`.trim().length < 48) {
+      throw retryableError("الموقف الحياتي قصير أو شكلي ولا يقدم سياقًا كافيًا للتفكير.");
+    }
+    if (scenarioTarget !== "scientific_abstract") {
+      const keywords = SCENARIO_KEYWORDS[scenarioTarget];
+      if (!keywords.some((keyword) => material.includes(normalizeForEvidence(keyword)))) {
+        throw retryableError("السؤال لم يلتزم بسياق الحياة اليومية المخصص لهذه المفردة.");
+      }
+    }
+  }
+  if (stimulusTarget === "experiment" && !/(تجرب|متغير|قياس|اداه|خطوه|نتيج|ضبط|موثوق)/u.test(material)) {
+    throw retryableError("السؤال الاستقصائي لا يتضمن تجربة أو قياسًا أو متغيرًا واضحًا.");
+  }
+  if (skillTarget === "compare" && !/(قارن|مقارنه|فرق|تشابه|ايهما|أيهما)/u.test(material)) {
+    throw retryableError("السؤال لا يطلب مقارنة واضحة رغم أن الخطة تستهدف المقارنة.");
+  }
+  if (skillTarget === "evaluate" && !/(قيم|قيّم|برر|اقترح|حكم|ناقش|فسر|فسّر)/u.test(material)) {
+    throw retryableError("السؤال لا يطلب تقييمًا أو تبريرًا مناسبًا لمستوى الاستدلال.");
+  }
+  if (skillTarget === "investigate" && !/(تجرب|متغير|قياس|تحكم|ثابت|موثوق|دقه|دقة|خطوات)/u.test(material)) {
+    throw retryableError("السؤال لا يقيس مهارة استقصائية كما تحددها الخطة.");
+  }
+}
+
+function alternativeTokenSet(alternative: GeneratedAlternative): Set<string> {
+  const stop = new Set(["في", "من", "الى", "إلى", "على", "عن", "مع", "ثم", "او", "أو", "ما", "هو", "هي", "الذي", "التي", "المرفق", "المرفقه"]);
+  return new Set(normalizeForEvidence(`${alternative.stimulus} ${alternative.text}`)
+    .split(/\s+/u)
+    .filter((token) => token.length >= 3 && !stop.has(token)));
+}
+
+function validateAlternativeDiversity(alternatives: GeneratedAlternative[], diversityKey: string): void {
+  if (!diversityKey || diversityKey.startsWith("legacy:")) return;
+  for (let first = 0; first < alternatives.length; first += 1) {
+    const firstTokens = alternativeTokenSet(alternatives[first]!);
+    for (let second = first + 1; second < alternatives.length; second += 1) {
+      const secondTokens = alternativeTokenSet(alternatives[second]!);
+      const union = new Set([...firstTokens, ...secondTokens]);
+      const overlap = [...firstTokens].filter((token) => secondTokens.has(token)).length;
+      const similarity = union.size ? overlap / union.size : 1;
+      if (similarity >= 0.78) {
+        throw retryableError("البدائل الثلاثة متشابهة أكثر من اللازم؛ المطلوب مواقف وصياغات مختلفة حقيقيًا.");
+      }
+    }
+  }
+}
+
 function validateAndHydrateAlternative(
   alternative: ModelGeneratedAlternative,
   questionType: QuestionType,
@@ -2390,6 +2649,10 @@ function validateAndHydrateAlternative(
   regenerationAnchor?: RegenerationAnchor,
   enrichment: TrustedEnrichmentContext = { segments: [], attempted: false },
   fixedVisual: QuestionVisualSpec = emptyVisualSpec(),
+  scenarioTarget: QuestionScenarioTarget = "scientific_abstract",
+  stimulusTarget: QuestionStimulusTarget = "concise_text",
+  skillTarget: QuestionSkillTarget = "recognize",
+  diversityKey = "legacy:item",
 ): GeneratedAlternative {
   if (!alternative || typeof alternative !== "object") throw retryableError("أحد بدائل الأسئلة غير صالح.");
   for (const field of ["text", "answer", "rationale", "sourceEvidenceId"] as const) {
@@ -2422,9 +2685,10 @@ function validateAndHydrateAlternative(
   if (alternative.questionForm === "حسابي" && !fixedVisualContainsCalculationData(fixedVisual)) {
     throw retryableError("الرسم الحسابي لا يحتوي جميع القيم والوحدات اللازمة للحل.");
   }
+  validateAssessmentQuality(alternative, scenarioTarget, stimulusTarget, skillTarget, diversityKey);
   if (requestedVisualTarget !== "none") {
     const visualReference = normalizeForEvidence(`${alternative.stimulus} ${alternative.text}`);
-    if (!/(الشكل|الرسم|المخطط|الدائره|الجدول|التدريج|الجهاز|البيانات الممثله|التمثيل)/u.test(visualReference)) {
+    if (!/(الشكل|الرسم|المخطط|الدائره|الجدول|التدريج|الجهاز|البيانات الممثله|التمثيل|المشهد)/u.test(visualReference)) {
       throw retryableError("السؤال البصري لا يعتمد صراحة على الشكل المرفق.");
     }
   }

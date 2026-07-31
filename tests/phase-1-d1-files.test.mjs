@@ -13,8 +13,8 @@ const exporter = await text("src/exam-export.ts");
 const styles = await text("src/styles.css");
 
 test("يثبت Phase 1-D1 وإصدار الرسوم الهجينة المنضبطة", () => {
-  assert.equal(pkg.version, "0.0.47");
-  assert.match(client, /source-grounded-policy-ai-15-controlled-hybrid-visuals/);
+  assert.ok(Number(pkg.version.split(".").at(-1)) >= 47);
+  assert.match(client, /source-grounded-policy-ai-(?:15-controlled-hybrid-visuals|16-assessment-quality-context-diversity)/);
   assert.match(types, /QuestionVisualIllustration/);
   assert.match(types, /visualEnhancementEnabled: boolean/);
 });

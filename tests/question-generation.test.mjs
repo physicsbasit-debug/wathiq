@@ -199,7 +199,7 @@ test("يتحقق من ثلاثة بدائل ثم يربطها بخطة الاخ�
   assert.equal(generated[0].proposals[0].answer, "خاصية فيزيائية");
   assert.equal(generated[0].proposals[0].questionForm, "مفهومي");
   assert.deepEqual(generated[0].proposals[0].markScheme, ["تحديد العبارة العلمية الصحيحة."]);
-  assert.equal(SOURCE_GENERATION_VERSION, "source-grounded-policy-ai-15-controlled-hybrid-visuals");
+  assert.equal(SOURCE_GENERATION_VERSION, "source-grounded-policy-ai-16-assessment-quality-context-diversity");
   assert.equal(parsed.requestId, "WQ-TEST1234");
 });
 
@@ -410,7 +410,7 @@ test("يوزع مفردات الفيزياء على أنماط بناء متنو
     officialPlan,
   );
   assert.deepEqual(request.items.map((item) => item.styleTarget), [
-    "مفهومي", "بيانات", "مقارنة", "مفهومي", "بيانات", "حسابي",
+    "مفهومي", "سياقي", "مقارنة", "بيانات", "استقصائي", "حسابي",
   ]);
 });
 
@@ -431,7 +431,8 @@ test("يختار رسومًا منظمة للأسئلة البيانية وال�
     { id: "r3", sourceId: "s", sourceTitle: "كتاب", sourceKind: "كتاب الطالب", pageFrom: 3, pageTo: 3, excerpt: "تعرض النتائج في رسم بياني.", score: 90 },
   ];
   const request = buildQuestionGenerationRequest("اختبار قصير رسمي", "موضوعان", ["الضغط في السوائل", "الدوائر الكهربائية"], 10, "الفيزياء", "متوسط", refs, cases.slice(0, 2), cases.slice(0, 2));
-  assert.deepEqual(request.items.map((item) => item.visualTarget), ["pressure_diagram", "circuit_diagram"]);
+  assert.deepEqual(request.items.map((item) => item.visualTarget), ["context_scene", "context_scene"]);
+  assert.deepEqual(request.items.map((item) => item.stimulusTarget), ["real_life_scene", "real_life_scene"]);
 });
 
 test("يفصل المفردات الثقيلة أو البصرية في دفعات مستقلة", () => {
@@ -518,7 +519,7 @@ test("يختار عائلات المرئيات المتقدمة من محتوى 
   };
   const cases = [
     ["انعكاس الضوء عند مرآة وقياس زاوية السقوط", "ray_diagram"],
-    ["تؤثر قوة احتكاك ووزن ورد فعل على جسم متحرك", "force_diagram"],
+    ["تؤثر قوة احتكاك ووزن ورد فعل على جسم متحرك", "context_scene"],
     ["اقرأ تدريج ميزان الحرارة وسجل القراءة بالدرجة المئوية", "instrument_scale"],
     ["يعرض الجدول نتائج تجربة وقياسات الزمن والمسافة", "data_table"],
     ["تتبع مراحل تحول الطاقة في عملية متسلسلة", "flow_diagram"],
@@ -565,4 +566,69 @@ test("يتحقق من استجابة تحسين الصورة ويقبل الرج
   assert.equal(fallback.status, "fallback");
   assert.equal(fallback.illustration, undefined);
   assert.throws(() => parseVisualIllustrationResponse({ status: "ready" }), /صورة صالحة/);
+});
+
+test("يبني خطة عزم متنوعة بين الحياة اليومية والبيانات والاستقصاء", () => {
+  const base = {
+    lessonId: "moments-lesson",
+    lessonLabel: "5-2 حساب عزم القوة",
+    outcomeId: "moments-outcome",
+    outcomeLabel: "يطبق مفهوم عزم القوة في مواقف جديدة ويحل مسائل متعددة الخطوات",
+    sourceReferenceId: "moments-ref",
+    proposals: [],
+  };
+  const plan = [
+    { ...base, id: "m1", cognitiveLevel: "معرفة", questionType: "اختيار من متعدد", marks: 1 },
+    { ...base, id: "m2", cognitiveLevel: "تطبيق", questionType: "اختيار من متعدد", marks: 1 },
+    { ...base, id: "m3", cognitiveLevel: "معرفة", questionType: "إجابة قصيرة", marks: 2 },
+    { ...base, id: "m4", cognitiveLevel: "معرفة", questionType: "إجابة قصيرة", marks: 1 },
+    { ...base, id: "m5", cognitiveLevel: "استدلال", questionType: "إجابة قصيرة", marks: 2 },
+    { ...base, id: "m6", cognitiveLevel: "تطبيق", questionType: "إجابة طويلة", marks: 3 },
+  ];
+  const request = buildQuestionGenerationRequest(
+    "اختبار قصير رسمي",
+    "عزم القوة والاتزان",
+    ["5-2 حساب عزم القوة", "5-3 الاستقرار ومركز الكتلة"],
+    10,
+    "الفيزياء",
+    "متوسط",
+    [{
+      id: "moments-ref", sourceId: "physics-book", sourceTitle: "كتاب الطالب", sourceKind: "كتاب الطالب",
+      pageFrom: 92, pageTo: 96,
+      excerpt: "يعتمد عزم القوة على مقدار القوة والمسافة العمودية عن محور الدوران، وتوجد تطبيقات في الباب والأرجوحة ومفتاح الربط.",
+      context: "يمكن تطبيق مفهوم عزم القوة في فتح الباب والأرجوحة ومفتاح الربط والدراجة ومواقف الاتزان.",
+      lessonTopic: "5-2 حساب عزم القوة", score: 98,
+    }],
+    plan,
+    plan,
+  );
+
+  assert.deepEqual(request.items.map((item) => item.styleTarget), [
+    "مفهومي", "سياقي", "مقارنة", "بيانات", "استقصائي", "حسابي",
+  ]);
+  assert.equal(request.items[1].outcomeLabel, base.outcomeLabel);
+  assert.equal(new Set(request.items.map((item) => item.diversityKey)).size, plan.length);
+  assert.ok(new Set(request.items.map((item) => item.scenarioTarget)).size >= 5);
+  assert.ok(new Set(request.items.map((item) => item.visualTarget)).size >= 3);
+  assert.equal(request.items.filter((item) => item.skillTarget === "recognize").length, 1);
+});
+
+test("يخصص مشهدًا يوميًا مختلفًا لمفردات التطبيق المتعاقبة", () => {
+  const make = (id, index) => ({
+    id, lessonId: "forces", lessonLabel: "القوى وعزم القوة", outcomeId: `o-${index}`,
+    outcomeLabel: "يطبق أثر القوة في موقف حياتي", proposals: [], questionType: "إجابة قصيرة",
+    marks: 1, cognitiveLevel: "تطبيق", sourceReferenceId: "r-forces",
+  });
+  const plan = Array.from({ length: 6 }, (_, index) => make(`ctx-${index + 1}`, index));
+  const request = buildQuestionGenerationRequest(
+    "اختبار قصير رسمي", "القوى والعزم", ["القوى وعزم القوة", "الاتزان"], 10, "الفيزياء", "متوسط",
+    [{ id: "r-forces", sourceId: "s", sourceTitle: "كتاب", sourceKind: "كتاب الطالب", pageFrom: 1, pageTo: 4,
+      excerpt: "القوة والعزم والاتزان والاحتكاك في تطبيقات الحياة اليومية.", context: "القوة والعزم والاتزان والاحتكاك.", lessonTopic: "القوى وعزم القوة", score: 95 }],
+    plan, plan,
+  );
+  const contexts = request.items.map((item) => item.scenarioTarget);
+  assert.equal(new Set(contexts).size, contexts.length);
+  assert.ok(contexts.includes("playground_seesaw"));
+  assert.ok(contexts.includes("wrench_tool"));
+  assert.ok(contexts.includes("bicycle_brake"));
 });

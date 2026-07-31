@@ -11,6 +11,7 @@ import type {
 
 export const QUESTION_VISUAL_TYPES: readonly QuestionVisualType[] = [
   "none",
+  "context_scene",
   "line_graph",
   "bar_chart",
   "pressure_diagram",
@@ -25,6 +26,16 @@ export const QUESTION_VISUAL_TYPES: readonly QuestionVisualType[] = [
 
 export const QUESTION_VISUAL_VARIANTS: readonly QuestionVisualVariant[] = [
   "default",
+  "door_handle",
+  "playground_seesaw",
+  "wrench_tool",
+  "bicycle_brake",
+  "shopping_trolley",
+  "school_bag",
+  "water_tank",
+  "solar_panel",
+  "laboratory_setup",
+  "road_safety",
   "submerged_object",
   "depth_comparison",
   "force_area",
@@ -69,6 +80,7 @@ export const QUESTION_VISUAL_ROLES: readonly QuestionVisualRole[] = ["read", "ca
 
 const VISUAL_LABELS: Record<QuestionVisualType, string> = {
   none: "دون رسم",
+  context_scene: "مشهد حياتي ثنائي الأبعاد",
   line_graph: "رسم بياني خطي",
   bar_chart: "رسم أعمدة",
   pressure_diagram: "مخطط ضغط ثنائي الأبعاد",
@@ -281,6 +293,7 @@ export function parseQuestionVisualSpec(value: unknown, expectedType?: QuestionV
 
 export function diversifyQuestionVisualSpec(spec: QuestionVisualSpec, index: number, planItemId = ""): QuestionVisualSpec {
   if (spec.type === "none") return { ...spec, visualId: spec.visualId || "", variant: spec.variant ?? "default" };
+  const contextVariants: QuestionVisualVariant[] = ["door_handle", "playground_seesaw", "wrench_tool", "bicycle_brake", "shopping_trolley", "school_bag", "water_tank", "solar_panel", "laboratory_setup", "road_safety"];
   const pressureVariants: QuestionVisualVariant[] = ["submerged_object", "depth_comparison", "force_area", "liquid_column"];
   const circuitVariants: QuestionVisualVariant[] = ["series_circuit", "measurement_circuit"];
   const electrostaticVariants: QuestionVisualVariant[] = ["charge_transfer", "attraction_repulsion", "electric_field"];
@@ -290,8 +303,10 @@ export function diversifyQuestionVisualSpec(spec: QuestionVisualSpec, index: num
   const rayVariants: QuestionVisualVariant[] = ["reflection", "refraction", "converging_lens", "prism"];
   const forceVariants: QuestionVisualVariant[] = ["free_body", "balanced_forces", "moments"];
   const flowVariants: QuestionVisualVariant[] = ["linear_flow", "cycle_flow", "state_change"];
-  const fallback = (spec.type === "pressure_diagram"
-    ? pressureVariants[index % pressureVariants.length]
+  const fallback = (spec.type === "context_scene"
+    ? contextVariants[index % contextVariants.length]
+    : spec.type === "pressure_diagram"
+      ? pressureVariants[index % pressureVariants.length]
     : spec.type === "circuit_diagram"
       ? circuitVariants[index % circuitVariants.length]
       : spec.type === "electrostatic_diagram"
@@ -318,6 +333,16 @@ export function diversifyQuestionVisualSpec(spec: QuestionVisualSpec, index: num
 export function validateQuestionVisualSpec(spec: QuestionVisualSpec): void {
   if (spec.type === "none") return;
   if (!spec.title || !spec.altText) throw new Error("الرسم التعليمي يحتاج عنوانًا ووصفًا بديلًا.");
+
+  if (spec.type === "context_scene") {
+    if (spec.labels.length < 2 || spec.labels.length > 8) {
+      throw new Error("المشهد الحياتي يحتاج عنصرين علميين واضحين على الأقل.");
+    }
+    if (["calculate", "complete", "draw"].includes(spec.role ?? "read")) {
+      throw new Error("المشهد الحياتي لا يحمل القيم الحسابية أو عناصر الإكمال وحده.");
+    }
+    return;
+  }
 
   if (spec.type === "line_graph") {
     validateAxes(spec);
@@ -717,6 +742,9 @@ function renderRayDiagram(spec: QuestionVisualSpec): string {
 }
 
 export function isAiIllustrationEligible(spec: QuestionVisualSpec): boolean {
+  if (spec.type === "context_scene") {
+    return ["read", "interpret", "compare", "evaluate"].includes(spec.role ?? "read");
+  }
   if (spec.type === "electrostatic_diagram" && spec.variant === "charge_transfer") {
     return !["calculate", "complete", "draw"].includes(spec.role ?? "read");
   }
@@ -729,6 +757,42 @@ export function isAiIllustrationEligible(spec: QuestionVisualSpec): boolean {
 export function stripQuestionVisualIllustration(spec: QuestionVisualSpec): QuestionVisualSpec {
   const { illustration: _illustration, ...deterministic } = spec;
   return deterministic;
+}
+
+function renderContextScene(spec: QuestionVisualSpec): string {
+  const width = 640;
+  const height = 360;
+  const title = `<text x="${width / 2}" y="28" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text>`;
+  const label = (x: number, y: number, value: string) => `<text x="${x}" y="${y}" class="qv-annotation" text-anchor="middle">${escapeXml(value)}</text>`;
+  const variant = spec.variant ?? "laboratory_setup";
+  if (variant === "door_handle") {
+    return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}">${title}<rect x="185" y="70" width="270" height="235" rx="8" class="qv-context-object"/><circle cx="410" cy="190" r="8" class="qv-node"/><line x1="410" y1="190" x2="500" y2="190" class="qv-context-emphasis"/><path d="M 505 160 Q 545 190 505 220" class="qv-context-motion"/>${label(320,330,spec.labels[0] ?? "باب")}${label(500,245,spec.labels[1] ?? "مقبض")}</svg>`;
+  }
+  if (variant === "playground_seesaw") {
+    return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}">${title}<line x1="120" y1="205" x2="520" y2="155" class="qv-beam"/><path d="M 300 220 L 350 220 L 325 270 Z" class="qv-pivot"/><circle cx="170" cy="150" r="22" class="qv-context-person"/><line x1="170" y1="172" x2="170" y2="205" class="qv-context-line"/><circle cx="470" cy="105" r="22" class="qv-context-person"/><line x1="470" y1="127" x2="470" y2="160" class="qv-context-line"/>${label(325,302,spec.labels[0] ?? "نقطة الارتكاز")}${label(320,332,spec.labels[1] ?? "أرجوحة توازن")}</svg>`;
+  }
+  if (variant === "wrench_tool") {
+    return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}">${title}<circle cx="205" cy="185" r="42" class="qv-context-object"/><circle cx="205" cy="185" r="18" class="qv-context-hole"/><rect x="230" y="165" width="255" height="40" rx="20" class="qv-context-object"/><path d="M 480 150 Q 545 185 480 220" class="qv-context-motion"/>${label(205,255,spec.labels[0] ?? "صامولة")}${label(390,245,spec.labels[1] ?? "مفتاح ربط")}</svg>`;
+  }
+  if (variant === "bicycle_brake") {
+    return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}">${title}<circle cx="230" cy="230" r="78" class="qv-context-wheel"/><circle cx="430" cy="230" r="78" class="qv-context-wheel"/><path d="M230 230 L330 120 L430 230 L310 230 Z" class="qv-context-line"/><line x1="330" y1="120" x2="390" y2="95" class="qv-context-line"/><line x1="390" y1="95" x2="445" y2="105" class="qv-context-emphasis"/>${label(330,330,spec.labels[0] ?? "دراجة")}${label(455,85,spec.labels[1] ?? "ذراع المكبح")}</svg>`;
+  }
+  if (variant === "shopping_trolley") {
+    return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}">${title}<path d="M190 120 L450 120 L420 245 L220 245 Z" class="qv-context-object"/><line x1="190" y1="120" x2="145" y2="80" class="qv-context-line"/><circle cx="250" cy="275" r="20" class="qv-context-wheel"/><circle cx="390" cy="275" r="20" class="qv-context-wheel"/><path d="M140 78 Q 105 105 140 132" class="qv-context-motion"/>${label(320,325,spec.labels[0] ?? "عربة تسوق")}${label(145,55,spec.labels[1] ?? "قوة الدفع")}</svg>`;
+  }
+  if (variant === "school_bag") {
+    return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}">${title}<rect x="245" y="105" width="150" height="190" rx="30" class="qv-context-object"/><path d="M270 120 Q320 45 370 120" class="qv-context-line"/><line x1="275" y1="155" x2="220" y2="300" class="qv-context-emphasis"/><line x1="365" y1="155" x2="420" y2="300" class="qv-context-emphasis"/>${label(320,330,spec.labels[0] ?? "حقيبة مدرسية")}${label(470,260,spec.labels[1] ?? "حمالات عريضة")}</svg>`;
+  }
+  if (variant === "water_tank") {
+    return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}">${title}<ellipse cx="320" cy="105" rx="120" ry="32" class="qv-context-object"/><rect x="200" y="105" width="240" height="155" class="qv-context-object"/><ellipse cx="320" cy="260" rx="120" ry="32" class="qv-context-object"/><line x1="440" y1="210" x2="520" y2="210" class="qv-context-emphasis"/>${label(320,325,spec.labels[0] ?? "خزان ماء")}${label(515,195,spec.labels[1] ?? "مخرج الماء")}</svg>`;
+  }
+  if (variant === "solar_panel") {
+    return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}">${title}<circle cx="125" cy="105" r="42" class="qv-context-sun"/><g transform="translate(265 120) skewX(-12)"><rect x="0" y="0" width="245" height="135" class="qv-context-panel"/><line x1="82" y1="0" x2="82" y2="135" class="qv-context-grid"/><line x1="164" y1="0" x2="164" y2="135" class="qv-context-grid"/><line x1="0" y1="67" x2="245" y2="67" class="qv-context-grid"/></g><line x1="375" y1="255" x2="375" y2="310" class="qv-context-line"/>${label(380,335,spec.labels[0] ?? "لوح شمسي")}${label(125,170,spec.labels[1] ?? "ضوء الشمس")}</svg>`;
+  }
+  if (variant === "road_safety") {
+    return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}">${title}<path d="M140 285 L270 130 L370 130 L500 285 Z" class="qv-context-road"/><line x1="320" y1="145" x2="320" y2="275" class="qv-context-road-line"/><rect x="245" y="205" width="78" height="36" rx="10" class="qv-context-object"/><circle cx="260" cy="247" r="10" class="qv-context-wheel"/><circle cx="308" cy="247" r="10" class="qv-context-wheel"/>${label(320,330,spec.labels[0] ?? "طريق")}${label(285,190,spec.labels[1] ?? "مركبة")}</svg>`;
+  }
+  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}">${title}<rect x="145" y="95" width="350" height="190" rx="18" class="qv-context-object"/><circle cx="250" cy="190" r="35" class="qv-context-flask"/><rect x="350" y="135" width="80" height="110" class="qv-context-instrument"/>${label(250,330,spec.labels[0] ?? "تجربة مدرسية")}${label(390,330,spec.labels[1] ?? "أداة قياس")}</svg>`;
 }
 
 function renderForceDiagram(spec: QuestionVisualSpec): string {
@@ -824,8 +888,10 @@ function renderCircuitDiagram(spec: QuestionVisualSpec): string {
 export function renderQuestionVisualSvg(spec: QuestionVisualSpec): string {
   validateQuestionVisualSpec(spec);
   if (spec.type === "none") return "";
-  const svg = spec.type === "line_graph"
-    ? renderLineGraph(spec)
+  const svg = spec.type === "context_scene"
+    ? renderContextScene(spec)
+    : spec.type === "line_graph"
+      ? renderLineGraph(spec)
     : spec.type === "bar_chart"
       ? renderBarChart(spec)
       : spec.type === "pressure_diagram"

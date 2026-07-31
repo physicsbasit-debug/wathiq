@@ -18,10 +18,13 @@ import type { LessonCatalogOption } from "./lesson-catalog.js";
 import { SCIENCE_ASSESSMENT_POLICY_ID } from "./assessment-policy.js";
 import { parseQuestionVisualIllustration, parseQuestionVisualSpec } from "./question-visual.js";
 
-export const SOURCE_GENERATION_VERSION = "source-grounded-policy-ai-15-controlled-hybrid-visuals";
+export const SOURCE_GENERATION_VERSION = "source-grounded-policy-ai-16-assessment-quality-context-diversity";
 export const GENERATION_BATCH_SIZE = 2;
 
 export type QuestionReferenceScopeMode = "page-range" | "page-neighborhood" | "strict-title-fallback" | "legacy-title";
+export type QuestionScenarioTarget = "scientific_abstract" | "door_handle" | "playground_seesaw" | "wrench_tool" | "bicycle_brake" | "shopping_trolley" | "school_bag" | "water_tank" | "solar_panel" | "laboratory_setup" | "road_safety";
+export type QuestionStimulusTarget = "concise_text" | "real_life_scene" | "scientific_diagram" | "data_table" | "graph" | "instrument" | "experiment" | "decision_case";
+export type QuestionSkillTarget = "recognize" | "apply" | "calculate" | "interpret" | "compare" | "evaluate" | "investigate";
 
 export interface QuestionGenerationReference {
   id: string;
@@ -52,8 +55,13 @@ export interface QuestionGenerationItem {
   marks: number;
   sourceReferenceId: string;
   lessonLabel: string;
+  outcomeLabel: string;
   styleTarget: QuestionDesignPattern;
   visualTarget: QuestionVisualType;
+  scenarioTarget: QuestionScenarioTarget;
+  stimulusTarget: QuestionStimulusTarget;
+  skillTarget: QuestionSkillTarget;
+  diversityKey: string;
   regenerationAnchor?: QuestionRegenerationAnchor;
 }
 
@@ -202,7 +210,7 @@ function parseAlternative(value: unknown, expected: QuestionGenerationItem): Gen
   }
   if (expected.visualTarget !== "none") {
     const visualReference = normalizeVisualText(`${stimulus} ${text}`);
-    if (!/(الشكل|الرسم|المخطط|الدائره|الجدول|التدريج|الجهاز|البيانات الممثله|التمثيل)/u.test(visualReference)) {
+    if (!/(الشكل|الرسم|المخطط|الدائره|الجدول|التدريج|الجهاز|البيانات الممثله|التمثيل|المشهد)/u.test(visualReference)) {
       throw new Error("السؤال البصري لا يعتمد صراحة على الشكل المرفق.");
     }
   }
@@ -309,20 +317,41 @@ function deriveQuestionDesignPattern(
   officialIndex: number,
   subject: string,
 ): QuestionDesignPattern {
-  const normalizedSubject = subject.trim();
+  const normalizedSubject = normalizeVisualText(subject);
+  const isPhysicalScience = normalizedSubject.includes("فيزياء") || normalizedSubject.includes("كيمياء");
+
+  // الأسئلة الطويلة يجب أن تقيس حلاً أو استقصاءً حقيقيًا، لا تعريفًا مطولًا متنكرًا.
   if (item.questionType === "إجابة طويلة") {
     if (item.cognitiveLevel === "استدلال") return "استقصائي";
-    if (normalizedSubject.includes("فيزياء") || normalizedSubject.includes("كيمياء")) return "حسابي";
+    if (item.cognitiveLevel === "تطبيق" && isPhysicalScience) return "حسابي";
     return officialIndex % 2 === 0 ? "بيانات" : "استقصائي";
   }
-  if (item.cognitiveLevel === "استدلال") return officialIndex % 2 === 0 ? "بيانات" : "استقصائي";
-  if (item.cognitiveLevel === "تطبيق") {
-    if (normalizedSubject.includes("فيزياء")) return officialIndex % 2 === 0 ? "حسابي" : "بيانات";
-    if (normalizedSubject.includes("كيمياء")) return officialIndex % 2 === 0 ? "سياقي" : "بيانات";
-    return officialIndex % 2 === 0 ? "بيانات" : "سياقي";
+
+  if (item.cognitiveLevel === "استدلال") {
+    const cycle: QuestionDesignPattern[] = ["بيانات", "استقصائي", "مقارنة"];
+    return cycle[officialIndex % cycle.length]!;
   }
+
+  if (item.cognitiveLevel === "تطبيق") {
+    if (normalizedSubject.includes("فيزياء")) {
+      // يبدأ التطبيق بموقف حياتي ثم ينتقل للحساب والبيانات في التكرارات التالية.
+      const cycle: QuestionDesignPattern[] = ["سياقي", "حسابي", "بيانات"];
+      return cycle[Math.max(0, officialIndex - 1) % cycle.length]!;
+    }
+    if (normalizedSubject.includes("كيمياء")) {
+      const cycle: QuestionDesignPattern[] = ["سياقي", "بيانات", "استقصائي"];
+      return cycle[Math.max(0, officialIndex - 1) % cycle.length]!;
+    }
+    const cycle: QuestionDesignPattern[] = ["سياقي", "بيانات", "مقارنة"];
+    return cycle[Math.max(0, officialIndex - 1) % cycle.length]!;
+  }
+
   if (item.marks >= 2) return "مقارنة";
-  return item.questionType === "اختيار من متعدد" && officialIndex % 2 === 1 ? "سياقي" : "مفهومي";
+  if (item.questionType === "اختيار من متعدد") {
+    return officialIndex === 0 ? "مفهومي" : officialIndex % 2 === 0 ? "بيانات" : "سياقي";
+  }
+  // بعد أول سؤال مباشر نفضّل قراءة بيانات قصيرة بدل تكرار الاستدعاء اللفظي.
+  return officialIndex === 0 ? "مفهومي" : officialIndex % 3 === 0 ? "بيانات" : "سياقي";
 }
 
 function normalizeVisualText(value: string): string {
@@ -344,7 +373,7 @@ function hasSufficientQuestionContext(
   if (stimulus.trim().length >= 12) return true;
 
   const normalized = normalizeVisualText(text);
-  const referencesVisual = /(الشكل|الرسم|المخطط|الدائره|الجدول|البيانات الممثله|التمثيل|التدريج)/u.test(normalized);
+  const referencesVisual = /(الشكل|الرسم|المخطط|الدائره|الجدول|البيانات الممثله|التمثيل|التدريج|المشهد)/u.test(normalized);
   if (visualTarget !== "none" && referencesVisual) return true;
 
   const digitCount = (text.match(/[0-9٠-٩]/g) ?? []).length;
@@ -361,7 +390,39 @@ function hasSufficientQuestionContext(
       && /(تجرب|متغير|قياس|اداه|خطوات|نتائج|دقه|موثوقيه|تحكم|ثابت)/u.test(normalized);
   }
   return normalized.length >= 42
-    && /(عندما|اثناء|لاحظ|قام|استخدم|وضع|تعرض|في موقف|لدى|يمر|يعمل)/u.test(normalized);
+    && /(عندما|اثناء|لاحظ|قام|استخدم|وضع|تعرض|في موقف|لدى|يمر|يعمل|اختار|يريد)/u.test(normalized);
+}
+
+const DEFAULT_SCENARIO_CYCLE: readonly QuestionScenarioTarget[] = [
+  "school_bag", "door_handle", "laboratory_setup", "shopping_trolley", "road_safety", "solar_panel", "water_tank", "bicycle_brake",
+];
+
+function scenarioCycleForEvidence(evidence: string): readonly QuestionScenarioTarget[] {
+  if (/(عزم|ارتكاز|قوه|قوى|اتزان|احتكاك|حركه)/u.test(evidence)) {
+    return ["door_handle", "playground_seesaw", "wrench_tool", "bicycle_brake", "shopping_trolley", "school_bag"];
+  }
+  if (/(ضغط|سائل|عمق|طفو|كثافه)/u.test(evidence)) {
+    return ["water_tank", "school_bag", "laboratory_setup", "shopping_trolley"];
+  }
+  if (/(ضوء|انعكاس|انكسار|عدسه|مرآه|مراه|منشور)/u.test(evidence)) {
+    return ["road_safety", "laboratory_setup", "solar_panel", "door_handle"];
+  }
+  if (/(كهرب|تيار|جهد|دائره|طاقه)/u.test(evidence)) {
+    return ["solar_panel", "laboratory_setup", "road_safety", "school_bag"];
+  }
+  return DEFAULT_SCENARIO_CYCLE;
+}
+
+function deriveQuestionScenarioTarget(
+  item: PlanItem,
+  officialIndex: number,
+  styleTarget: QuestionDesignPattern,
+  referenceContent: string,
+): QuestionScenarioTarget {
+  if (styleTarget === "مفهومي" && item.cognitiveLevel === "معرفة") return "scientific_abstract";
+  const evidence = normalizeVisualText(`${item.lessonLabel} ${referenceContent}`);
+  const cycle = scenarioCycleForEvidence(evidence);
+  return cycle[officialIndex % cycle.length] ?? "laboratory_setup";
 }
 
 function deriveQuestionVisualTarget(
@@ -369,19 +430,26 @@ function deriveQuestionVisualTarget(
   officialIndex: number,
   subject: string,
   referenceContent: string,
+  pattern: QuestionDesignPattern,
 ): QuestionVisualType {
   const normalizedSubject = normalizeVisualText(subject);
   const evidence = normalizeVisualText(`${item.lessonLabel} ${referenceContent}`);
-  const pattern = deriveQuestionDesignPattern(item, officialIndex, subject);
+  const simpleKnowledge = item.cognitiveLevel === "معرفة" && item.marks === 1 && pattern === "مفهومي";
   if (normalizedSubject.includes("فيزياء")) {
     if (/(ترمومتر|ميزان حراره|مخبار|سحاحه|تدريج|قراءه جهاز|اميتر|فولتميتر|مسطره مدرجه)/u.test(evidence)) {
-      return "instrument_scale";
+      return simpleKnowledge ? "none" : "instrument_scale";
     }
     if (/(انعكاس|انكسار|عدسه|مرآه|مراه|شعاع ضوئي|اشعه ضوئيه|ضوء|منشور|بصريات|زاويه السقوط|زاويه الانكسار)/u.test(evidence)) {
-      return item.cognitiveLevel === "معرفة" && item.marks === 1 ? "none" : "ray_diagram";
+      if (simpleKnowledge) return "none";
+      return "ray_diagram";
     }
     if (/(قوه|قوى|احتكاك|وزن|شد|رد فعل|اتزان|عزم|نقطه ارتكاز|مخطط جسم حر)/u.test(evidence)) {
-      return item.cognitiveLevel === "معرفة" && item.marks === 1 ? "none" : "force_diagram";
+      if (simpleKnowledge) return "none";
+      if (pattern === "سياقي" || pattern === "استقصائي") return "context_scene";
+      if (pattern === "بيانات") return "data_table";
+      if (pattern === "مقارنة") return officialIndex % 2 === 0 ? "context_scene" : "data_table";
+      if (pattern === "حسابي") return officialIndex % 2 === 0 ? "force_diagram" : "data_table";
+      return "force_diagram";
     }
     if (/(خطوات|مراحل|تسلسل|تحول|دوره|عمليه|مسار)/u.test(evidence) && item.cognitiveLevel !== "معرفة") {
       return "flow_diagram";
@@ -390,27 +458,54 @@ function deriveQuestionVisualTarget(
       return "data_table";
     }
     if (/(كهرباء ساكنه|كهربائيه ساكنه|شحنه|شحنت|الكترون|بروتون|مجال كهربائي|دلك|مسطره|قماش|تجاذب|تنافر|موصل|عازل)/u.test(evidence)) {
-      if (item.cognitiveLevel === "معرفة" && item.marks === 1 && pattern === "مفهومي") return "none";
-      return "electrostatic_diagram";
+      if (simpleKnowledge) return "none";
+      return pattern === "بيانات" ? "data_table" : "electrostatic_diagram";
     }
     if (/(دائره|بطاريه|مصباح|مقاوم|تيار|جهد|مكثف|اميتر|فولتميتر)/u.test(evidence)) {
-      if (item.cognitiveLevel === "معرفة" && item.marks === 1) return "none";
-      return "circuit_diagram";
+      if (simpleKnowledge) return "none";
+      if (pattern === "سياقي") return "context_scene";
+      return pattern === "بيانات" ? "data_table" : "circuit_diagram";
     }
     if (/(ضغط|سائل|عمق|كثافه|طفو)/u.test(evidence)) {
-      if (item.cognitiveLevel === "معرفة" || item.marks === 1) return "none";
-      if (pattern === "بيانات" || item.cognitiveLevel === "استدلال") return "line_graph";
-      if (pattern === "مقارنة" && officialIndex % 2 === 1) return "none";
+      if (simpleKnowledge) return "none";
+      if (pattern === "سياقي") return "context_scene";
+      if (pattern === "بيانات" || item.cognitiveLevel === "استدلال") return officialIndex % 2 === 0 ? "line_graph" : "data_table";
       return "pressure_diagram";
     }
     if (/(مسافه.{0,30}زمن|سرعه.{0,30}زمن|درجه حراره.{0,30}زمن|زمن.{0,30}(مسافه|سرعه|درجه حراره))/u.test(evidence)) {
-      return item.cognitiveLevel === "معرفة" && item.marks === 1 ? "none" : "line_graph";
+      return simpleKnowledge ? "none" : "line_graph";
     }
     if (/(رسم بياني بالاعمده|مخطط اعمده|اعمده بيانيه)/u.test(evidence)) {
-      return item.cognitiveLevel === "معرفة" && item.marks === 1 ? "none" : "bar_chart";
+      return simpleKnowledge ? "none" : "bar_chart";
     }
+    if (pattern === "سياقي") return "context_scene";
   }
+  if (pattern === "سياقي" && item.cognitiveLevel !== "معرفة") return "context_scene";
   return "none";
+}
+
+function deriveQuestionSkillTarget(item: PlanItem, pattern: QuestionDesignPattern): QuestionSkillTarget {
+  if (pattern === "حسابي") return "calculate";
+  if (pattern === "بيانات") return item.cognitiveLevel === "استدلال" ? "interpret" : "apply";
+  if (pattern === "مقارنة") return "compare";
+  if (pattern === "استقصائي") return item.cognitiveLevel === "استدلال" ? "evaluate" : "investigate";
+  if (pattern === "سياقي") return "apply";
+  return "recognize";
+}
+
+function deriveQuestionStimulusTarget(
+  pattern: QuestionDesignPattern,
+  visualTarget: QuestionVisualType,
+): QuestionStimulusTarget {
+  if (visualTarget === "context_scene") return "real_life_scene";
+  if (visualTarget === "data_table") return "data_table";
+  if (visualTarget === "line_graph" || visualTarget === "bar_chart") return "graph";
+  if (visualTarget === "instrument_scale") return "instrument";
+  if (visualTarget !== "none") return "scientific_diagram";
+  if (pattern === "استقصائي") return "experiment";
+  if (pattern === "مقارنة") return "decision_case";
+  if (pattern === "سياقي") return "real_life_scene";
+  return "concise_text";
 }
 
 function generationItem(
@@ -420,6 +515,11 @@ function generationItem(
   referenceContent: string,
 ): QuestionGenerationItem {
   if (!item.sourceReferenceId) throw new Error("إحدى مفردات الخطة غير مرتبطة بصفحة مصدر.");
+  const styleTarget = deriveQuestionDesignPattern(item, officialIndex, subject);
+  const scenarioTarget = deriveQuestionScenarioTarget(item, officialIndex, styleTarget, referenceContent);
+  const visualTarget = deriveQuestionVisualTarget(item, officialIndex, subject, referenceContent, styleTarget);
+  const stimulusTarget = deriveQuestionStimulusTarget(styleTarget, visualTarget);
+  const skillTarget = deriveQuestionSkillTarget(item, styleTarget);
   return {
     planItemId: item.id,
     questionType: item.questionType,
@@ -428,8 +528,13 @@ function generationItem(
     marks: item.marks,
     sourceReferenceId: item.sourceReferenceId,
     lessonLabel: item.lessonLabel,
-    styleTarget: deriveQuestionDesignPattern(item, officialIndex, subject),
-    visualTarget: deriveQuestionVisualTarget(item, officialIndex, subject, referenceContent),
+    outcomeLabel: item.outcomeLabel,
+    styleTarget,
+    visualTarget,
+    scenarioTarget,
+    stimulusTarget,
+    skillTarget,
+    diversityKey: `${styleTarget}|${visualTarget}|${scenarioTarget}|${skillTarget}|${officialIndex + 1}`,
   };
 }
 

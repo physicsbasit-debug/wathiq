@@ -300,3 +300,31 @@ test("يعرض مخطط حساب الضغط القوة والمساحة ووحد
   assert.match(html, /القوة F = 80 N/);
   assert.match(html, /مساحة التلامس A = 0\.02 m²/);
 });
+
+test("يرسم مشاهد حياتية حتمية مختلفة ويجعلها مؤهلة للتحسين البصري", () => {
+  const build = (variant, labels) => ({
+    ...emptyQuestionVisualSpec(),
+    type: "context_scene",
+    visualId: `scene-${variant}`,
+    variant,
+    role: "interpret",
+    purpose: "تطبيق المفهوم في الحياة اليومية",
+    title: "موقف علمي من الحياة اليومية",
+    altText: `مشهد ${variant}`,
+    labels,
+  });
+  const door = parseQuestionVisualSpec(build("door_handle", ["الباب", "المقبض"]), "context_scene");
+  const seesaw = parseQuestionVisualSpec(build("playground_seesaw", ["نقطة الارتكاز", "الأرجوحة"]), "context_scene");
+  const wrench = parseQuestionVisualSpec(build("wrench_tool", ["الصامولة", "مفتاح الربط"]), "context_scene");
+  const doorSvg = renderQuestionVisualSvg(door);
+  const seesawSvg = renderQuestionVisualSvg(seesaw);
+  const wrenchSvg = renderQuestionVisualSvg(wrench);
+  assert.notEqual(doorSvg, seesawSvg);
+  assert.notEqual(seesawSvg, wrenchSvg);
+  assert.match(doorSvg, /المقبض/);
+  assert.match(seesawSvg, /نقطة الارتكاز/);
+  assert.match(wrenchSvg, /مفتاح الربط/);
+  assert.equal(isAiIllustrationEligible(door), true);
+  assert.equal(isAiIllustrationEligible(seesaw), true);
+  assert.equal(isAiIllustrationEligible(wrench), true);
+});
