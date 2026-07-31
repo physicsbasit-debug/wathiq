@@ -32,6 +32,16 @@ export interface QuestionVisualVector {
   magnitude: number;
 }
 
+export interface QuestionVisualIllustration {
+  url: string;
+  assetPath: string;
+  mimeType: string;
+  model: string;
+  generatedAt: string;
+  promptVersion: string;
+  validated: boolean;
+}
+
 export interface QuestionVisualSpec {
   type: QuestionVisualType;
   visualId?: string;
@@ -59,6 +69,7 @@ export interface QuestionVisualSpec {
   tableCells: string[][];
   hiddenCells: string[];
   vectors: QuestionVisualVector[];
+  illustration?: QuestionVisualIllustration;
 }
 
 export interface LearningOutcome {
@@ -127,6 +138,7 @@ export interface ExamDraft {
   totalMarks: number;
   difficulty: Difficulty;
   trustedEnrichmentEnabled: boolean;
+  visualEnhancementEnabled: boolean;
   counts: QuestionCounts;
   plan: PlanItem[];
   selectedProposalByPlanItem: Record<string, string>;

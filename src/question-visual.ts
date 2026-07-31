@@ -115,6 +115,30 @@ function cleanText(value: unknown, max = 160): string {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
 }
 
+function cleanHttpsUrl(value: unknown): string {
+  if (typeof value !== "string" || !value.trim()) return "";
+  try {
+    const parsed = new URL(value.trim());
+    return parsed.protocol === "https:" ? parsed.toString() : "";
+  } catch {
+    return "";
+  }
+}
+
+export function parseQuestionVisualIllustration(value: unknown): QuestionVisualSpec["illustration"] {
+  const record = asRecord(value);
+  if (!record) return undefined;
+  const url = cleanHttpsUrl(record.url);
+  const assetPath = cleanText(record.assetPath, 240);
+  const mimeType = cleanText(record.mimeType, 40);
+  const model = cleanText(record.model, 100);
+  const generatedAt = cleanText(record.generatedAt, 60);
+  const promptVersion = cleanText(record.promptVersion, 80);
+  if (!url || !assetPath || !model || !generatedAt || !promptVersion || record.validated !== true
+    || !["image/png", "image/jpeg", "image/webp"].includes(mimeType)) return undefined;
+  return { url, assetPath, mimeType, model, generatedAt, promptVersion, validated: true };
+}
+
 function cleanTextArray(value: unknown, maxItems: number, maxLength = 80): string[] {
   if (!Array.isArray(value)) return [];
   return value
@@ -218,6 +242,7 @@ export function parseQuestionVisualSpec(value: unknown, expectedType?: QuestionV
     throw new Error("مولد الأسئلة لم يلتزم بنوع الرسم المطلوب.");
   }
 
+  const illustration = parseQuestionVisualIllustration(record.illustration);
   const spec: QuestionVisualSpec = {
     type: record.type,
     visualId: cleanText(record.visualId, 80),
@@ -247,6 +272,7 @@ export function parseQuestionVisualSpec(value: unknown, expectedType?: QuestionV
     tableCells: cleanStringMatrix(record.tableCells),
     hiddenCells: cleanTextArray(record.hiddenCells, 12, 16),
     vectors: cleanVectors(record.vectors),
+    ...(illustration ? { illustration } : {}),
   };
 
   validateQuestionVisualSpec(spec);
@@ -318,7 +344,14 @@ export function validateQuestionVisualSpec(spec: QuestionVisualSpec): void {
 
   if (spec.type === "pressure_diagram") {
     if (spec.labels.length < 2 || spec.values.length < 2) {
-      throw new Error("مخطط الضغط يحتاج اسم السائل والجسم ومستوى السائل وعمق الجسم.");
+      throw new Error("مخطط الضغط يحتاج اسم السائل والجسم وقيمتين علميتين على الأقل.");
+    }
+    if (spec.variant === "force_area") {
+      const [force, area] = spec.values;
+      if (force === undefined || force <= 0 || area === undefined || area <= 0) {
+        throw new Error("مخطط حساب الضغط يحتاج قوة ومساحة موجبتين.");
+      }
+      return;
     }
     const [liquidLevel, objectDepth] = spec.values;
     if (liquidLevel === undefined || liquidLevel < 0.25 || liquidLevel > 0.9
@@ -508,7 +541,11 @@ function renderPressureDiagram(spec: QuestionVisualSpec): string {
     const blockY = 150;
     const blockW = 150;
     const blockH = 80;
-    return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}"><text x="${width / 2}" y="28" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text><line x1="120" y1="${surfaceY}" x2="520" y2="${surfaceY}" class="qv-surface"/><rect x="${blockX}" y="${blockY}" width="${blockW}" height="${blockH}" class="qv-object"/><text x="${blockX + blockW / 2}" y="${blockY + 45}" class="qv-object-label" text-anchor="middle">${escapeXml(objectLabel)}</text><line x1="${blockX + blockW / 2}" y1="80" x2="${blockX + blockW / 2}" y2="${blockY - 6}" class="qv-depth"/><path d="M ${blockX + blockW / 2 - 8} ${blockY - 16} L ${blockX + blockW / 2} ${blockY - 6} L ${blockX + blockW / 2 + 8} ${blockY - 16}" class="qv-depth"/><text x="${blockX + blockW / 2 + 18}" y="110" class="qv-annotation">القوة F</text><line x1="${blockX}" y1="${surfaceY + 35}" x2="${blockX + blockW}" y2="${surfaceY + 35}" class="qv-depth"/><path d="M ${blockX + 8} ${surfaceY + 29} L ${blockX} ${surfaceY + 35} L ${blockX + 8} ${surfaceY + 41} M ${blockX + blockW - 8} ${surfaceY + 29} L ${blockX + blockW} ${surfaceY + 35} L ${blockX + blockW - 8} ${surfaceY + 41}" class="qv-depth"/><text x="${blockX + blockW / 2}" y="${surfaceY + 58}" class="qv-annotation" text-anchor="middle">مساحة التلامس A</text></svg>`;
+    const force = spec.values[0] ?? 80;
+    const area = spec.values[1] ?? 0.02;
+    const forceLabel = spec.role === "calculate" ? `القوة F = ${numberLabel(force)} N` : "القوة F";
+    const areaLabel = spec.role === "calculate" ? `مساحة التلامس A = ${numberLabel(area)} m²` : "مساحة التلامس A";
+    return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}"><text x="${width / 2}" y="28" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text><line x1="120" y1="${surfaceY}" x2="520" y2="${surfaceY}" class="qv-surface"/><rect x="${blockX}" y="${blockY}" width="${blockW}" height="${blockH}" class="qv-object"/><text x="${blockX + blockW / 2}" y="${blockY + 45}" class="qv-object-label" text-anchor="middle">${escapeXml(objectLabel)}</text><line x1="${blockX + blockW / 2}" y1="80" x2="${blockX + blockW / 2}" y2="${blockY - 6}" class="qv-depth"/><path d="M ${blockX + blockW / 2 - 8} ${blockY - 16} L ${blockX + blockW / 2} ${blockY - 6} L ${blockX + blockW / 2 + 8} ${blockY - 16}" class="qv-depth"/><text x="${blockX + blockW / 2 + 18}" y="110" class="qv-annotation">${escapeXml(forceLabel)}</text><line x1="${blockX}" y1="${surfaceY + 35}" x2="${blockX + blockW}" y2="${surfaceY + 35}" class="qv-depth"/><path d="M ${blockX + 8} ${surfaceY + 29} L ${blockX} ${surfaceY + 35} L ${blockX + 8} ${surfaceY + 41} M ${blockX + blockW - 8} ${surfaceY + 29} L ${blockX + blockW} ${surfaceY + 35} L ${blockX + blockW - 8} ${surfaceY + 41}" class="qv-depth"/><text x="${blockX + blockW / 2}" y="${surfaceY + 58}" class="qv-annotation" text-anchor="middle">${escapeXml(areaLabel)}</text></svg>`;
   }
 
   const tankX = 145;
@@ -679,6 +716,21 @@ function renderRayDiagram(spec: QuestionVisualSpec): string {
   return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}">${defs}<text x="${width / 2}" y="28" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text><path d="M 300 75 L 455 270 L 190 270 Z" class="qv-prism"/><line x1="80" y1="150" x2="275" y2="150" class="qv-ray" marker-end="url(#${marker})"/><line x1="275" y1="150" x2="410" y2="236" class="qv-ray"/><line x1="410" y1="236" x2="550" y2="280" class="qv-ray" marker-end="url(#${marker})"/><text x="310" y="315" class="qv-annotation" text-anchor="middle">منشور زجاجي</text></svg>`;
 }
 
+export function isAiIllustrationEligible(spec: QuestionVisualSpec): boolean {
+  if (spec.type === "electrostatic_diagram" && spec.variant === "charge_transfer") {
+    return !["calculate", "complete", "draw"].includes(spec.role ?? "read");
+  }
+  if (spec.type === "pressure_diagram" && spec.variant === "submerged_object") {
+    return ["read", "interpret", "evaluate"].includes(spec.role ?? "read");
+  }
+  return false;
+}
+
+export function stripQuestionVisualIllustration(spec: QuestionVisualSpec): QuestionVisualSpec {
+  const { illustration: _illustration, ...deterministic } = spec;
+  return deterministic;
+}
+
 function renderForceDiagram(spec: QuestionVisualSpec): string {
   const width = 640;
   const height = 360;
@@ -689,7 +741,10 @@ function renderForceDiagram(spec: QuestionVisualSpec): string {
     const scale = Math.min(1.5, Math.max(0.55, vector.magnitude / 10));
     const x2 = x1 + vector.dx * scale;
     const y2 = y1 + vector.dy * scale;
-    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" class="qv-force-arrow qv-vector-${index}" marker-end="url(#${marker})"/><text x="${x2 + (vector.dx >= 0 ? 8 : -8)}" y="${y2 - 7}" class="qv-annotation" text-anchor="${vector.dx >= 0 ? "start" : "end"}">${escapeXml(vector.label)}</text>`;
+    const vectorLabel = spec.role === "calculate"
+      ? `${vector.label} (${numberLabel(vector.magnitude)} N)`
+      : vector.label;
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" class="qv-force-arrow qv-vector-${index}" marker-end="url(#${marker})"/><text x="${x2 + (vector.dx >= 0 ? 8 : -8)}" y="${y2 - 7}" class="qv-annotation" text-anchor="${vector.dx >= 0 ? "start" : "end"}">${escapeXml(vectorLabel)}</text>`;
   }).join("");
   const support = spec.variant === "moments"
     ? `<line x1="130" y1="230" x2="510" y2="230" class="qv-beam"/><path d="M 300 230 L 340 230 L 320 275 Z" class="qv-pivot"/><text x="320" y="302" class="qv-annotation" text-anchor="middle">نقطة الارتكاز</text>`
@@ -788,5 +843,9 @@ export function renderQuestionVisualSvg(spec: QuestionVisualSpec): string {
                   : spec.type === "force_diagram"
                     ? renderForceDiagram(spec)
                     : renderFlowDiagram(spec);
-  return `<figure class="question-visual question-visual-${spec.type}" data-visual-id="${escapeXml(spec.visualId ?? "")}" data-visual-variant="${escapeXml(spec.variant ?? "default")}">${svg}<figcaption>${escapeXml(spec.altText)}</figcaption></figure>`;
+  const media = spec.illustration?.validated && isAiIllustrationEligible(spec)
+    ? `<div class="question-visual-hybrid" data-hybrid-visual="ready"><div class="question-visual-deterministic-fallback" aria-hidden="true">${svg}</div><img class="question-visual-illustration" src="${escapeXml(spec.illustration.url)}" alt="${escapeXml(spec.altText)}" loading="eager" decoding="async" crossorigin="anonymous"/></div>`
+    : svg;
+  const mode = spec.illustration?.validated && isAiIllustrationEligible(spec) ? "hybrid" : "deterministic";
+  return `<figure class="question-visual question-visual-${spec.type} question-visual-${mode}" data-visual-id="${escapeXml(spec.visualId ?? "")}" data-visual-variant="${escapeXml(spec.variant ?? "default")}" data-visual-mode="${mode}">${media}<figcaption>${escapeXml(spec.altText)}</figcaption></figure>`;
 }

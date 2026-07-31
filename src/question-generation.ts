@@ -8,6 +8,7 @@ import type {
   QuestionDesignPattern,
   QuestionProposal,
   QuestionType,
+  QuestionVisualIllustration,
   QuestionVisualSpec,
   QuestionVisualType,
 } from "./types.js";
@@ -15,9 +16,9 @@ import type { OwnerSession } from "./central-source-store.js";
 import type { WathiqRuntimeConfig } from "./runtime-config.js";
 import type { LessonCatalogOption } from "./lesson-catalog.js";
 import { SCIENCE_ASSESSMENT_POLICY_ID } from "./assessment-policy.js";
-import { parseQuestionVisualSpec } from "./question-visual.js";
+import { parseQuestionVisualIllustration, parseQuestionVisualSpec } from "./question-visual.js";
 
-export const SOURCE_GENERATION_VERSION = "source-grounded-policy-ai-14-contextual-stimulus-alignment";
+export const SOURCE_GENERATION_VERSION = "source-grounded-policy-ai-15-controlled-hybrid-visuals";
 export const GENERATION_BATCH_SIZE = 2;
 
 export type QuestionReferenceScopeMode = "page-range" | "page-neighborhood" | "strict-title-fallback" | "legacy-title";
@@ -96,6 +97,26 @@ export interface QuestionGenerationResponse {
   items: GeneratedQuestionItem[];
   model: string;
   generatedAt: string;
+  requestId: string;
+}
+
+export interface VisualIllustrationRequest {
+  action: "generate_visual_illustration";
+  draftId: string;
+  planItemId: string;
+  grade: number;
+  subject: string;
+  lessonLabel: string;
+  questionText: string;
+  sourceSupport: string;
+  previousAssetPath?: string;
+  visual: QuestionVisualSpec;
+}
+
+export interface VisualIllustrationResponse {
+  status: "ready" | "fallback";
+  illustration?: QuestionVisualIllustration;
+  reason: string;
   requestId: string;
 }
 
@@ -235,6 +256,23 @@ export function parseQuestionGenerationResponse(
     generatedAt: typeof record.generatedAt === "string" && record.generatedAt.trim()
       ? record.generatedAt.trim()
       : new Date().toISOString(),
+    requestId: typeof record.requestId === "string" ? record.requestId.trim() : "",
+  };
+}
+
+export function parseVisualIllustrationResponse(payload: unknown): VisualIllustrationResponse {
+  const record = asRecord(payload);
+  if (!record || (record.status !== "ready" && record.status !== "fallback")) {
+    throw new Error("استجابة تحسين الرسم غير صالحة.");
+  }
+  const illustration = parseQuestionVisualIllustration(record.illustration);
+  if (record.status === "ready" && !illustration) {
+    throw new Error("خدمة تحسين الرسم لم تُعد صورة صالحة.");
+  }
+  return {
+    status: record.status,
+    ...(illustration ? { illustration } : {}),
+    reason: typeof record.reason === "string" ? record.reason.trim() : "",
     requestId: typeof record.requestId === "string" ? record.requestId.trim() : "",
   };
 }
@@ -517,10 +555,10 @@ export class QuestionGenerationService {
     this.publishableKey = config.supabasePublishableKey;
   }
 
-  async generate(request: QuestionGenerationRequest): Promise<QuestionGenerationResponse> {
+  private async postJson(payload: unknown, timeoutMs: number, timeoutMessage: string): Promise<unknown> {
     const session = await this.sessionProvider();
     const controller = new AbortController();
-    const timeout = globalThis.setTimeout(() => controller.abort(), 95_000);
+    const timeout = globalThis.setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await this.fetcher(this.endpoint, {
         method: "POST",
@@ -529,26 +567,42 @@ export class QuestionGenerationService {
           Authorization: `Bearer ${session.accessToken}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(request),
+        body: JSON.stringify(payload),
         signal: controller.signal,
       });
-      let payload: unknown = null;
+      let responsePayload: unknown = null;
       const text = await response.text();
       if (text) {
-        try { payload = JSON.parse(text) as unknown; }
-        catch { payload = { error: text }; }
+        try { responsePayload = JSON.parse(text) as unknown; }
+        catch { responsePayload = { error: text }; }
       }
       if (!response.ok) {
-        throw new Error(errorMessage(payload, `تعذر إنشاء الأسئلة (${response.status}).`));
+        throw new Error(errorMessage(responsePayload, `تعذر تنفيذ الطلب (${response.status}).`));
       }
-      return parseQuestionGenerationResponse(payload, request.items);
+      return responsePayload;
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") {
-        throw new Error("تأخرت دفعة توليد الأسئلة أكثر من 90 ثانية. أعد المحاولة؛ لن تُفقد الدفعات المكتملة.");
-      }
+      if (error instanceof DOMException && error.name === "AbortError") throw new Error(timeoutMessage);
       throw error;
     } finally {
       globalThis.clearTimeout(timeout);
     }
+  }
+
+  async generate(request: QuestionGenerationRequest): Promise<QuestionGenerationResponse> {
+    const payload = await this.postJson(
+      request,
+      95_000,
+      "تأخرت دفعة توليد الأسئلة أكثر من 90 ثانية. أعد المحاولة؛ لن تُفقد الدفعات المكتملة.",
+    );
+    return parseQuestionGenerationResponse(payload, request.items);
+  }
+
+  async generateIllustration(request: VisualIllustrationRequest): Promise<VisualIllustrationResponse> {
+    const payload = await this.postJson(
+      request,
+      75_000,
+      "تأخر تحسين الرسم. احتفظ واثق بالرسم العلمي الحتمي ويمكن إعادة المحاولة لاحقًا.",
+    );
+    return parseVisualIllustrationResponse(payload);
   }
 }

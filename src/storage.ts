@@ -13,6 +13,7 @@ const LEGACY_SOURCES_KEY = "wathiq.phase0c.sources";
 
 const COMPATIBLE_GENERATION_VERSIONS = new Set([
   SOURCE_GENERATION_VERSION,
+  "source-grounded-policy-ai-14-contextual-stimulus-alignment",
   "source-grounded-policy-ai-13-trusted-enrichment",
   "source-grounded-policy-ai-12-advanced-visuals",
 ]);
@@ -99,6 +100,7 @@ export function normalizeExamDraft(value: unknown): ExamDraft | null {
     sourceRetrievalVersion: typeof candidate.sourceRetrievalVersion === "string" ? candidate.sourceRetrievalVersion : "",
     title: normalizedTitle,
     trustedEnrichmentEnabled: candidate.trustedEnrichmentEnabled !== false,
+    visualEnhancementEnabled: candidate.visualEnhancementEnabled !== false,
     examDate: typeof candidate.examDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(candidate.examDate)
       ? candidate.examDate
       : toDateInputValue(),
