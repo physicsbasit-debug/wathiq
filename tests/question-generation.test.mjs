@@ -187,7 +187,7 @@ test("يتحقق من ثلاثة بدائل ثم يربطها بخطة الاخ�
   assert.equal(generated[0].proposals[0].answer, "خاصية فيزيائية");
   assert.equal(generated[0].proposals[0].questionForm, "مفهومي");
   assert.deepEqual(generated[0].proposals[0].markScheme, ["تحديد العبارة العلمية الصحيحة."]);
-  assert.equal(SOURCE_GENERATION_VERSION, "source-grounded-policy-ai-10-strict-lesson-scope");
+  assert.equal(SOURCE_GENERATION_VERSION, "source-grounded-policy-ai-12-advanced-visuals");
   assert.equal(parsed.requestId, "WQ-TEST1234");
 });
 
@@ -389,4 +389,82 @@ test("لا يفرض رسم ضغط أو دائرة على درس النشاط ا�
   const refs = [{ id: "r-rad", sourceId: "s", sourceTitle: "كتاب", sourceKind: "كتاب الطالب", pageFrom: 12, pageTo: 12, excerpt: "النشاط الإشعاعي انبعاث تلقائي من نوى غير مستقرة.", context: "النشاط الإشعاعي انبعاث تلقائي من نوى غير مستقرة، وتوجد إشعاعات ألفا وبيتا وجاما.", score: 95 }];
   const request = buildQuestionGenerationRequest("اختبار قصير رسمي", "النشاط الإشعاعي", ["9-1 النشاط الإشعاعي في كل مكان", "9-2 أنواع الإشعاع"], 10, "الفيزياء", "متوسط", refs, [item], [item]);
   assert.equal(request.items[0].visualTarget, "none");
+});
+
+test("يفرض مخطط كهرباء ساكنة على مفردات التطبيق والاستدلال المناسبة", () => {
+  const plan = [{
+    id: "electrostatic-1",
+    lessonId: "lesson-electrostatic",
+    lessonLabel: "الشحنة والكهرباء الساكنة",
+    outcomeId: "outcome-electrostatic",
+    outcomeLabel: "تفسير الشحن بالدلك",
+    proposals: [],
+    questionType: "إجابة قصيرة",
+    marks: 2,
+    cognitiveLevel: "تطبيق",
+    sourceReferenceId: "electrostatic-ref",
+  }];
+  const request = buildQuestionGenerationRequest(
+    "اختبار قصير رسمي",
+    "الكهرباء الساكنة",
+    ["الشحنة الكهربائية", "الشحن بالدلك"],
+    10,
+    "الفيزياء",
+    "متوسط",
+    [{
+      id: "electrostatic-ref",
+      sourceId: "source-electrostatic",
+      sourceTitle: "كتاب الطالب",
+      sourceKind: "كتاب الطالب",
+      pageFrom: 10,
+      pageTo: 12,
+      excerpt: "تنتقل الإلكترونات عند دلك المسطرة البلاستيكية بقطعة قماش.",
+      context: "تنجذب قصاصات الورق إلى المسطرة المشحونة وتتنافر الشحنات المتماثلة.",
+      lessonTopic: "الشحنة الكهربائية",
+      score: 95,
+    }],
+    plan,
+    plan,
+  );
+  assert.equal(request.items[0].visualTarget, "electrostatic_diagram");
+});
+
+test("يختار عائلات المرئيات المتقدمة من محتوى الدرس دون صور حرة", () => {
+  const baseItem = {
+    id: "visual-advanced",
+    lessonId: "lesson",
+    lessonLabel: "الدرس العلمي",
+    outcomeId: "outcome",
+    outcomeLabel: "تفسير البيانات",
+    proposals: [],
+    questionType: "إجابة قصيرة",
+    marks: 2,
+    cognitiveLevel: "تطبيق",
+    sourceReferenceId: "ref-advanced",
+  };
+  const cases = [
+    ["انعكاس الضوء عند مرآة وقياس زاوية السقوط", "ray_diagram"],
+    ["تؤثر قوة احتكاك ووزن ورد فعل على جسم متحرك", "force_diagram"],
+    ["اقرأ تدريج ميزان الحرارة وسجل القراءة بالدرجة المئوية", "instrument_scale"],
+    ["يعرض الجدول نتائج تجربة وقياسات الزمن والمسافة", "data_table"],
+    ["تتبع مراحل تحول الطاقة في عملية متسلسلة", "flow_diagram"],
+  ];
+  for (const [excerpt, expected] of cases) {
+    const refs = [{
+      id: "ref-advanced", sourceId: "source", sourceTitle: "كتاب الطالب", sourceKind: "كتاب الطالب",
+      pageFrom: 10, pageTo: 10, excerpt, context: excerpt, score: 95,
+    }];
+    const request = buildQuestionGenerationRequest(
+      "اختبار قصير رسمي",
+      "موضوع بصري",
+      ["الدرس العلمي", "درس مساعد"],
+      10,
+      "الفيزياء",
+      "متوسط",
+      refs,
+      [baseItem],
+      [baseItem],
+    );
+    assert.equal(request.items[0].visualTarget, expected, excerpt);
+  }
 });

@@ -17,7 +17,7 @@ import type { LessonCatalogOption } from "./lesson-catalog.js";
 import { SCIENCE_ASSESSMENT_POLICY_ID } from "./assessment-policy.js";
 import { parseQuestionVisualSpec } from "./question-visual.js";
 
-export const SOURCE_GENERATION_VERSION = "source-grounded-policy-ai-10-strict-lesson-scope";
+export const SOURCE_GENERATION_VERSION = "source-grounded-policy-ai-12-advanced-visuals";
 export const GENERATION_BATCH_SIZE = 2;
 
 export type QuestionReferenceScopeMode = "page-range" | "page-neighborhood" | "strict-title-fallback" | "legacy-title";
@@ -161,6 +161,12 @@ function parseAlternative(value: unknown, expected: QuestionGenerationItem): Gen
   if (questionForm === "حسابي" && !workingRequired) {
     throw new Error("السؤال الحسابي لا يطلب إظهار خطوات الحل.");
   }
+  if (expected.visualTarget !== "none") {
+    const visualReference = normalizeVisualText(`${stimulus} ${text}`);
+    if (!/(الشكل|الرسم|المخطط|الدائره|البيانات الممثله|التمثيل)/u.test(visualReference)) {
+      throw new Error("السؤال البصري لا يعتمد صراحة على الشكل المرفق.");
+    }
+  }
   if (expected.questionType === "اختيار من متعدد") {
     if (options.length !== 4 || new Set(options).size !== 4) {
       throw new Error("أحد أسئلة الاختيار من متعدد لا يحتوي أربعة بدائل مختلفة.");
@@ -282,6 +288,25 @@ function deriveQuestionVisualTarget(
   const evidence = normalizeVisualText(`${item.lessonLabel} ${referenceContent}`);
   const pattern = deriveQuestionDesignPattern(item, officialIndex, subject);
   if (normalizedSubject.includes("فيزياء")) {
+    if (/(ترمومتر|ميزان حراره|مخبار|سحاحه|تدريج|قراءه جهاز|اميتر|فولتميتر|مسطره مدرجه)/u.test(evidence)) {
+      return "instrument_scale";
+    }
+    if (/(انعكاس|انكسار|عدسه|مرآه|مراه|شعاع ضوئي|اشعه ضوئيه|ضوء|منشور|بصريات|زاويه السقوط|زاويه الانكسار)/u.test(evidence)) {
+      return item.cognitiveLevel === "معرفة" && item.marks === 1 ? "none" : "ray_diagram";
+    }
+    if (/(قوه|قوى|احتكاك|وزن|شد|رد فعل|اتزان|عزم|نقطه ارتكاز|مخطط جسم حر)/u.test(evidence)) {
+      return item.cognitiveLevel === "معرفة" && item.marks === 1 ? "none" : "force_diagram";
+    }
+    if (/(خطوات|مراحل|تسلسل|تحول|دوره|عمليه|مسار)/u.test(evidence) && item.cognitiveLevel !== "معرفة") {
+      return "flow_diagram";
+    }
+    if (/(جدول|قياسات|نتائج تجربه|سجل القراءات|بيانات التجربه)/u.test(evidence)) {
+      return "data_table";
+    }
+    if (/(كهرباء ساكنه|كهربائيه ساكنه|شحنه|شحنت|الكترون|بروتون|مجال كهربائي|دلك|مسطره|قماش|تجاذب|تنافر|موصل|عازل)/u.test(evidence)) {
+      if (item.cognitiveLevel === "معرفة" && item.marks === 1 && pattern === "مفهومي") return "none";
+      return "electrostatic_diagram";
+    }
     if (/(دائره|بطاريه|مصباح|مقاوم|تيار|جهد|مكثف|اميتر|فولتميتر)/u.test(evidence)) {
       if (item.cognitiveLevel === "معرفة" && item.marks === 1) return "none";
       return "circuit_diagram";

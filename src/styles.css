@@ -1245,8 +1245,8 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
 .proposal-stimulus,
 .paper-stimulus { white-space: pre-line; border: 1px solid #d9e4f0; border-radius: 12px; background: #f7fafd; color: #31465f; line-height: 1.75; }
 .proposal-stimulus { margin: 10px 0 2px; padding: 10px 12px; font-size: 12px; }
-.proposal-options li { display: grid; grid-template-columns: 24px 1fr; gap: 7px; align-items: start; }
-.proposal-options li b { color: var(--navy); }
+.proposal-options li { display: grid; grid-template-columns: 18px 1fr; gap: 9px; align-items: start; }
+.proposal-option-circle { width: 14px; height: 14px; border: 1.5px solid var(--navy); border-radius: 50%; margin-top: 5px; }
 .proposal-mark-scheme { margin-top: 10px; padding: 10px 12px; border-radius: 12px; background: #f8fafc; border: 1px solid #e1e7ef; }
 .proposal-mark-scheme > strong { color: var(--navy-deep); font-size: 12px; }
 .proposal-mark-scheme ol { margin: 7px 18px 0 0; padding: 0; color: #43546a; font-size: 12px; line-height: 1.7; }
@@ -1257,7 +1257,6 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
 .structured-question-header > strong { font-size: 11px; white-space: nowrap; }
 .paper-subpart { margin: 0 28px 18px 0; }
 .paper-stimulus { margin: 0 28px 10px 0; padding: 9px 11px; font-size: 12px; }
-.paper-option-label { color: #111; font-style: normal; min-width: 16px; }
 .paper-options li em { font-style: normal; }
 .paper-option-circle { width: 15px; height: 15px; border: 1px solid #222; border-radius: 50%; flex: 0 0 15px; }
 .working-note { margin: 6px 28px 0; color: #4a586b; font-size: 10px; font-weight: 700; }
@@ -1597,4 +1596,33 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
   .lesson-book-tree { max-height: 560px; }
   .lesson-unit-items { grid-template-columns: 1fr; }
   .lesson-source-tree > summary { padding: 12px; }
+}
+
+/* Phase 1-C3: advanced deterministic assessment visuals */
+.qv-series-1 { stroke-dasharray: 9 5; }
+.qv-series-2 { stroke-dasharray: 3 4; }
+.qv-series-3 { stroke-dasharray: 12 4 2 4; }
+.qv-legend, .qv-table-text, .qv-flow-text { fill: #26384e; font-size: 11px; direction: rtl; unicode-bidi: plaintext; }
+.qv-table-head, .qv-table-row-head { fill: #eef2f6; stroke: #182536; stroke-width: 1.2; }
+.qv-table-cell { fill: #fff; stroke: #182536; stroke-width: 1; }
+.qv-table-missing { fill: #fafafa; stroke-dasharray: 4 3; }
+.qv-table-head-text { font-weight: 800; }
+.qv-answer-line { stroke: #182536; stroke-width: 1.2; }
+.qv-instrument-body, .qv-meter-arc, .qv-meniscus, .qv-mirror, .qv-boundary, .qv-normal, .qv-principal-axis, .qv-lens, .qv-prism, .qv-beam, .qv-pivot { fill: #fff; stroke: #182536; stroke-width: 2; }
+.qv-instrument-liquid, .qv-instrument-fill { fill: #dbe4ef; stroke: none; }
+.qv-scale-tick, .qv-meter-needle, .qv-ray, .qv-force-arrow, .qv-flow-arrow { fill: none; stroke: #172b45; stroke-width: 2; }
+.qv-normal { stroke-dasharray: 5 4; }
+.qv-ray { stroke-width: 2.4; }
+.qv-mirror { stroke-width: 4; }
+.qv-lens { fill: #f7f9fc; }
+.qv-prism { fill: #f7f9fc; }
+.qv-beam { stroke-width: 5; }
+.qv-pivot { fill: #eef2f6; }
+.qv-flow-node { fill: #fff; stroke: #172b45; stroke-width: 1.7; }
+.qv-vector-1 { stroke-dasharray: 8 4; }
+.qv-vector-2 { stroke-dasharray: 3 3; }
+.qv-vector-3 { stroke-dasharray: 11 4 2 4; }
+
+@media print {
+  .qv-table-head, .qv-table-row-head, .qv-instrument-liquid, .qv-instrument-fill, .qv-flow-node, .qv-lens, .qv-prism, .qv-pivot { fill: #eee; }
 }

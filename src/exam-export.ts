@@ -86,6 +86,17 @@ const EXPORT_STYLES = `
   .qv-bar, .qv-liquid { fill: #e8edf2; stroke: #172b45; stroke-width: 1.2; }
   .qv-object, .qv-component-fill { fill: #fff; stroke: #172b45; stroke-width: 2; }
   .qv-object-label, .qv-meter { fill: #172b45; font-weight: 700; }
+  .qv-charged-object, .qv-cloth, .qv-rod, .qv-paper-piece, .qv-instrument-body, .qv-meter-arc, .qv-meniscus, .qv-mirror, .qv-boundary, .qv-normal, .qv-principal-axis, .qv-lens, .qv-prism, .qv-beam, .qv-pivot { fill: #fff; stroke: #182536; stroke-width: 2; }
+  .qv-charge-main, .qv-table-text, .qv-table-head-text, .qv-flow-text, .qv-legend { fill: #26384e; font-size: 11px; }
+  .qv-electron-arrow, .qv-field-line, .qv-scale-tick, .qv-meter-needle, .qv-ray, .qv-force-arrow, .qv-flow-arrow, .qv-answer-line { fill: none; stroke: #172b45; stroke-width: 2; }
+  .qv-table-head, .qv-table-row-head { fill: #eef2f6; stroke: #182536; stroke-width: 1.2; }
+  .qv-table-cell, .qv-flow-node { fill: #fff; stroke: #182536; stroke-width: 1; }
+  .qv-table-missing { fill: #fafafa; stroke-dasharray: 4 3; }
+  .qv-instrument-liquid, .qv-instrument-fill { fill: #dbe4ef; stroke: none; }
+  .qv-normal { stroke-dasharray: 5 4; }
+  .qv-series-1, .qv-vector-1 { stroke-dasharray: 9 5; }
+  .qv-series-2, .qv-vector-2 { stroke-dasharray: 3 4; }
+  .qv-series-3, .qv-vector-3 { stroke-dasharray: 12 4 2 4; }
   .paper-footer { text-align: center; margin-top: 8mm; }
   .teacher-key { margin-top: 10mm; break-before: page; page-break-before: always; }
   .teacher-key h2 { text-align: center; border-bottom: 2px solid #173b6d; padding-bottom: 3mm; }
@@ -125,6 +136,17 @@ const SVG_RASTER_STYLES = `
   .qv-bar, .qv-liquid { fill: #e8edf2; stroke: #172b45; stroke-width: 1.2; }
   .qv-object, .qv-component-fill { fill: #fff; stroke: #172b45; stroke-width: 2; }
   .qv-object-label, .qv-meter { fill: #172b45; font-weight: 700; }
+  .qv-charged-object, .qv-cloth, .qv-rod, .qv-paper-piece, .qv-instrument-body, .qv-meter-arc, .qv-meniscus, .qv-mirror, .qv-boundary, .qv-normal, .qv-principal-axis, .qv-lens, .qv-prism, .qv-beam, .qv-pivot { fill: #fff; stroke: #182536; stroke-width: 2; }
+  .qv-charge-main, .qv-table-text, .qv-table-head-text, .qv-flow-text, .qv-legend { fill: #26384e; font-size: 11px; }
+  .qv-electron-arrow, .qv-field-line, .qv-scale-tick, .qv-meter-needle, .qv-ray, .qv-force-arrow, .qv-flow-arrow, .qv-answer-line { fill: none; stroke: #172b45; stroke-width: 2; }
+  .qv-table-head, .qv-table-row-head { fill: #eef2f6; stroke: #182536; stroke-width: 1.2; }
+  .qv-table-cell, .qv-flow-node { fill: #fff; stroke: #182536; stroke-width: 1; }
+  .qv-table-missing { fill: #fafafa; stroke-dasharray: 4 3; }
+  .qv-instrument-liquid, .qv-instrument-fill { fill: #dbe4ef; stroke: none; }
+  .qv-normal { stroke-dasharray: 5 4; }
+  .qv-series-1, .qv-vector-1 { stroke-dasharray: 9 5; }
+  .qv-series-2, .qv-vector-2 { stroke-dasharray: 3 4; }
+  .qv-series-3, .qv-vector-3 { stroke-dasharray: 12 4 2 4; }
 `;
 
 async function svgElementToPngDataUrl(svg: SVGSVGElement): Promise<string> {
@@ -170,39 +192,97 @@ export async function prepareWordHtml(html: string): Promise<string> {
   const parsed = new DOMParser().parseFromString(html, "text/html");
   const svgs = [...parsed.querySelectorAll("svg")];
   for (const svg of svgs) {
-    const dataUrl = await svgElementToPngDataUrl(svg as SVGSVGElement);
-    const image = parsed.createElement("img");
-    image.src = dataUrl;
-    image.alt = svg.getAttribute("aria-label") ?? "رسم تعليمي";
-    image.className = "question-visual-raster";
-    svg.replaceWith(image);
+    try {
+      const dataUrl = await svgElementToPngDataUrl(svg as SVGSVGElement);
+      const image = parsed.createElement("img");
+      image.src = dataUrl;
+      image.alt = svg.getAttribute("aria-label") ?? "رسم تعليمي";
+      image.className = "question-visual-raster";
+      svg.replaceWith(image);
+    } catch {
+      // يبقى SVG مضمنًا في ملف Word بدل إلغاء التصدير كله بسبب رسم واحد.
+      svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+      svg.setAttribute("role", svg.getAttribute("role") ?? "img");
+      svg.setAttribute("style", "display:block;width:100%;height:auto;max-height:88mm;margin:0 auto;");
+    }
   }
   return `<!doctype html>${parsed.documentElement.outerHTML}`;
 }
 
-export async function downloadWordHtml(fileName: string, html: string): Promise<void> {
-  const wordHtml = await prepareWordHtml(html);
-  const blob = new Blob(["\ufeff", wordHtml], { type: "application/msword;charset=utf-8" });
+type MicrosoftNavigator = Navigator & {
+  msSaveOrOpenBlob?: (blob: Blob, defaultName?: string) => boolean;
+};
+
+export function downloadBlob(fileName: string, blob: Blob): void {
+  const navigatorWithLegacySave = window.navigator as MicrosoftNavigator;
+  if (typeof navigatorWithLegacySave.msSaveOrOpenBlob === "function") {
+    navigatorWithLegacySave.msSaveOrOpenBlob(blob, fileName);
+    return;
+  }
+
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = `${safeExportFileName(fileName)}.doc`;
+  anchor.download = fileName;
+  anchor.style.display = "none";
   document.body.append(anchor);
   anchor.click();
   anchor.remove();
   window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
 }
 
+export async function downloadWordHtml(fileName: string, html: string): Promise<void> {
+  const wordHtml = await prepareWordHtml(html);
+  const blob = new Blob(["\ufeff", wordHtml], { type: "application/msword;charset=utf-8" });
+  downloadBlob(`${safeExportFileName(fileName)}.doc`, blob);
+}
+
+async function waitForFrameAssets(frameDocument: Document): Promise<void> {
+  const fontReady = frameDocument.fonts?.ready ?? Promise.resolve();
+  const imageReady = [...frameDocument.images].map((image) => {
+    if (image.complete) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      image.addEventListener("load", () => resolve(), { once: true });
+      image.addEventListener("error", () => resolve(), { once: true });
+    });
+  });
+  await Promise.all([fontReady, ...imageReady]);
+}
+
 export function printHtmlDocument(title: string, html: string): boolean {
-  const popup = window.open("", "_blank", "noopener,noreferrer");
-  if (!popup) return false;
-  popup.document.open();
-  popup.document.write(html);
-  popup.document.close();
-  popup.document.title = title;
-  window.setTimeout(() => {
-    popup.focus();
-    popup.print();
-  }, 350);
+  const iframe = document.createElement("iframe");
+  iframe.setAttribute("aria-hidden", "true");
+  iframe.style.position = "fixed";
+  iframe.style.insetInlineEnd = "0";
+  iframe.style.bottom = "0";
+  iframe.style.width = "1px";
+  iframe.style.height = "1px";
+  iframe.style.border = "0";
+  iframe.style.opacity = "0";
+  iframe.style.pointerEvents = "none";
+  document.body.append(iframe);
+
+  const frameWindow = iframe.contentWindow;
+  const frameDocument = frameWindow?.document;
+  if (!frameWindow || !frameDocument) {
+    iframe.remove();
+    return false;
+  }
+
+  frameDocument.open();
+  frameDocument.write(html);
+  frameDocument.close();
+  frameDocument.title = title;
+
+  void (async () => {
+    try {
+      await waitForFrameAssets(frameDocument);
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 120));
+      frameWindow.focus();
+      frameWindow.print();
+    } finally {
+      window.setTimeout(() => iframe.remove(), 1_200);
+    }
+  })();
   return true;
 }

@@ -26,8 +26,9 @@ type Difficulty = "سهل" | "متوسط" | "متقدم";
 type ItemDifficulty = "منخفض" | "متوسط" | "مرتفع";
 type AssessmentType = "اختبار قصير رسمي" | "امتحان نهاية الفصل الدراسي";
 type QuestionDesignPattern = "مفهومي" | "سياقي" | "حسابي" | "بيانات" | "استقصائي" | "مقارنة";
-type QuestionVisualType = "none" | "line_graph" | "bar_chart" | "pressure_diagram" | "circuit_diagram";
-type QuestionVisualVariant = "default" | "submerged_object" | "depth_comparison" | "force_area" | "liquid_column" | "series_circuit" | "measurement_circuit" | "trend" | "comparison";
+type QuestionVisualType = "none" | "line_graph" | "bar_chart" | "pressure_diagram" | "circuit_diagram" | "electrostatic_diagram" | "data_table" | "instrument_scale" | "ray_diagram" | "force_diagram" | "flow_diagram";
+type QuestionVisualVariant = "default" | "submerged_object" | "depth_comparison" | "force_area" | "liquid_column" | "series_circuit" | "measurement_circuit" | "charge_transfer" | "attraction_repulsion" | "electric_field" | "trend" | "comparison" | "multi_series" | "table_completion" | "table_comparison" | "thermometer" | "burette" | "measuring_cylinder" | "meter_scale" | "reflection" | "refraction" | "converging_lens" | "prism" | "free_body" | "balanced_forces" | "moments" | "linear_flow" | "cycle_flow" | "state_change";
+type QuestionVisualRole = "read" | "calculate" | "interpret" | "compare" | "complete" | "draw" | "evaluate";
 type CircuitComponent = "battery" | "switch_open" | "switch_closed" | "lamp" | "resistor" | "ammeter" | "voltmeter";
 
 interface QuestionVisualPoint {
@@ -36,11 +37,26 @@ interface QuestionVisualPoint {
   label: string;
 }
 
+interface QuestionVisualSeries {
+  label: string;
+  points: QuestionVisualPoint[];
+}
+
+interface QuestionVisualVector {
+  label: string;
+  x: number;
+  y: number;
+  dx: number;
+  dy: number;
+  magnitude: number;
+}
+
 interface QuestionVisualSpec {
   type: QuestionVisualType;
   visualId: string;
   variant: QuestionVisualVariant;
   purpose: string;
+  role: QuestionVisualRole;
   title: string;
   altText: string;
   xAxisLabel: string;
@@ -52,10 +68,16 @@ interface QuestionVisualSpec {
   yMin: number;
   yMax: number;
   points: QuestionVisualPoint[];
+  series: QuestionVisualSeries[];
   labels: string[];
   values: number[];
   components: CircuitComponent[];
   annotations: string[];
+  tableColumns: string[];
+  tableRows: string[];
+  tableCells: string[][];
+  hiddenCells: string[];
+  vectors: QuestionVisualVector[];
 }
 
 type LessonScopeMode = "page-range" | "page-neighborhood" | "strict-title-fallback" | "legacy-title";
@@ -672,6 +694,8 @@ function buildSystemInstructions(): string {
     "عند styleTarget=مقارنة: حدّد بوضوح الجانبين المطلوبين، واجعل كل فرق أو تشابه نقطة تصحيح مستقلة.",
     "لكل مفردة قد يرفق الخادم fixedVisual جاهزًا وحتميًا. لا تنشئ visual ولا تعدله ولا تعيده في JSON؛ ابنِ البدائل الثلاثة بالاعتماد على fixedVisual نفسه.",
     "إذا كان fixedVisual.type لا يساوي none، فيجب أن يشير متن السؤال أو المطلوب بوضوح إلى الشكل أو الرسم أو البيانات، وأن تكون الإجابة متسقة حرفيًا مع القيم والعناصر الواردة في fixedVisual.",
+    "التزم بدور fixedVisual.role: read للقراءة، calculate للحساب، interpret للتفسير، compare للمقارنة، complete لإكمال جدول أو تسلسل، draw لإضافة جزء إلى الشكل، وevaluate لتقييم طريقة أو بيانات.",
+    "في data_table استخدم عناوين الأعمدة والوحدات والخلايا المخفية كما هي. في instrument_scale اطلب قراءة التدريج مع الوحدة. في ray_diagram وforce_diagram وflow_diagram اجعل السؤال غير قابل للحل دون الرجوع إلى الشكل.",
     "لا تضف إلى السؤال قيمة بصرية غير موجودة في fixedVisual، ولا تجعل الرسم يكشف الإجابة مباشرة. الرسم مملوك للخادم ومناسب للطباعة بالأبيض والأسود.",
     "مفردة الاختيار من متعدد درجتها واحدة وتقيس هدفًا واحدًا، ولها أربعة بدائل وإجابة صحيحة واحدة فقط.",
     "ابنِ مشتتات الاختيار من متعدد من أخطاء مفاهيمية أو عددية شائعة، واجعلها متجانسة في النوع والوحدة والطول، ولا تستخدم: جميع ما سبق، لا شيء مما سبق، أو الأول والثاني فقط.",
@@ -687,6 +711,8 @@ function buildSystemInstructions(): string {
     "لا تسأل عن أرقام صفحات أو حقوق نشر أو مقدمة الكتاب إلا إذا كان الموضوع المطلوب عنها صراحة.",
     "إذا كان النص المرجعي ضعيفًا لمفردة معينة، أنشئ سؤالًا أبسط على حقيقة صريحة واضبط needsReview=true. لا تخترع.",
     "لا تستخدم عبارات مثل: بالرجوع إلى النص أو وفقًا للمصدر داخل نص السؤال.",
+    "إذا كان fixedVisual.type لا يساوي none، فيجب أن تعتمد صياغة كل بديل على الشكل اعتمادًا حقيقيًا وتذكر بوضوح: بالشكل المرفق أو الرسم المرفق أو البيانات الممثلة. لا تكتب سؤالًا يمكن حله دون النظر إلى الشكل.",
+    "لا تجعل الشكل يكشف الإجابة مباشرة؛ استخدمه لتقديم التجهيز أو العلاقة أو البيانات التي يحتاج الطالب إلى تحليلها.",
     "لا تضع شروحًا خارج مخطط JSON المطلوب.",
   ].join("\n");
 }
@@ -739,7 +765,7 @@ function buildUserPrompt(request: GenerationRequest, evidenceCatalog: EvidenceCa
       exactPlanItemIds: request.items.map((item) => item.planItemId),
       evidenceRule: "أعد sourceEvidenceId من allowedEvidenceIds الخاصة بالمفردة فقط.",
       styleRule: "اجعل questionForm مطابقًا حرفيًا لـ styleTarget. أعد markScheme كمصفوفة طولها يساوي marks تمامًا، وكل عنصر فيها معيار مستقل غير فارغ لدرجة واحدة.",
-      visualRule: "لا تعد visual في JSON. استخدم fixedVisual الذي جهزه الخادم كما هو، وأشر إليه بوضوح عندما لا يكون نوعه none.",
+      visualRule: "لا تعد visual في JSON. إذا كان fixedVisual.type لا يساوي none، يجب أن تعتمد جميع البدائل الثلاثة على الشكل نفسه اعتمادًا جوهريًا وتذكر الشكل أو الرسم في نص السؤال؛ وإلا فستُرفض المفردة.",
     },
   });
 }
@@ -927,7 +953,7 @@ function parseGenerationRequest(value: unknown): GenerationRequest {
       sourceReferenceId,
       lessonLabel,
       styleTarget: requireEnum(item.styleTarget, ["مفهومي", "سياقي", "حسابي", "بيانات", "استقصائي", "مقارنة"] as const, "نمط بناء السؤال غير صالح."),
-      visualTarget: requireEnum(item.visualTarget, ["none", "line_graph", "bar_chart", "pressure_diagram", "circuit_diagram"] as const, "نوع الرسم التعليمي غير صالح."),
+      visualTarget: requireEnum(item.visualTarget, ["none", "line_graph", "bar_chart", "pressure_diagram", "circuit_diagram", "electrostatic_diagram", "data_table", "instrument_scale", "ray_diagram", "force_diagram", "flow_diagram"] as const, "نوع الرسم التعليمي غير صالح."),
       ...(item.regenerationAnchor === undefined ? {} : {
         regenerationAnchor: (() => {
           const anchor = requireRecord(item.regenerationAnchor, "مرساة إعادة التوليد غير صالحة.");
@@ -1163,6 +1189,7 @@ function validateAndHydrateGeneratedPayload(
           requested.sourceReferenceId,
           evidenceCatalog,
           requested.styleTarget,
+          requested.visualTarget,
           requested.marks,
           requested.lessonLabel,
           requested.regenerationAnchor,
@@ -1174,7 +1201,7 @@ function validateAndHydrateGeneratedPayload(
   return { items: hydratedItems };
 }
 
-const VISUAL_TYPES: readonly QuestionVisualType[] = ["none", "line_graph", "bar_chart", "pressure_diagram", "circuit_diagram"];
+const VISUAL_TYPES: readonly QuestionVisualType[] = ["none", "line_graph", "bar_chart", "pressure_diagram", "circuit_diagram", "electrostatic_diagram", "data_table", "instrument_scale", "ray_diagram", "force_diagram", "flow_diagram"];
 const CIRCUIT_COMPONENTS: readonly CircuitComponent[] = ["battery", "switch_open", "switch_closed", "lamp", "resistor", "ammeter", "voltmeter"];
 
 function emptyVisualSpec(): QuestionVisualSpec {
@@ -1183,6 +1210,7 @@ function emptyVisualSpec(): QuestionVisualSpec {
     visualId: "",
     variant: "default",
     purpose: "",
+    role: "read",
     title: "",
     altText: "",
     xAxisLabel: "",
@@ -1194,10 +1222,16 @@ function emptyVisualSpec(): QuestionVisualSpec {
     yMin: 0,
     yMax: 1,
     points: [],
+    series: [],
     labels: [],
     values: [],
     components: [],
     annotations: [],
+    tableColumns: [],
+    tableRows: [],
+    tableCells: [],
+    hiddenCells: [],
+    vectors: [],
   };
 }
 
@@ -1289,6 +1323,66 @@ function inferLiquidName(context: string): string {
   return "السائل";
 }
 
+function visualRoleForItem(item: GenerationItem): QuestionVisualRole {
+  if (item.styleTarget === "حسابي") return "calculate";
+  if (item.styleTarget === "مقارنة") return "compare";
+  if (item.styleTarget === "استقصائي") return "evaluate";
+  if (item.styleTarget === "بيانات") return item.cognitiveLevel === "استدلال" ? "interpret" : "read";
+  return item.cognitiveLevel === "تطبيق" ? "interpret" : "read";
+}
+
+function scientificTableProfile(context: string): {
+  columns: string[];
+  rows: string[];
+  cells: string[][];
+} {
+  if (/(حرار|تبريد|تسخين|درجه)/u.test(context)) {
+    return {
+      columns: ["الزمن (min)", "درجة الحرارة (°C)"],
+      rows: ["1", "2", "3", "4", "5"],
+      cells: [["0", "22"], ["1", "31"], ["2", "39"], ["3", "46"], ["4", "51"]],
+    };
+  }
+  if (/(جهد|تيار|مقاوم|كهرب)/u.test(context)) {
+    return {
+      columns: ["فرق الجهد (V)", "شدة التيار (A)"],
+      rows: ["1", "2", "3", "4", "5"],
+      cells: [["1.0", "0.20"], ["2.0", "0.40"], ["3.0", "0.60"], ["4.0", "0.80"], ["5.0", "1.00"]],
+    };
+  }
+  if (/(ضغط|عمق|سائل)/u.test(context)) {
+    return {
+      columns: ["العمق (m)", "الضغط (kPa)"],
+      rows: ["1", "2", "3", "4", "5"],
+      cells: [["0.5", "5"], ["1.0", "10"], ["1.5", "15"], ["2.0", "20"], ["2.5", "25"]],
+    };
+  }
+  return {
+    columns: ["رقم القياس", "القيمة"],
+    rows: ["1", "2", "3", "4", "5"],
+    cells: [["1", "2.1"], ["2", "3.0"], ["3", "4.2"], ["4", "5.1"], ["5", "6.0"]],
+  };
+}
+
+function instrumentProfile(context: string, seed: number): {
+  variant: QuestionVisualVariant;
+  device: string;
+  unit: string;
+  values: number[];
+} {
+  if (/(سحاحه|معايره)/u.test(context)) {
+    return { variant: "burette", device: "سحاحة", unit: "cm³", values: [0, 50, 1, 18 + (seed % 12)] };
+  }
+  if (/(مخبار|حجم سائل|اسطوانه مدرجه)/u.test(context)) {
+    return { variant: "measuring_cylinder", device: "مخبار مدرج", unit: "cm³", values: [0, 100, 10, 40 + (seed % 5) * 10] };
+  }
+  if (/(اميتر|فولتميتر|تيار|جهد)/u.test(context)) {
+    const volt = /فولتميتر|جهد/u.test(context);
+    return { variant: "meter_scale", device: volt ? "فولتميتر" : "أميتر", unit: volt ? "V" : "A", values: [0, volt ? 10 : 5, 1, volt ? 6 : 3] };
+  }
+  return { variant: "thermometer", device: "ميزان حرارة", unit: "°C", values: [-10, 100, 10, 20 + (seed % 6) * 10] };
+}
+
 function buildServerOwnedVisualSpec(item: GenerationItem, request: GenerationRequest): QuestionVisualSpec {
   if (item.visualTarget === "none") return emptyVisualSpec();
 
@@ -1297,6 +1391,123 @@ function buildServerOwnedVisualSpec(item: GenerationItem, request: GenerationReq
   const seed = visualSeed(`${item.planItemId}|${item.lessonLabel}|${item.visualTarget}|${item.styleTarget}`);
   const titleSuffix = item.lessonLabel ? ` - ${item.lessonLabel}` : "";
   const visualId = `visual-${item.planItemId}`;
+  const role = visualRoleForItem(item);
+
+  if (item.visualTarget === "data_table") {
+    const profile = scientificTableProfile(context);
+    const hiddenCells = item.styleTarget === "بيانات" || item.cognitiveLevel === "استدلال"
+      ? [`r${1 + (seed % 3)}c1`]
+      : [];
+    return {
+      ...emptyVisualSpec(),
+      type: "data_table",
+      visualId,
+      variant: hiddenCells.length ? "table_completion" : "table_comparison",
+      role: hiddenCells.length ? "complete" : role,
+      purpose: hiddenCells.length ? "إكمال قيمة ناقصة ثم تفسير نمط البيانات" : "قراءة بيانات علمية ومقارنتها",
+      title: `جدول بيانات علمية${titleSuffix}`,
+      altText: "جدول منظم يعرض قياسات علمية، وقد يحتوي خلية واحدة يطلب من الطالب إكمالها",
+      tableColumns: profile.columns,
+      tableRows: profile.rows,
+      tableCells: profile.cells,
+      hiddenCells,
+      annotations: ["استخدم عناوين الأعمدة والوحدات عند الإجابة"],
+    };
+  }
+
+  if (item.visualTarget === "instrument_scale") {
+    const profile = instrumentProfile(context, seed);
+    return {
+      ...emptyVisualSpec(),
+      type: "instrument_scale",
+      visualId,
+      variant: profile.variant,
+      role: "read",
+      purpose: "قراءة تدريج جهاز قياس علمي بدقة مع مراعاة الوحدة",
+      title: `قراءة ${profile.device}${titleSuffix}`,
+      altText: `تدريج ${profile.device} بقيمة محددة يطلب من الطالب قراءتها`,
+      labels: [profile.device, profile.unit],
+      values: profile.values,
+      annotations: ["حدد قيمة أصغر تدريج قبل تسجيل القراءة"],
+    };
+  }
+
+  if (item.visualTarget === "ray_diagram") {
+    const variant: QuestionVisualVariant = /منشور/u.test(context)
+      ? "prism"
+      : /عدسه/u.test(context)
+        ? "converging_lens"
+        : /انكسار/u.test(context)
+          ? "refraction"
+          : "reflection";
+    return {
+      ...emptyVisualSpec(),
+      type: "ray_diagram",
+      visualId,
+      variant,
+      role: item.styleTarget === "استقصائي" ? "draw" : role,
+      purpose: variant === "reflection" ? "قراءة أو إكمال مسار شعاع منعكس" : variant === "refraction" ? "قراءة أو إكمال مسار شعاع منكسر" : "تتبع مسار الضوء خلال عنصر بصري",
+      title: `مخطط أشعة ضوئية${titleSuffix}`,
+      altText: "مخطط بصريات خطي يوضح شعاعًا وعنصرًا بصريًا ومحورًا أو عمودًا مقامًا",
+      labels: [variant],
+      values: [35 + (seed % 20), 20 + (seed % 15)],
+      annotations: ["اتجاه انتشار الضوء"],
+    };
+  }
+
+  if (item.visualTarget === "force_diagram") {
+    const variant: QuestionVisualVariant = /عزم|ارتكاز/u.test(context)
+      ? "moments"
+      : item.styleTarget === "مقارنة"
+        ? "balanced_forces"
+        : "free_body";
+    const vectors: QuestionVisualVector[] = variant === "moments"
+      ? [
+        { label: "قوة 1", x: -130, y: 40, dx: 0, dy: -85, magnitude: 12 },
+        { label: "قوة 2", x: 130, y: 40, dx: 0, dy: -65, magnitude: 9 },
+      ]
+      : [
+        { label: "الوزن", x: 0, y: 10, dx: 0, dy: 90, magnitude: 10 },
+        { label: "رد الفعل", x: 0, y: -10, dx: 0, dy: -90, magnitude: 10 },
+        { label: "القوة المؤثرة", x: 55, y: 0, dx: 90, dy: 0, magnitude: 8 },
+        { label: "الاحتكاك", x: -55, y: 0, dx: -70, dy: 0, magnitude: variant === "balanced_forces" ? 8 : 6 },
+      ];
+    return {
+      ...emptyVisualSpec(),
+      type: "force_diagram",
+      visualId,
+      variant,
+      role: variant === "moments" ? "calculate" : role,
+      purpose: "تحليل اتجاهات القوى ومقاديرها على جسم أو عارضة",
+      title: `مخطط قوى${titleSuffix}`,
+      altText: "جسم أو عارضة تظهر عليها أسهم قوى مسماة في اتجاهات مختلفة",
+      labels: ["الجسم"],
+      vectors,
+      annotations: ["اتجاه السهم يبين اتجاه القوة"],
+    };
+  }
+
+  if (item.visualTarget === "flow_diagram") {
+    const stateChange = /(انصهار|تجمد|تبخر|تكثف|حالات الماده|تحول حاله)/u.test(context);
+    const energy = /(طاقه|تحول الطاقه)/u.test(context);
+    const labels = stateChange
+      ? ["صلب", "سائل", "غاز"]
+      : energy
+        ? ["طاقة مخزنة", "تحويل الطاقة", "طاقة مفيدة", "طاقة مهدرة"]
+        : ["المرحلة الأولى", "المرحلة الثانية", "المرحلة الثالثة", "النتيجة"];
+    return {
+      ...emptyVisualSpec(),
+      type: "flow_diagram",
+      visualId,
+      variant: stateChange ? "state_change" : item.styleTarget === "مقارنة" ? "cycle_flow" : "linear_flow",
+      role: item.cognitiveLevel === "استدلال" ? "interpret" : "complete",
+      purpose: "تتبع مراحل عملية علمية أو إكمال تسلسلها",
+      title: `مخطط عملية علمية${titleSuffix}`,
+      altText: "مخطط صناديق وأسهم يوضح مراحل عملية علمية مترابطة",
+      labels,
+      annotations: stateChange ? ["انصهار", "تبخر"] : ["ثم", "ثم", "ينتج"],
+    };
+  }
 
   if (item.visualTarget === "pressure_diagram") {
     const liquid = inferLiquidName(context);
@@ -1305,6 +1516,7 @@ function buildServerOwnedVisualSpec(item: GenerationItem, request: GenerationReq
       ...emptyVisualSpec(),
       type: "pressure_diagram" as const,
       visualId,
+      role,
       labels: [liquid, "الجسم"],
     };
     if (item.styleTarget === "حسابي") {
@@ -1362,6 +1574,7 @@ function buildServerOwnedVisualSpec(item: GenerationItem, request: GenerationReq
       ...emptyVisualSpec(),
       type: "circuit_diagram",
       visualId,
+      role,
       variant: measurement ? "measurement_circuit" : "series_circuit",
       purpose: measurement ? "قراءة أو تحليل دائرة كهربائية مزودة بجهاز قياس" : "تحديد مكونات ومسار دائرة كهربائية بسيطة",
       title: `${measurement ? "دائرة قياس كهربائية" : "دائرة كهربائية بسيطة"}${titleSuffix}`,
@@ -1381,6 +1594,58 @@ function buildServerOwnedVisualSpec(item: GenerationItem, request: GenerationReq
     };
   }
 
+  if (item.visualTarget === "electrostatic_diagram") {
+    const variant: QuestionVisualVariant = item.styleTarget === "استقصائي" || /دلك|قماش|مسطره/u.test(context)
+      ? "charge_transfer"
+      : item.styleTarget === "مقارنة" || item.cognitiveLevel === "استدلال"
+        ? "attraction_repulsion"
+        : "electric_field";
+    if (variant === "charge_transfer") {
+      return {
+        ...emptyVisualSpec(),
+        type: "electrostatic_diagram",
+        visualId,
+        role,
+        variant,
+        purpose: "تمثيل شحن جسم بالدلك وانجذاب قصاصات ورقية خفيفة",
+        title: `شحن جسم بالدلك${titleSuffix}`,
+        altText: "مسطرة بلاستيكية تُدلك بقطعة قماش ثم تقرّب من قصاصات ورق خفيفة دون إظهار نوع الشحنة",
+        labels: ["المسطرة البلاستيكية", "قطعة القماش"],
+        values: [seed % 2],
+        annotations: ["الدلك", "قصاصات ورق"],
+      };
+    }
+    if (variant === "attraction_repulsion") {
+      const unlike = seed % 2;
+      return {
+        ...emptyVisualSpec(),
+        type: "electrostatic_diagram",
+        visualId,
+        role,
+        variant,
+        purpose: "مقارنة اتجاه القوة بين جسمين مشحونين",
+        title: `تفاعل جسمين مشحونين${titleSuffix}`,
+        altText: unlike ? "كرتان مشحونتان بشحنتين مختلفتين" : "كرتان مشحونتان بشحنتين متماثلتين",
+        labels: ["الجسم س", "الجسم ص"],
+        values: [unlike],
+        annotations: [unlike ? "تجاذب" : "تنافر"],
+      };
+    }
+    return {
+      ...emptyVisualSpec(),
+      type: "electrostatic_diagram",
+      visualId,
+      role,
+      variant: "electric_field",
+      purpose: "قراءة اتجاه خطوط المجال الكهربائي بين شحنتين",
+      title: `خطوط المجال الكهربائي${titleSuffix}`,
+      altText: "خطوط مجال كهربائي بين شحنة موجبة وأخرى سالبة",
+      labels: ["الشحنة الموجبة", "الشحنة السالبة"],
+      values: [1, -1],
+      annotations: ["اتجاه المجال من الموجب إلى السالب"],
+    };
+  }
+
   const profile = graphProfile(context);
   const scale = 1 + ((seed % 3) * 0.25);
   const xValues = profile.xValues.map((value) => Number((value * scale).toFixed(2)));
@@ -1393,7 +1658,8 @@ function buildServerOwnedVisualSpec(item: GenerationItem, request: GenerationReq
       ...emptyVisualSpec(),
       type: "line_graph",
       visualId,
-      variant: "trend",
+      role,
+      variant: item.styleTarget === "مقارنة" ? "multi_series" : "trend",
       purpose: "قراءة اتجاه العلاقة بين متغيرين علميين",
       title: `${profile.title}${titleSuffix}`,
       altText: `رسم بياني خطي يوضح ${profile.title}`,
@@ -1406,6 +1672,12 @@ function buildServerOwnedVisualSpec(item: GenerationItem, request: GenerationReq
       yMin: Math.min(0, ...yValues),
       yMax: yMax > 0 ? yMax : 1,
       points,
+      series: item.styleTarget === "مقارنة"
+        ? [
+          { label: "الحالة أ", points },
+          { label: "الحالة ب", points: points.map((point, index) => ({ ...point, y: Number((point.y * 0.72 + index * 0.35).toFixed(2)) })) },
+        ]
+        : [],
       annotations: ["بيانات تجربة معطاة في السؤال"],
     };
   }
@@ -1416,6 +1688,7 @@ function buildServerOwnedVisualSpec(item: GenerationItem, request: GenerationReq
     ...emptyVisualSpec(),
     type: "bar_chart",
     visualId,
+    role,
     variant: "comparison",
     purpose: "مقارنة نتائج قياس بين أربع حالات",
     title: `مقارنة نتائج القياس${titleSuffix}`,
@@ -1467,6 +1740,7 @@ function validateAndHydrateAlternative(
   sourceReferenceId: string,
   evidenceCatalog: EvidenceCatalog,
   requestedStyleTarget: QuestionDesignPattern,
+  requestedVisualTarget: QuestionVisualType,
   marks: number,
   lessonLabel: string,
   regenerationAnchor?: RegenerationAnchor,
@@ -1493,6 +1767,12 @@ function validateAndHydrateAlternative(
   }
   if (alternative.questionForm === "حسابي" && !alternative.workingRequired) {
     throw retryableError("السؤال الحسابي لا يطلب إظهار خطوات الحل.");
+  }
+  if (requestedVisualTarget !== "none") {
+    const visualReference = normalizeForEvidence(`${alternative.stimulus} ${alternative.text}`);
+    if (!/(الشكل|الرسم|المخطط|الدائره|البيانات الممثله|التمثيل)/u.test(visualReference)) {
+      throw retryableError("السؤال البصري لا يعتمد صراحة على الشكل المرفق.");
+    }
   }
   if (questionType === "اختيار من متعدد") {
     const options = alternative.options.map((option) => typeof option === "string" ? option.trim() : "");

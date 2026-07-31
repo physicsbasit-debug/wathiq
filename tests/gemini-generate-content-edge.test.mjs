@@ -720,3 +720,38 @@ test("يحفظ السؤال ويضعه للمراجعة إذا تعذر طلب �
   assert.equal(result.items[0].alternatives[0].markScheme.length, 2);
   assert.equal(result.items[0].alternatives[0].needsReview, true);
 });
+
+test("يبني الخادم جداول وأجهزة قياس وأشعة وقوى وعمليات دون استدعاء مولد صور", () => {
+  const baseRequest = {
+    subject: "الفيزياء",
+    topic: "مرئيات علمية",
+    references: [{
+      id: "R-VIS", sourceId: "S", sourceTitle: "كتاب الطالب", sourceKind: "كتاب الطالب",
+      pageFrom: 1, pageTo: 1, content: "بيانات علمية موثقة.", lessonTopic: "درس", lessonScopeMode: "page-range",
+      lessonPageFrom: 1, lessonPageTo: 1,
+    }],
+  };
+  const build = (visualTarget, lessonLabel, styleTarget = "بيانات") => helpers.buildServerOwnedVisualSpec({
+    planItemId: `P-${visualTarget}`,
+    questionType: "إجابة قصيرة",
+    cognitiveLevel: "تطبيق",
+    marks: 2,
+    sourceReferenceId: "R-VIS",
+    lessonLabel,
+    styleTarget,
+    visualTarget,
+  }, { ...baseRequest, topic: lessonLabel });
+
+  const table = build("data_table", "جدول نتائج قياسات الجهد والتيار");
+  const instrument = build("instrument_scale", "قراءة تدريج ميزان الحرارة");
+  const ray = build("ray_diagram", "انعكاس الضوء عند مرآة");
+  const force = build("force_diagram", "القوى المؤثرة في جسم");
+  const flow = build("flow_diagram", "مراحل تحول الطاقة");
+
+  assert.equal(table.tableColumns.length, 2);
+  assert.equal(table.tableCells.length, 5);
+  assert.equal(instrument.values.length, 4);
+  assert.equal(ray.variant, "reflection");
+  assert.ok(force.vectors.length >= 2);
+  assert.ok(flow.labels.length >= 3);
+});

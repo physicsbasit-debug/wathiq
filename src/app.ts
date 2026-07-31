@@ -615,8 +615,7 @@ function renderPlanStep(): string {
 
 function renderProposalOptions(options: string[] | undefined): string {
   if (!options?.length) return "";
-  const labels = ["أ", "ب", "ج", "د"];
-  return `<ol class="proposal-options">${options.map((option, index) => `<li><b>${labels[index] ?? index + 1}</b><span>${escapeHtml(option)}</span></li>`).join("")}</ol>`;
+  return `<ol class="proposal-options">${options.map((option) => `<li><span class="proposal-option-circle" aria-hidden="true"></span><span>${escapeHtml(option)}</span></li>`).join("")}</ol>`;
 }
 
 function renderMarkScheme(points: string[] | undefined): string {
@@ -650,12 +649,11 @@ interface PaperLayout {
   labels: Map<string, string>;
 }
 
-const ARABIC_OPTION_LABELS = ["أ", "ب", "ج", "د"];
 const ARABIC_SUBPART_LABELS = ["أ", "ب", "ج", "د", "هـ", "و", "ز", "ح", "ط", "ي"];
 
 function renderPaperResponseArea(item: PlanItem, proposal: SelectedPaperItem["proposal"]): string {
   if (proposal.options?.length) {
-    return `<ol class="paper-options">${proposal.options.map((option, index) => `<li><span class="paper-option-circle"></span><b class="paper-option-label">${ARABIC_OPTION_LABELS[index] ?? index + 1}</b><em>${escapeHtml(option)}</em></li>`).join("")}</ol>`;
+    return `<ol class="paper-options">${proposal.options.map((option) => `<li><span class="paper-option-circle" aria-hidden="true"></span><em>${escapeHtml(option)}</em></li>`).join("")}</ol>`;
   }
   const lineCount = item.questionType === "إجابة طويلة" ? Math.max(5, item.marks + 2) : Math.max(2, item.marks + 1);
   return `${proposal.workingRequired ? `<p class="working-note">أظهر خطوات الحل بوضوح.</p>` : ""}<div class="answer-lines">${Array.from({ length: lineCount }, () => "<span></span>").join("")}</div>`;
