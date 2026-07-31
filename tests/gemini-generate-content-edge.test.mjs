@@ -43,6 +43,11 @@ async function loadEdgeHelpers() {
     referenceSupportsLessonScope,
     parseGenerationRequest,
     generateAndValidate,
+    extractTrustedEnrichmentContext,
+    isTrustedScientificHost,
+    normalizeTransientGeminiMessage,
+    hasEvidenceAffinity,
+    isTransportRetryExhausted,
   };\n`;
 
   const javascript = ts.transpileModule(source, {
@@ -95,6 +100,41 @@ function noVisual() {
     points: [], labels: [], values: [], components: [], annotations: [],
   };
 }
+
+test("يقبل نطاقات الجهات الحكومية والجامعية ويرفض المصادر العامة", () => {
+  assert.equal(helpers.isTrustedScientificHost("nasa.gov"), true);
+  assert.equal(helpers.isTrustedScientificHost("education.gov.uk"), true);
+  assert.equal(helpers.isTrustedScientificHost("squ.edu.om"), true);
+  assert.equal(helpers.isTrustedScientificHost("physics.cam.ac.uk"), true);
+  assert.equal(helpers.isTrustedScientificHost("random-science-blog.com"), false);
+});
+
+test("يستخرج فقط الجمل المسندة إلى مصادر رسمية من groundingMetadata", () => {
+  const context = helpers.extractTrustedEnrichmentContext({
+    candidates: [{
+      content: { parts: [{ text: "تستخدم الأقمار الصناعية قياسات دقيقة لمراقبة الغلاف الجوي. تنتشر شائعة غير موثقة في بعض المواقع." }] },
+      groundingMetadata: {
+        groundingChunks: [
+          { web: { uri: "https://www.nasa.gov/science/", title: "nasa.gov" } },
+          { web: { uri: "https://random-science-blog.com/post", title: "Random science blog" } },
+        ],
+        groundingSupports: [
+          { segment: { text: "تستخدم الأقمار الصناعية قياسات دقيقة لمراقبة الغلاف الجوي." }, groundingChunkIndices: [0] },
+          { segment: { text: "تنتشر شائعة غير موثقة في بعض المواقع." }, groundingChunkIndices: [1] },
+        ],
+      },
+    }],
+  });
+  assert.equal(context.attempted, true);
+  assert.equal(context.segments.length, 1);
+  assert.equal(context.segments[0].sourceTitle, "nasa.gov");
+  assert.match(context.segments[0].sourceUrl, /^https:\/\/www\.nasa\.gov/);
+});
+
+test("يعرب رسالة الضغط المؤقت بدل تمرير خطأ Gemini الإنجليزي", () => {
+  assert.match(helpers.normalizeTransientGeminiMessage("This model is currently experiencing high demand. Please try again later.", 503), /النموذج مشغول مؤقتًا/);
+  assert.match(helpers.normalizeTransientGeminiMessage("request timed out", 408), /تأخر رد النموذج/);
+});
 
 
 
@@ -416,6 +456,41 @@ test("يرفض معرف دليل تابعًا لمرجع آخر بدل قبول 
     () => helpers.validateAndHydrateGeneratedPayload(payload, request, catalog),
     /لا ينتمي إلى مرجع المفردة/,
   );
+});
+
+test("يقبل السؤال المرتبط بالمرجع الكامل عندما يكون المقطع المختار أضيق ويضعه للمراجعة", () => {
+  const references = [{
+    id: "R-FULL",
+    content: "مقدمة تمهيدية عن تنظيم الدرس وطرائق القياس العامة دون ذكر المفهوم المستهدف. ".repeat(4)
+      + "ينشأ الضغط عندما تؤثر قوة عموديًا في مساحة محددة، ويزداد بزيادة القوة ويقل بزيادة المساحة.",
+  }];
+  const catalog = helpers.buildEvidenceCatalog(references);
+  assert.ok(catalog.fragments.length > 1);
+  const request = {
+    items: [{ planItemId: "P-FULL", questionType: "إجابة قصيرة", marks: 1, styleTarget: "مفهومي", visualTarget: "none", sourceReferenceId: "R-FULL", lessonLabel: "1-1 الضغط" }],
+    references,
+  };
+  const payload = {
+    items: [{
+      planItemId: "P-FULL",
+      alternatives: Array.from({ length: 3 }, () => ({
+        stimulus: "",
+        text: "عرّف الضغط.",
+        options: [],
+        answer: "القوة المؤثرة عموديًا في وحدة المساحة.",
+        rationale: "يربط التعريف بين القوة والمساحة.",
+        markScheme: ["ذكر أن الضغط يرتبط بالقوة المؤثرة في المساحة."],
+        questionForm: "مفهومي",
+        workingRequired: false,
+        sourceEvidenceId: catalog.fragments[0].id,
+        enrichmentEvidenceId: "",
+        needsReview: false,
+      })),
+    }],
+  };
+  const hydrated = helpers.validateAndHydrateGeneratedPayload(payload, request, catalog);
+  assert.equal(hydrated.items[0].alternatives[0].needsReview, true);
+  assert.equal(hydrated.items[0].alternatives[0].sourceSupport, catalog.fragments[0].text);
 });
 
 test("يضيف الخادم نص الدليل نفسه ويضع علامة مراجعة عند ضعف الارتباط اللفظي", () => {

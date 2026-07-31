@@ -571,6 +571,12 @@ function renderSetupStep(): string {
         : `${inputField("duration-input", "الزمن بالدقائق", state.draft.durationMinutes, "number", "", "10")}${inputField("marks-input", "الدرجة الكلية", state.draft.totalMarks, "number", "", "5")}`}
     </div>
 
+    <label class="trusted-enrichment-card ${state.draft.trustedEnrichmentEnabled ? "enabled" : ""}">
+      <input id="trusted-enrichment-toggle" type="checkbox" ${state.draft.trustedEnrichmentEnabled ? "checked" : ""}/>
+      <span class="trusted-enrichment-check">${state.draft.trustedEnrichmentEnabled ? icon("check") : ""}</span>
+      <span><strong>الإثراء من مصادر علمية رسمية وموثوقة</strong><small>يبقى الكتاب المدرسي المرجع الحاكم، ويستخدم واثق البحث الموثق فقط لتنويع السياقات والبيانات والرسوم دون إضافة معرفة مطلوبة خارج المنهج.</small></span>
+    </label>
+
     ${officialSettings}
     ${renderCompliance(validation)}
     ${state.questionGenerationMessage ? `<div class="generation-status ${state.questionGenerationBusy ? "busy" : "notice"}">${state.questionGenerationBusy ? icon("spark") : "!"}<div><strong>${state.questionGenerationBusy ? "مولد الأسئلة يعمل" : "حالة توليد الأسئلة"}</strong><p>${escapeHtml(state.questionGenerationMessage)}</p></div></div>` : ""}
@@ -637,7 +643,7 @@ function renderPlanItem(item: PlanItem, index: number): string {
   return `<article class="plan-card">
     <header><div class="question-number">${index + 1}</div><div><h3>${item.questionType}</h3><p>${escapeHtml(item.lessonLabel)} · ${escapeHtml(sourceLabel)}</p></div><div class="plan-tags"><span>${item.cognitiveLevel}</span><span>${item.marks} ${item.marks === 1 ? "درجة" : "درجات"}</span></div></header>
     ${renderPlanVisual(item)}
-    <div class="proposal-grid">${item.proposals.map((proposal, proposalIndex) => `<label class="proposal-card ${chosen === proposal.id ? "selected" : ""}"><input type="radio" name="proposal-${item.id}" data-plan-id="${item.id}" value="${proposal.id}" ${chosen === proposal.id ? "checked" : ""} ${state.draft.status === "معتمد" ? "disabled" : ""}/><div class="proposal-top"><span>البديل ${proposalIndex + 1}</span><div class="proposal-badges">${proposal.questionForm ? `<b class="question-form-badge">${escapeHtml(proposal.questionForm)}</b>` : ""}${proposal.needsReview ? `<b class="review-needed-badge">يحتاج تدقيقًا أدق</b>` : ""}</div></div>${proposal.stimulus ? `<div class="proposal-stimulus">${escapeHtml(proposal.stimulus)}</div>` : ""}<p>${escapeHtml(proposal.text)}</p>${renderProposalOptions(proposal.options)}<details class="proposal-evidence"><summary>الإجابة ونموذج التصحيح ودليل المصدر</summary><p class="proposal-answer"><strong>الإجابة:</strong> ${escapeHtml(proposal.answer)}</p>${renderMarkScheme(proposal.markScheme)}${proposal.rationale ? `<p><strong>سبب الإجابة:</strong> ${escapeHtml(proposal.rationale)}</p>` : ""}${proposal.sourceSupport ? `<blockquote>${escapeHtml(proposal.sourceSupport)}</blockquote>` : ""}</details><span class="choose-label">${chosen === proposal.id ? `${icon("check")} تم الاختيار` : "اختر هذا السؤال"}</span></label>`).join("")}</div>
+    <div class="proposal-grid">${item.proposals.map((proposal, proposalIndex) => `<label class="proposal-card ${chosen === proposal.id ? "selected" : ""}"><input type="radio" name="proposal-${item.id}" data-plan-id="${item.id}" value="${proposal.id}" ${chosen === proposal.id ? "checked" : ""} ${state.draft.status === "معتمد" ? "disabled" : ""}/><div class="proposal-top"><span>البديل ${proposalIndex + 1}</span><div class="proposal-badges">${proposal.questionForm ? `<b class="question-form-badge">${escapeHtml(proposal.questionForm)}</b>` : ""}${proposal.needsReview ? `<b class="review-needed-badge">يحتاج تدقيقًا أدق</b>` : ""}</div></div>${proposal.stimulus ? `<div class="proposal-stimulus">${escapeHtml(proposal.stimulus)}</div>` : ""}<p>${escapeHtml(proposal.text)}</p>${renderProposalOptions(proposal.options)}<details class="proposal-evidence"><summary>الإجابة ونموذج التصحيح ودليل المصدر</summary><p class="proposal-answer"><strong>الإجابة:</strong> ${escapeHtml(proposal.answer)}</p>${renderMarkScheme(proposal.markScheme)}${proposal.rationale ? `<p><strong>سبب الإجابة:</strong> ${escapeHtml(proposal.rationale)}</p>` : ""}${proposal.sourceSupport ? `<blockquote>${escapeHtml(proposal.sourceSupport)}</blockquote>` : ""}${proposal.enrichmentSupport ? `<div class="proposal-enrichment-evidence"><strong>إثراء علمي موثوق:</strong><p>${escapeHtml(proposal.enrichmentSupport)}</p>${proposal.enrichmentSourceUrl ? `<a href="${escapeHtml(proposal.enrichmentSourceUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(proposal.enrichmentSourceTitle || "فتح المصدر الرسمي")}</a>` : ""}</div>` : ""}</details><span class="choose-label">${chosen === proposal.id ? `${icon("check")} تم الاختيار` : "اختر هذا السؤال"}</span></label>`).join("")}</div>
     <footer><button class="text-btn" data-regenerate="${item.id}" ${(state.questionGenerationBusy || state.draft.status === "معتمد") ? "disabled" : ""}>${icon("spark")} توليد ثلاثة بدائل مشابهة لهذه المفردة</button></footer>
   </article>`;
 }
@@ -1597,6 +1603,7 @@ async function generateQuestionsForPlan(plan: PlanItem[]): Promise<boolean> {
         batch,
         state.draft.plan,
         state.lessonCatalog,
+        state.draft.trustedEnrichmentEnabled,
       );
       const response = await questionGenerationService.generate(request);
       const replacements = applyGeneratedQuestions(batch, response);
@@ -1647,6 +1654,7 @@ async function regeneratePlanItem(item: PlanItem): Promise<void> {
       [item],
       state.draft.plan,
       state.lessonCatalog,
+      state.draft.trustedEnrichmentEnabled,
     );
     const anchor = selectedProposal(state.draft, item) ?? item.proposals[0];
     if (anchor && request.items[0]) {
@@ -1943,6 +1951,15 @@ function bindSetupStep(): void {
   document.querySelector<HTMLSelectElement>("#semester-select")?.addEventListener("change", (event) => {
     state.draft.semester = (event.target as HTMLSelectElement).value;
     scheduleSave();
+  });
+
+  document.querySelector<HTMLInputElement>("#trusted-enrichment-toggle")?.addEventListener("change", (event) => {
+    state.draft.trustedEnrichmentEnabled = (event.target as HTMLInputElement).checked;
+    state.questionGenerationMessage = state.draft.trustedEnrichmentEnabled
+      ? "سيستخدم واثق إثراءً موثقًا في المفردات الجديدة أو المعاد توليدها، مع بقاء صفحات الكتاب حاكمة للسؤال والإجابة."
+      : "تم إيقاف الإثراء الخارجي للمفردات الجديدة أو المعاد توليدها؛ ولن تُحذف الأسئلة المكتملة.";
+    scheduleSave();
+    render();
   });
 
   document.querySelector<HTMLInputElement>("#duration-input")?.addEventListener("change", (event) => {

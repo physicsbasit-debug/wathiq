@@ -1,27 +1,20 @@
-# Phase 1-C3 Recovery from Fix 6 — Changed Files Manifest
+# Phase 1-C4 — Changed Files Manifest
 
-## Documentation and metadata
+ارفع هذه الملفات فوق Phase 1-C3 مع الحفاظ على المسارات:
 
 - CHANGED_FILES_MANIFEST.txt
 - GITHUB_UPLOAD_INSTRUCTIONS.md
 - README.md
-- docs/PHASE_1_C3_ADVANCED_VISUAL_ASSESSMENT.md
-- docs/PHASE_1_C3_TEST_REPORT.md
+- docs/PHASE_1_C4_TEST_REPORT.md
+- docs/PHASE_1_C4_TRUSTED_CURRICULUM_ENRICHMENT.md
 - package.json
-
-## Runtime
-
 - src/app.ts
-- src/exam-export.ts
+- src/domain.ts
 - src/question-generation.ts
-- src/question-visual.ts
+- src/storage.ts
 - src/styles.css
 - src/types.ts
 - supabase/functions/generate-source-questions/index.ts
-
-## Tests
-
-- tests/exam-export-browser.test.mjs
 - tests/gemini-generate-content-edge.test.mjs
 - tests/phase-1-a-simple-source-brief.test.mjs
 - tests/phase-1-b-files.test.mjs
@@ -42,13 +35,13 @@
 - tests/phase-1-c2-fix6-files.test.mjs
 - tests/phase-1-c2-fix7-files.test.mjs
 - tests/phase-1-c3-files.test.mjs
+- tests/phase-1-c4-files.test.mjs
 - tests/question-generation.test.mjs
-- tests/question-visual.test.mjs
 - tests/storage-draft.test.mjs
 
-## Intentionally excluded
+## خارج النطاق
 
-- `dist/` is rebuilt by GitHub Pages from source.
-- No SQL migration.
-- No workflow change.
-- No secret or environment file.
+- لا SQL.
+- لا workflow.
+- لا ملف أسرار أو بيئة.
+- `dist/` يبنى تلقائيًا من المصدر في GitHub Actions.

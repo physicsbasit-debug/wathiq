@@ -25,6 +25,6 @@ test("يتحقق أن الدليل المختار ينتمي إلى مرجع ا�
 });
 
 test("يبقي عقد الأدلة المرقمة داخل الإصدار الأسلوبي الأحدث", () => {
-  assert.match(generator, /source-grounded-policy-ai-(?:9-visual-svg|10-strict-lesson-scope|11-visual-enforced|12-advanced-visuals)/);
-  assert.match(pkg.version, /^0\.0\.(?:34|35|36|37|38|39|40|41|42|43|44)$/);
+  assert.match(generator, /source-grounded-policy-ai-(?:9-visual-svg|10-strict-lesson-scope|11-visual-enforced|12-advanced-visuals|13-trusted-enrichment)/);
+  assert.match(pkg.version, /^0\.0\.(?:34|35|36|37|38|39|40|41|42|43|44|45)$/);
 });
