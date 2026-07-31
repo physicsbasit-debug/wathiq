@@ -1617,6 +1617,150 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
   .lesson-source-tree > summary { padding: 12px; }
 }
 
+/* Phase 1-D2 Fix 1: تنقل ثابت بين الوحدات مع حفظ اختيار الدروس */
+.lesson-unit-navigation {
+  display: grid;
+  grid-template-columns: minmax(120px, auto) minmax(0, 1fr) minmax(120px, auto);
+  gap: 10px;
+  align-items: stretch;
+  margin-bottom: 12px;
+}
+
+.lesson-unit-nav-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 52px;
+  padding: 10px 14px;
+  border: 1px solid #cdd9e8;
+  border-radius: 13px;
+  background: #fff;
+  color: var(--navy);
+  cursor: pointer;
+}
+
+.lesson-unit-nav-button:not(:disabled):hover {
+  border-color: #91abc9;
+  background: #f5f8fc;
+}
+
+.lesson-unit-nav-button:disabled {
+  opacity: .42;
+  cursor: not-allowed;
+}
+
+.lesson-unit-nav-button span {
+  font-size: 19px;
+}
+
+.lesson-unit-jump {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 9px 12px;
+  border: 1px solid #cdd9e8;
+  border-radius: 13px;
+  background: #eef4fb;
+}
+
+.lesson-unit-jump > span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.lesson-unit-jump select {
+  min-width: 0;
+  width: 100%;
+  border: 1px solid #bdcde0;
+  border-radius: 10px;
+  background: #fff;
+  color: var(--navy-deep);
+  padding: 9px 10px;
+  font: inherit;
+}
+
+.lesson-unit-jump small {
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+.lesson-selected-summary {
+  display: grid;
+  grid-template-columns: minmax(180px, auto) minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border: 1px dashed #cbd7e5;
+  border-radius: 13px;
+  background: #fbfdff;
+}
+
+.lesson-selected-summary.has-selection {
+  border-style: solid;
+  border-color: #b8d8ca;
+  background: #f3faf6;
+}
+
+.lesson-selected-summary > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.lesson-selected-summary small,
+.lesson-selected-chips > span,
+.lesson-page-pending {
+  color: var(--muted);
+}
+
+.lesson-selected-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.lesson-selected-chips button {
+  border: 1px solid #b7cfbf;
+  border-radius: 999px;
+  background: #fff;
+  color: #205d45;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.lesson-selected-chips button:hover {
+  background: #eaf7ef;
+}
+
+.lesson-book-tree {
+  max-height: 430px;
+}
+
+@media (max-width: 760px) {
+  .lesson-unit-navigation {
+    grid-template-columns: 1fr 1fr;
+  }
+  .lesson-unit-jump {
+    grid-column: 1 / -1;
+    grid-row: 1;
+    grid-template-columns: 1fr;
+  }
+  .lesson-unit-jump small {
+    white-space: normal;
+  }
+  .lesson-selected-summary {
+    grid-template-columns: 1fr;
+  }
+  .lesson-unit-nav-button {
+    min-height: 46px;
+    padding-inline: 10px;
+  }
+}
+
 /* Phase 1-C3: advanced deterministic assessment visuals */
 .qv-series-1 { stroke-dasharray: 9 5; }
 .qv-series-2 { stroke-dasharray: 3 4; }

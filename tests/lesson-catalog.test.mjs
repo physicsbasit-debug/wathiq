@@ -70,3 +70,33 @@ test("يحوّل الاختيارات بين المعرفات والعناوين
   assert.equal(ids.length, 1);
   assert.deepEqual(selectedLessonLabels(options, ids), ["1-2 الاحتكاك والشحن الكهربائي"]);
 });
+
+test("يكمل الشجرة الجزئية بعناوين الدروس المرقمة ويضعها داخل الوحدة الصحيحة", () => {
+  const unit = node({ id: "unit-1", parentId: null, nodeType: "وحدة", title: "الوحدة الأولى: الشحنة الكهربائية", pageStart: 15, pageEnd: 24, orderIndex: 0 });
+  const structures = new Map([["source-physics", [unit, node()]]]);
+  const result = buildLessonCatalog([source({ detectedHeadings: [
+    "1-1 الكهرباء الساكنة",
+    "1-2 الاحتكاك والشحن الكهربائي",
+  ] })], structures);
+  assert.deepEqual(result.map((item) => item.label), [
+    "1-1 الكهرباء الساكنة",
+    "1-2 الاحتكاك والشحن الكهربائي",
+  ]);
+  assert.equal(result[1].unitLabel, "الوحدة الأولى: الشحنة الكهربائية");
+  assert.equal(result[1].origin, "detected-heading");
+});
+
+test("لا يكرر رمز الدرس عند اختلاف صياغة العنوان ويفضل الهيكل الموثوق", () => {
+  const unit = node({ id: "unit-1", parentId: null, nodeType: "وحدة", title: "الوحدة الأولى: الشحنة الكهربائية", pageStart: 15, pageEnd: 24, orderIndex: 0 });
+  const structures = new Map([["source-physics", [unit, node({ reviewStatus: "معتمد", confidence: 1 })]]]);
+  const result = buildLessonCatalog([source({ detectedHeadings: ["1-1 درس الكهرباء الساكنة"] })], structures);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].label, "1-1 الكهرباء الساكنة");
+  assert.equal(result[0].origin, "approved-structure");
+});
+
+test("يعرض الدرس المكتشف حتى عند غياب عقدة الوحدة كاملة", () => {
+  const result = buildLessonCatalog([source({ detectedHeadings: ["2-3 تطبيقات الدوائر الكهربائية"] })]);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].unitLabel, "الوحدة 2");
+});
