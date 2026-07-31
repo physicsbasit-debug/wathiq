@@ -36,6 +36,9 @@ async function loadEdgeHelpers() {
     buildServerOwnedVisualSpec,
     generationThinkingBudget,
     generationOutputTokenLimit,
+    markSchemeRepairSchema,
+    hasExactMarkScheme,
+    buildFallbackMarkScheme,
     isMetaSourceQuestion,
     referenceSupportsLessonScope,
     generateAndValidate,
@@ -135,14 +138,16 @@ test("يفرض المخطط ويثبت الدليل عبر معرف مقطع م�
   const evidenceIds = catalog.fragments.map((fragment) => fragment.id);
   const schema = helpers.generationSchema([{ planItemId: "P-1", visualTarget: "none" }], evidenceIds);
   assert.deepEqual(Array.from(schema.required), ["items"]);
-  assert.deepEqual(Array.from(schema.properties.items.items.properties.planItemId.enum), ["P-1"]);
-  assert.equal(Array.from(schema.properties.items.items.properties.alternatives.items.properties.sourceEvidenceId.enum).join("|"), Array.from(evidenceIds).join("|"));
+  const itemSchema = schema.properties.items.prefixItems[0];
+  assert.deepEqual(Array.from(itemSchema.properties.planItemId.enum), ["P-1"]);
+  assert.equal(Array.from(itemSchema.properties.alternatives.items.properties.sourceEvidenceId.enum).join("|"), Array.from(evidenceIds).join("|"));
   assert.equal(schema.properties.items.minItems, 1);
-  assert.equal(schema.properties.items.items.properties.visual, undefined);
-  assert.deepEqual(Array.from(schema.properties.items.items.required), ["planItemId", "alternatives"]);
-  const markSchemeSchema = schema.properties.items.items.properties.alternatives.items.properties.markScheme;
-  assert.equal(markSchemeSchema.type, "object");
-  assert.deepEqual(Array.from(markSchemeSchema.required), ["point1", "point2", "point3", "point4"]);
+  assert.equal(itemSchema.properties.visual, undefined);
+  assert.deepEqual(Array.from(itemSchema.required), ["planItemId", "alternatives"]);
+  const markSchemeSchema = itemSchema.properties.alternatives.items.properties.markScheme;
+  assert.equal(markSchemeSchema.type, "array");
+  assert.equal(markSchemeSchema.minItems, 1);
+  assert.equal(markSchemeSchema.maxItems, 1);
   assert.equal(schema.properties.items.maxItems, 1);
 
   const request = {
@@ -276,10 +281,9 @@ test("ينفذ مسار generateContent كاملًا باستجابة منظمة
   assert.match(capturedBody.contents[0].parts[0].text, /fixedVisual/);
   assert.equal(capturedBody.generationConfig.thinkingConfig.thinkingBudget, 0);
   assert.match(capturedBody.contents[0].parts[0].text, /EV-1-1/);
-  assert.deepEqual(
-    Array.from(capturedBody.generationConfig.responseJsonSchema.properties.items.items.properties.planItemId.enum),
-    ["P-1"],
-  );
+  assert.deepEqual(Array.from(
+    capturedBody.generationConfig.responseJsonSchema.properties.items.prefixItems[0].properties.planItemId.enum,
+  ), ["P-1"]);
 });
 
 test("يرفض معرف دليل تابعًا لمرجع آخر بدل قبول استناد مزيف", () => {
@@ -465,4 +469,157 @@ test("يرفض إعادة توليد تنتقل إلى مفهوم آخر رغم 
     questionForm: "مفهومي", workingRequired: false, sourceEvidenceId: catalog.fragments[0].id, needsReview: false,
   })) }] };
   assert.throws(() => helpers.validateAndHydrateGeneratedPayload(payload, request, catalog), /ابتعدت عن مفهوم السؤال المختار/);
+});
+
+
+test("يبني مخططًا موضعيًا يفرض عدد نقاط التصحيح وفق درجة كل مفردة", () => {
+  const schema = helpers.generationSchema([
+    { planItemId: "P-1", marks: 1 },
+    { planItemId: "P-2", marks: 3 },
+  ], ["EV-1-1"]);
+  const first = schema.properties.items.prefixItems[0];
+  const second = schema.properties.items.prefixItems[1];
+  const firstMarks = first.properties.alternatives.items.properties.markScheme;
+  const secondMarks = second.properties.alternatives.items.properties.markScheme;
+  assert.deepEqual(Array.from(first.properties.planItemId.enum), ["P-1"]);
+  assert.deepEqual(Array.from(second.properties.planItemId.enum), ["P-2"]);
+  assert.equal(firstMarks.minItems, 1);
+  assert.equal(firstMarks.maxItems, 1);
+  assert.equal(secondMarks.minItems, 3);
+  assert.equal(secondMarks.maxItems, 3);
+});
+
+test("يصلح نقاط التصحيح بطلب صغير دون إعادة توليد السؤال الكامل", async () => {
+  const sourceSupport = "تنتقل الإلكترونات من جسم إلى آخر عند الدلك فتتكون الشحنة الكهربائية ويصبح الجسمان مشحونين.";
+  const request = {
+    assessmentType: "اختبار قصير رسمي",
+    assessmentPolicyId: "oman-science-assessment-2025-2026",
+    topic: "الشحنة الكهربائية",
+    lessons: ["1-1 الشحنة الكهربائية", "1-2 الكهرباء الساكنة"],
+    grade: 10,
+    subject: "الفيزياء",
+    difficulty: "متوسط",
+    references: [{
+      id: "R-1", sourceTitle: "كتاب الطالب للفيزياء", sourceKind: "كتاب الطالب",
+      pageFrom: 12, pageTo: 12, content: sourceSupport,
+    }],
+    officialPlanItems: [{
+      planItemId: "P-3", questionType: "إجابة طويلة", cognitiveLevel: "استدلال",
+      difficultyLevel: "متوسط", marks: 3, sourceReferenceId: "R-1",
+      lessonLabel: "1-1 الشحنة الكهربائية", styleTarget: "استقصائي", visualTarget: "none",
+    }],
+    items: [{
+      planItemId: "P-3", questionType: "إجابة طويلة", cognitiveLevel: "استدلال",
+      difficultyLevel: "متوسط", marks: 3, sourceReferenceId: "R-1",
+      lessonLabel: "1-1 الشحنة الكهربائية", styleTarget: "استقصائي", visualTarget: "none",
+    }],
+  };
+  const alternatives = Array.from({ length: 3 }, (_, index) => ({
+    stimulus: "دُلِك جسمان من مادتين مختلفتين ثم قُرّبا من قصاصات ورق.",
+    text: `فسّر انتقال الشحنة واقترح ملاحظة تدعم تفسيرك. ${index + 1}`,
+    options: [],
+    answer: "تنتقل الإلكترونات من جسم إلى آخر فيصبح الجسمان مشحونين، ويظهر أثر الشحنة بانجذاب قصاصات الورق.",
+    rationale: "يربط التفسير انتقال الإلكترونات بالملاحظة التجريبية.",
+    markScheme: ["ذكر انتقال الإلكترونات."],
+    questionForm: "استقصائي",
+    workingRequired: false,
+    sourceEvidenceId: "EV-1-1",
+    needsReview: false,
+  }));
+  const generated = { items: [{ planItemId: "P-3", alternatives }] };
+  let fetchCount = 0;
+  let repairBody;
+  sandbox.__fetchImpl = async (_url, init) => {
+    fetchCount += 1;
+    const body = JSON.parse(init.body);
+    if (fetchCount === 1) {
+      return new Response(JSON.stringify({
+        candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(generated) }] } }],
+        usageMetadata: { promptTokenCount: 300, candidatesTokenCount: 180 },
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    repairBody = body;
+    const repaired = {
+      schemes: [0, 1, 2].map((alternativeIndex) => ({
+        alternativeIndex,
+        markScheme: [
+          "ذكر انتقال الإلكترونات بين الجسمين.",
+          "توضيح اكتساب الجسمين شحنة نتيجة الانتقال.",
+          "ربط انجذاب قصاصات الورق بوجود الشحنة.",
+        ],
+      })),
+    };
+    return new Response(JSON.stringify({
+      candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(repaired) }] } }],
+      usageMetadata: { promptTokenCount: 90, candidatesTokenCount: 80 },
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+
+  const result = await helpers.generateAndValidate(request, "WQ-MARK-REPAIR");
+  assert.equal(fetchCount, 2);
+  assert.equal(result.items[0].alternatives[0].markScheme.length, 3);
+  assert.deepEqual(Array.from(result.items[0].alternatives[0].markScheme), [
+    "ذكر انتقال الإلكترونات بين الجسمين.",
+    "توضيح اكتساب الجسمين شحنة نتيجة الانتقال.",
+    "ربط انجذاب قصاصات الورق بوجود الشحنة.",
+  ]);
+  assert.equal(repairBody.generationConfig.thinkingConfig.thinkingBudget, 0);
+  assert.equal(repairBody.generationConfig.responseJsonSchema.properties.schemes.prefixItems[0].properties.markScheme.minItems, 3);
+  assert.doesNotMatch(repairBody.contents[0].parts[0].text, /evidenceFragments|officialPlanSummary/);
+});
+
+test("يحفظ السؤال ويضعه للمراجعة إذا تعذر طلب إصلاح نقاط التصحيح", async () => {
+  const request = {
+    assessmentType: "اختبار قصير رسمي",
+    assessmentPolicyId: "oman-science-assessment-2025-2026",
+    topic: "الضغط",
+    lessons: ["1-1 الضغط", "1-2 الضغط في السوائل"],
+    grade: 10,
+    subject: "الفيزياء",
+    difficulty: "متوسط",
+    references: [{
+      id: "R-1", sourceTitle: "كتاب الطالب للفيزياء", sourceKind: "كتاب الطالب",
+      pageFrom: 20, pageTo: 20, content: "الضغط هو القوة المؤثرة عموديًا على وحدة المساحة.",
+    }],
+    officialPlanItems: [{
+      planItemId: "P-2", questionType: "إجابة قصيرة", cognitiveLevel: "تطبيق",
+      difficultyLevel: "متوسط", marks: 2, sourceReferenceId: "R-1",
+      lessonLabel: "1-1 الضغط", styleTarget: "سياقي", visualTarget: "none",
+    }],
+    items: [{
+      planItemId: "P-2", questionType: "إجابة قصيرة", cognitiveLevel: "تطبيق",
+      difficultyLevel: "متوسط", marks: 2, sourceReferenceId: "R-1",
+      lessonLabel: "1-1 الضغط", styleTarget: "سياقي", visualTarget: "none",
+    }],
+  };
+  const generated = { items: [{ planItemId: "P-2", alternatives: Array.from({ length: 3 }, (_, index) => ({
+    stimulus: "يؤثر جسم بقوة عمودية في سطح معلوم المساحة.",
+    text: `فسّر كيف يمكن زيادة الضغط المؤثر في السطح. ${index + 1}`,
+    options: [],
+    answer: "يزداد الضغط بزيادة القوة أو بتقليل مساحة التلامس.",
+    rationale: "لأن الضغط يساوي القوة العمودية مقسومة على المساحة.",
+    markScheme: ["ذكر زيادة القوة."],
+    questionForm: "سياقي",
+    workingRequired: false,
+    sourceEvidenceId: "EV-1-1",
+    needsReview: false,
+  })) }] };
+  let fetchCount = 0;
+  sandbox.__fetchImpl = async () => {
+    fetchCount += 1;
+    if (fetchCount === 1) {
+      return new Response(JSON.stringify({
+        candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(generated) }] } }],
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    return new Response(JSON.stringify({ error: { message: "temporary repair failure" } }), {
+      status: 503,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  const result = await helpers.generateAndValidate(request, "WQ-MARK-FALLBACK");
+  assert.equal(fetchCount, 2);
+  assert.equal(result.items[0].alternatives[0].markScheme.length, 2);
+  assert.equal(result.items[0].alternatives[0].needsReview, true);
 });

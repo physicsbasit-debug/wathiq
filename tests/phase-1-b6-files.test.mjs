@@ -30,7 +30,8 @@ test("تقرأ candidates content parts وتتحقق من finishReason", () => {
 
 test("يقيد مخطط JSON بمعرفات الدفعة وبالمفتاح items", () => {
   assert.match(edge, /requiredTopLevelKey:\s*"items"/);
-  assert.match(edge, /enum:\s*requestedIds/);
+  assert.match(edge, /prefixItems:\s*requestedItems\.map/);
+  assert.match(edge, /enum:\s*\[requestedItem\.planItemId\]/);
   assert.match(edge, /required:\s*\["items"\]/);
   assert.match(edge, /minItems:\s*requestedItems\.length/);
   assert.match(edge, /maxItems:\s*requestedItems\.length/);
@@ -38,5 +39,5 @@ test("يقيد مخطط JSON بمعرفات الدفعة وبالمفتاح item
 
 test("يرفع إصدار مولد الأسئلة بعد الإصلاح", () => {
   assert.match(generator, /source-grounded-policy-ai-(?:6-generate-content|7-evidence-anchors|8-cambridge-style|9-visual-svg|10-strict-lesson-scope)/);
-  assert.match(pkg.version, /^0\.0\.(?:32|33|34|35|36|37|38|39|40)$/);
+  assert.match(pkg.version, /^0\.0\.(?:32|33|34|35|36|37|38|39|40|41)$/);
 });

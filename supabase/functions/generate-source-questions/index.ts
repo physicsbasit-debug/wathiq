@@ -12,6 +12,8 @@ const MAX_REFERENCES = 6;
 const MAX_REFERENCE_CHARACTERS = 4_200;
 const MAX_TOTAL_REFERENCE_CHARACTERS = 24_000;
 const GEMINI_TIMEOUT_MS = 30_000;
+const MARK_SCHEME_REPAIR_TIMEOUT_MS = 12_000;
+const MARK_SCHEME_REPAIR_MAX_OUTPUT_TOKENS = 900;
 const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent`;
 
 const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
@@ -127,6 +129,15 @@ interface ModelGeneratedPayload {
   items: ModelGeneratedItem[];
 }
 
+interface MarkSchemeRepairEntry {
+  alternativeIndex: number;
+  markScheme: string[];
+}
+
+interface MarkSchemeRepairPayload {
+  schemes: MarkSchemeRepairEntry[];
+}
+
 interface GeneratedAlternative {
   stimulus: string;
   text: string;
@@ -206,7 +217,8 @@ async function generateAndValidate(request: GenerationRequest, requestId: string
     try {
       const payload = await callGemini(request, evidenceCatalog, attempt > 1, requestId, attempt);
       try {
-        const hydrated = validateAndHydrateGeneratedPayload(payload, request, evidenceCatalog);
+        const markSchemeSafePayload = await repairGeneratedPayloadMarkSchemes(payload, request, requestId);
+        const hydrated = validateAndHydrateGeneratedPayload(markSchemeSafePayload, request, evidenceCatalog);
         logStage(requestId, "questions_validated", {
           attempt,
           itemCount: hydrated.items.length,
@@ -318,6 +330,264 @@ async function callGemini(
   }
 }
 
+
+async function repairGeneratedPayloadMarkSchemes(
+  payload: ModelGeneratedPayload,
+  request: GenerationRequest,
+  requestId: string,
+): Promise<ModelGeneratedPayload> {
+  if (!payload || !Array.isArray(payload.items)) return payload;
+  const requestedById = new Map(request.items.map((item) => [item.planItemId, item]));
+
+  for (const generatedItem of payload.items) {
+    if (!generatedItem || typeof generatedItem !== "object" || !Array.isArray(generatedItem.alternatives)) continue;
+    const requestedItem = requestedById.get(generatedItem.planItemId);
+    if (!requestedItem) continue;
+    const invalidIndexes = generatedItem.alternatives
+      .map((alternative, index) => hasExactMarkScheme(alternative?.markScheme, requestedItem.marks) ? -1 : index)
+      .filter((index) => index >= 0);
+    if (!invalidIndexes.length) continue;
+
+    logStage(requestId, "mark_scheme_repair_started", {
+      planItemId: requestedItem.planItemId,
+      marks: requestedItem.marks,
+      alternativeIndexes: invalidIndexes,
+    });
+    try {
+      const repaired = await callGeminiMarkSchemeRepair(
+        requestedItem,
+        generatedItem.alternatives,
+        invalidIndexes,
+        requestId,
+      );
+      for (const [alternativeIndex, markScheme] of repaired) {
+        generatedItem.alternatives[alternativeIndex].markScheme = markScheme;
+      }
+      logStage(requestId, "mark_scheme_repair_completed", {
+        planItemId: requestedItem.planItemId,
+        repairedCount: repaired.size,
+      });
+    } catch (error) {
+      for (const alternativeIndex of invalidIndexes) {
+        const alternative = generatedItem.alternatives[alternativeIndex];
+        alternative.markScheme = buildFallbackMarkScheme(alternative, requestedItem.marks);
+        alternative.needsReview = true;
+      }
+      logStage(requestId, "mark_scheme_repair_fallback_used", {
+        planItemId: requestedItem.planItemId,
+        repairedCount: invalidIndexes.length,
+        message: errorMessage(error),
+      });
+    }
+  }
+  return payload;
+}
+
+async function callGeminiMarkSchemeRepair(
+  item: GenerationItem,
+  alternatives: ModelGeneratedAlternative[],
+  alternativeIndexes: number[],
+  requestId: string,
+): Promise<Map<number, string[]>> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), MARK_SCHEME_REPAIR_TIMEOUT_MS);
+  const startedAt = Date.now();
+  try {
+    const repairAlternatives = alternativeIndexes.map((alternativeIndex) => {
+      const alternative = alternatives[alternativeIndex];
+      return {
+        alternativeIndex,
+        marks: item.marks,
+        questionType: item.questionType,
+        questionForm: alternative?.questionForm ?? item.styleTarget,
+        stimulus: typeof alternative?.stimulus === "string" ? alternative.stimulus : "",
+        text: typeof alternative?.text === "string" ? alternative.text : "",
+        answer: typeof alternative?.answer === "string" ? alternative.answer : "",
+        rationale: typeof alternative?.rationale === "string" ? alternative.rationale : "",
+        currentMarkScheme: markSchemePoints(alternative?.markScheme),
+      };
+    });
+    const response = await fetch(GEMINI_API_URL, {
+      method: "POST",
+      headers: {
+        "x-goog-api-key": GEMINI_API_KEY,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        systemInstruction: {
+          parts: [{
+            text: [
+              "أنت مصحح اختبارات علوم مدرسية.",
+              "مهمتك إصلاح نقاط التصحيح فقط دون تغيير السؤال أو الإجابة أو الدرجة.",
+              "أعد لكل بديل markScheme بعدد يساوي marks تمامًا.",
+              "كل نقطة مستقلة ومحددة وتستحق درجة واحدة، ولا تستخدم نقطة فارغة أو نصف درجة.",
+              "لا تضف شرحًا خارج JSON.",
+            ].join("\n"),
+          }],
+        },
+        contents: [{
+          role: "user",
+          parts: [{ text: JSON.stringify({ task: "repair_mark_scheme_only", alternatives: repairAlternatives }) }],
+        }],
+        store: false,
+        generationConfig: {
+          candidateCount: 1,
+          maxOutputTokens: MARK_SCHEME_REPAIR_MAX_OUTPUT_TOKENS,
+          thinkingConfig: { thinkingBudget: 0 },
+          responseMimeType: "application/json",
+          responseJsonSchema: markSchemeRepairSchema(item.marks, alternativeIndexes),
+        },
+      }),
+      signal: controller.signal,
+    });
+    const payload = await response.json() as unknown;
+    if (!response.ok) {
+      throw new Error(geminiError(payload, `تعذر إصلاح نموذج التصحيح (${response.status}).`));
+    }
+    const completion = inspectGenerateContentCompletion(payload);
+    const output = findGenerateContentOutputText(payload);
+    logStage(requestId, "mark_scheme_repair_response_received", {
+      planItemId: item.planItemId,
+      finishReason: completion.finishReason,
+      promptTokens: completion.promptTokens,
+      outputTokens: completion.outputTokens,
+      totalTokens: completion.totalTokens,
+      thoughtsTokens: completion.thoughtsTokens,
+      durationMs: Date.now() - startedAt,
+    });
+    if (!output.text) throw new Error("لم يُرجع مولد التصحيح نقاطًا قابلة للقراءة.");
+    const parsed = parseGeneratedJson(output.text) as unknown as MarkSchemeRepairPayload;
+    if (!parsed || !Array.isArray(parsed.schemes) || parsed.schemes.length !== alternativeIndexes.length) {
+      throw new Error("استجابة إصلاح نموذج التصحيح غير مكتملة.");
+    }
+    const repaired = new Map<number, string[]>();
+    for (const entry of parsed.schemes) {
+      if (!entry || !alternativeIndexes.includes(entry.alternativeIndex) || repaired.has(entry.alternativeIndex)) {
+        throw new Error("استجابة إصلاح نموذج التصحيح تحتوي فهرسًا غير صالح.");
+      }
+      repaired.set(entry.alternativeIndex, normalizeModelMarkScheme(entry.markScheme, item.marks));
+    }
+    if (repaired.size !== alternativeIndexes.length) {
+      throw new Error("استجابة إصلاح نموذج التصحيح لم تشمل جميع البدائل المطلوبة.");
+    }
+    return repaired;
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error("تأخر إصلاح نموذج التصحيح أكثر من المدة المسموحة.");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function markSchemeRepairSchema(marks: number, alternativeIndexes: number[]): Record<string, unknown> {
+  return {
+    type: "object",
+    properties: {
+      schemes: {
+        type: "array",
+        minItems: alternativeIndexes.length,
+        maxItems: alternativeIndexes.length,
+        prefixItems: alternativeIndexes.map((alternativeIndex) => ({
+          type: "object",
+          properties: {
+            alternativeIndex: { type: "integer", enum: [alternativeIndex] },
+            markScheme: {
+              type: "array",
+              minItems: marks,
+              maxItems: marks,
+              items: {
+                type: "string",
+                description: "معيار تصحيح مستقل ومحدد وغير فارغ لدرجة واحدة.",
+              },
+            },
+          },
+          required: ["alternativeIndex", "markScheme"],
+          additionalProperties: false,
+        })),
+      },
+    },
+    required: ["schemes"],
+    additionalProperties: false,
+  };
+}
+
+function markSchemePoints(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map((point) => typeof point === "string" ? point.trim() : "");
+  }
+  const record = asRecord(value);
+  if (!record) return [];
+  return ["point1", "point2", "point3", "point4"].map((key) =>
+    typeof record[key] === "string" ? record[key].trim() : ""
+  );
+}
+
+function hasExactMarkScheme(value: unknown, marks: number): boolean {
+  const points = markSchemePoints(value);
+  if (Array.isArray(value)) return points.length === marks && points.every(Boolean);
+  return points.slice(0, marks).length === marks && points.slice(0, marks).every(Boolean);
+}
+
+function buildFallbackMarkScheme(alternative: ModelGeneratedAlternative, marks: number): string[] {
+  const existing = markSchemePoints(alternative?.markScheme).filter(Boolean);
+  const clauses = [alternative?.answer, alternative?.rationale]
+    .filter((value): value is string => typeof value === "string" && Boolean(value.trim()))
+    .flatMap((value) => value.split(/[.؛\n]+|،\s*/u))
+    .map((value) => value.trim())
+    .filter((value) => value.length >= 4);
+  const templates = fallbackMarkSchemeTemplates(alternative?.questionForm);
+  const candidates = [...existing, ...clauses, ...templates];
+  const unique: string[] = [];
+  const seen = new Set<string>();
+  for (const candidate of candidates) {
+    const normalized = candidate.replace(/\s+/g, " ").trim();
+    const key = normalizeForEvidence(normalized);
+    if (!normalized || !key || seen.has(key)) continue;
+    seen.add(key);
+    unique.push(normalized.endsWith(".") ? normalized : `${normalized}.`);
+    if (unique.length === marks) break;
+  }
+  while (unique.length < marks) {
+    unique.push(`إظهار خطوة علمية صحيحة مستقلة رقم ${unique.length + 1} تؤدي إلى الإجابة النموذجية.`);
+  }
+  return unique.slice(0, marks);
+}
+
+function fallbackMarkSchemeTemplates(questionForm: QuestionDesignPattern | undefined): string[] {
+  if (questionForm === "حسابي") {
+    return [
+      "اختيار العلاقة أو القانون العلمي المناسب",
+      "التعويض الصحيح بالقيم والوحدات المعطاة",
+      "تنفيذ الحساب بصورة صحيحة",
+      "كتابة النتيجة النهائية بالوحدة الصحيحة",
+    ];
+  }
+  if (questionForm === "استقصائي") {
+    return [
+      "تحديد الفكرة أو المتغير العلمي المطلوب بصورة صحيحة",
+      "ربط الإجابة بالملاحظة أو الدليل التجريبي المعطى",
+      "تفسير النتيجة تفسيرًا علميًا صحيحًا",
+      "صياغة استنتاج أو تحسين مناسب مدعوم بالمعطيات",
+    ];
+  }
+  if (questionForm === "مقارنة") {
+    return [
+      "ذكر وجه المقارنة الأول بصورة صحيحة",
+      "ذكر وجه المقارنة الثاني بصورة صحيحة",
+      "ربط المقارنة بالمفهوم العلمي المطلوب",
+      "صياغة خلاصة صحيحة من المقارنة",
+    ];
+  }
+  return [
+    "ذكر الفكرة العلمية الأساسية المطلوبة",
+    "توضيح العلاقة العلمية المرتبطة بالسؤال",
+    "تفسير الإجابة بالاستناد إلى المعطيات المقدمة",
+    "صياغة استنتاج علمي صحيح ومتكامل",
+  ];
+}
+
 function parseGeneratedJson(outputText: string): ModelGeneratedPayload {
   const original = outputText.replace(/^\uFEFF/, "").trim();
   const candidates = [original, stripMarkdownFence(original)];
@@ -402,7 +672,7 @@ function buildSystemInstructions(): string {
     "استخدم أفعال أمر دقيقة مثل: احسب، حدد، صف، قارن، فسر، استنتج، اقترح، برر. لا تستخدم فعلًا أعلى من الدرجة المتاحة.",
     "استخدم صياغة عربية قصيرة وواضحة، وتجنب النفي قدر الإمكان والنفي المزدوج، ولا تضع معلومات غير لازمة للإجابة.",
     "للإجابة القصيرة والطويلة: اجعل options مصفوفة فارغة، واكتب إجابة نموذجية قابلة للتصحيح.",
-    "أعد markScheme ككائن ثابت يحتوي point1 وpoint2 وpoint3 وpoint4. املأ أول عدد من النقاط يساوي marks تمامًا، واجعل النقاط الزائدة سلاسل فارغة. كل نقطة مستخدمة تمثل معيار تصحيح مستقلًا يستحق درجة واحدة، ولا تستخدم أنصاف الدرجات.",
+    "أعد markScheme كمصفوفة نصية طولها يساوي marks تمامًا. كل عنصر معيار تصحيح مستقل يستحق درجة واحدة، ولا تستخدم نقاطًا فارغة أو أنصاف درجات.",
     "أعد stimulus كسلسلة فارغة فقط للسؤال المفهومي المباشر؛ الأنماط السياقية والحسابية والبيانية والاستقصائية تحتاج متنًا أو بيانات واضحة.",
     "لكل بديل اختر sourceEvidenceId واحدًا فقط من allowedEvidenceIds الخاصة بالمفردة نفسها.",
     "لا تنسخ اقتباس المصدر داخل JSON؛ الخادم سيضيف نص الدليل الموثوق من المقطع المختار.",
@@ -460,14 +730,13 @@ function buildUserPrompt(request: GenerationRequest, evidenceCatalog: EvidenceCa
       alternativesPerItem: 3,
       exactPlanItemIds: request.items.map((item) => item.planItemId),
       evidenceRule: "أعد sourceEvidenceId من allowedEvidenceIds الخاصة بالمفردة فقط.",
-      styleRule: "اجعل questionForm مطابقًا حرفيًا لـ styleTarget. أعد markScheme بالنقاط point1..point4؛ املأ أول marks نقاط فقط واجعل الباقي فارغًا.",
+      styleRule: "اجعل questionForm مطابقًا حرفيًا لـ styleTarget. أعد markScheme كمصفوفة طولها يساوي marks تمامًا، وكل عنصر فيها معيار مستقل غير فارغ لدرجة واحدة.",
       visualRule: "لا تعد visual في JSON. استخدم fixedVisual الذي جهزه الخادم كما هو، وأشر إليه بوضوح عندما لا يكون نوعه none.",
     },
   });
 }
 
 function generationSchema(requestedItems: GenerationItem[], evidenceIds: string[]): Record<string, unknown> {
-  const requestedIds = requestedItems.map((item) => item.planItemId);
   return {
     type: "object",
     description: "النتيجة النهائية لتوليد مفردات الاختبار، ويجب أن تحتوي المفتاح items فقط.",
@@ -477,70 +746,73 @@ function generationSchema(requestedItems: GenerationItem[], evidenceIds: string[
         description: "مفردة مولدة واحدة لكل planItemId مطلوب وبالترتيب نفسه.",
         minItems: requestedItems.length,
         maxItems: requestedItems.length,
-        items: {
-          type: "object",
-          properties: {
-            planItemId: {
-              type: "string",
-              enum: requestedIds,
-              description: "المعرف المطابق حرفيًا لإحدى مفردات الدفعة.",
-            },
-            alternatives: {
-              type: "array",
-              description: "ثلاث صيغ بديلة مختلفة للمفردة نفسها.",
-              minItems: 3,
-              maxItems: 3,
-              items: {
-                type: "object",
-                properties: {
-                  stimulus: {
-                    type: "string",
-                    description: "متن أو سياق أو بيانات السؤال. يكون فارغًا فقط للمفردة المفهومية المباشرة.",
-                  },
-                  text: { type: "string", description: "نص المطلوب بصياغة عربية واضحة وفعل أمر مناسب." },
-                  options: {
-                    type: "array",
-                    description: "أربعة خيارات للاختيار من متعدد، ومصفوفة فارغة لبقية الأنواع.",
-                    items: { type: "string" },
-                  },
-                  answer: { type: "string", description: "الإجابة النموذجية الدقيقة." },
-                  rationale: { type: "string", description: "تفسير موجز لصحة الإجابة." },
-                  markScheme: {
-                    type: "object",
-                    description: "أربع خانات ثابتة لنقاط التصحيح. تُملأ أول marks خانات فقط، وتكون الخانات الزائدة سلاسل فارغة.",
-                    properties: {
-                      point1: { type: "string", description: "معيار الدرجة الأولى، ويجب ألا يكون فارغًا." },
-                      point2: { type: "string", description: "معيار الدرجة الثانية، أو سلسلة فارغة إذا كانت marks أقل من 2." },
-                      point3: { type: "string", description: "معيار الدرجة الثالثة، أو سلسلة فارغة إذا كانت marks أقل من 3." },
-                      point4: { type: "string", description: "معيار الدرجة الرابعة، أو سلسلة فارغة إذا كانت marks أقل من 4." },
+        prefixItems: requestedItems.map((requestedItem) => {
+          const markCount = Number.isInteger(requestedItem.marks) && requestedItem.marks > 0
+            ? requestedItem.marks
+            : 1;
+          return ({
+            type: "object",
+            properties: {
+              planItemId: {
+                type: "string",
+                enum: [requestedItem.planItemId],
+                description: "المعرف المطابق حرفيًا لمفردة هذا الموضع في الدفعة.",
+              },
+              alternatives: {
+                type: "array",
+                description: "ثلاث صيغ بديلة مختلفة للمفردة نفسها.",
+                minItems: 3,
+                maxItems: 3,
+                items: {
+                  type: "object",
+                  properties: {
+                    stimulus: {
+                      type: "string",
+                      description: "متن أو سياق أو بيانات السؤال. يكون فارغًا فقط للمفردة المفهومية المباشرة.",
                     },
-                    required: ["point1", "point2", "point3", "point4"],
-                    additionalProperties: false,
+                    text: { type: "string", description: "نص المطلوب بصياغة عربية واضحة وفعل أمر مناسب." },
+                    options: {
+                      type: "array",
+                      description: "أربعة خيارات للاختيار من متعدد، ومصفوفة فارغة لبقية الأنواع.",
+                      items: { type: "string" },
+                    },
+                    answer: { type: "string", description: "الإجابة النموذجية الدقيقة." },
+                    rationale: { type: "string", description: "تفسير موجز لصحة الإجابة." },
+                    markScheme: {
+                      type: "array",
+                      description: `نقاط التصحيح للمفردة. يجب أن تحتوي ${markCount} عناصر غير فارغة بالضبط، وكل عنصر يستحق درجة واحدة مستقلة.`,
+                      minItems: markCount,
+                      maxItems: markCount,
+                      items: {
+                        type: "string",
+                        description: "معيار تصحيح محدد ومستقل وغير فارغ لدرجة واحدة.",
+                      },
+                    },
+                    questionForm: {
+                      type: "string",
+                      enum: ["مفهومي", "سياقي", "حسابي", "بيانات", "استقصائي", "مقارنة"],
+                      description: "يجب أن يطابق styleTarget الخاص بالمفردة.",
+                    },
+                    workingRequired: {
+                      type: "boolean",
+                      description: "صحيح للأسئلة الحسابية التي تتطلب إظهار خطوات الحل.",
+                    },
+                    sourceEvidenceId: {
+                      type: "string",
+                      enum: evidenceIds,
+                      description: "معرف مقطع الدليل المختار من allowedEvidenceIds الخاصة بالمفردة.",
+                    },
+                    needsReview: { type: "boolean" },
                   },
-                  questionForm: {
-                    type: "string",
-                    enum: ["مفهومي", "سياقي", "حسابي", "بيانات", "استقصائي", "مقارنة"],
-                    description: "يجب أن يطابق styleTarget الخاص بالمفردة.",
-                  },
-                  workingRequired: {
-                    type: "boolean",
-                    description: "صحيح للأسئلة الحسابية التي تتطلب إظهار خطوات الحل.",
-                  },
-                  sourceEvidenceId: {
-                    type: "string",
-                    enum: evidenceIds,
-                    description: "معرف مقطع الدليل المختار من allowedEvidenceIds الخاصة بالمفردة.",
-                  },
-                  needsReview: { type: "boolean" },
+                  required: ["stimulus", "text", "options", "answer", "rationale", "markScheme", "questionForm", "workingRequired", "sourceEvidenceId", "needsReview"],
+                  additionalProperties: false,
                 },
-                required: ["stimulus", "text", "options", "answer", "rationale", "markScheme", "questionForm", "workingRequired", "sourceEvidenceId", "needsReview"],
-                additionalProperties: false,
               },
             },
-          },
-          required: ["planItemId", "alternatives"],
-          additionalProperties: false,
-        },
+            required: ["planItemId", "alternatives"],
+            additionalProperties: false,
+          });
+        }),
       },
     },
     required: ["items"],
@@ -1131,13 +1403,11 @@ function generationOutputTokenLimit(items: GenerationItem[]): number {
 
 function normalizeModelMarkScheme(value: unknown, marks: number): string[] {
   if (Array.isArray(value)) {
-    const points = value
-      .map((point) => typeof point === "string" ? point.trim() : "")
-      .filter(Boolean);
-    if (points.length < marks) {
+    const points = value.map((point) => typeof point === "string" ? point.trim() : "");
+    if (points.length !== marks || points.some((point) => !point)) {
       throw retryableError("نموذج التصحيح لا يوزع نقطة مستقلة لكل درجة.");
     }
-    return points.slice(0, marks);
+    return points;
   }
 
   const record = asRecord(value);
