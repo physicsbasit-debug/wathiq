@@ -126,6 +126,7 @@ export interface ExamDraft {
   durationMinutes: number;
   totalMarks: number;
   difficulty: Difficulty;
+  trustedEnrichmentEnabled: boolean;
   counts: QuestionCounts;
   plan: PlanItem[];
   selectedProposalByPlanItem: Record<string, string>;
@@ -164,6 +165,9 @@ export interface QuestionProposal {
   questionForm?: QuestionDesignPattern;
   workingRequired?: boolean;
   sourceSupport?: string;
+  enrichmentSupport?: string;
+  enrichmentSourceTitle?: string;
+  enrichmentSourceUrl?: string;
   needsReview?: boolean;
 }
 

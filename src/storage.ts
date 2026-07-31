@@ -11,6 +11,11 @@ const PROFILE_KEY = "wathiq.phase0b.profile";
 const SOURCES_KEY = "wathiq.phase0d.sourceRegistry";
 const LEGACY_SOURCES_KEY = "wathiq.phase0c.sources";
 
+const COMPATIBLE_GENERATION_VERSIONS = new Set([
+  SOURCE_GENERATION_VERSION,
+  "source-grounded-policy-ai-12-advanced-visuals",
+]);
+
 export interface SavedProfile {
   school: string;
   directorate: string;
@@ -92,6 +97,7 @@ export function normalizeExamDraft(value: unknown): ExamDraft | null {
     sourceReferences: normalizeSourceReferences(candidate.sourceReferences),
     sourceRetrievalVersion: typeof candidate.sourceRetrievalVersion === "string" ? candidate.sourceRetrievalVersion : "",
     title: normalizedTitle,
+    trustedEnrichmentEnabled: candidate.trustedEnrichmentEnabled !== false,
     examDate: typeof candidate.examDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(candidate.examDate)
       ? candidate.examDate
       : toDateInputValue(),
@@ -110,6 +116,10 @@ export function normalizeExamDraft(value: unknown): ExamDraft | null {
     approvedAt: typeof candidate.approvedAt === "string" ? candidate.approvedAt : "",
     status: candidate.status === "معتمد" || candidate.status === "جاهز للمراجعة" ? candidate.status : "مسودة",
   };
+  if (COMPATIBLE_GENERATION_VERSIONS.has(draft.generationVersion)) {
+    draft.generationVersion = SOURCE_GENERATION_VERSION;
+  }
+
   const officialSpec = getOfficialAssessmentSpec(draft.grade, draft.title);
   const requiresPolicyMigration = Boolean(officialSpec && candidatePolicyId !== SCIENCE_ASSESSMENT_POLICY_ID);
   if (requiresPolicyMigration) applyOfficialAssessmentTemplate(draft);

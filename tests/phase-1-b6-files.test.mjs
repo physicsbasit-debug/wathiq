@@ -11,7 +11,7 @@ test("تستخدم generateContent الرسمي المتوافق مع Gemini 2.5
   assert.match(edge, /systemInstruction:/);
   assert.match(edge, /contents:\s*\[\{/);
   assert.match(edge, /responseMimeType:\s*"application\/json"/);
-  assert.match(edge, /responseJsonSchema:\s*generationSchema\(request\.items,\s*evidenceCatalog\.fragments\.map/);
+  assert.match(edge, /responseJsonSchema:\s*generationSchema\(\s*request\.items,\s*evidenceCatalog\.fragments\.map/);
   assert.match(edge, /store:\s*false/);
   assert.doesNotMatch(edge, /\/interactions/);
   assert.doesNotMatch(edge, /response_format/);
@@ -38,6 +38,6 @@ test("يقيد مخطط JSON بمعرفات الدفعة وبالمفتاح item
 });
 
 test("يرفع إصدار مولد الأسئلة بعد الإصلاح", () => {
-  assert.match(generator, /source-grounded-policy-ai-(?:6-generate-content|7-evidence-anchors|8-cambridge-style|9-visual-svg|10-strict-lesson-scope|11-visual-enforced|12-advanced-visuals)/);
-  assert.match(pkg.version, /^0\.0\.(?:32|33|34|35|36|37|38|39|40|41|42|43|44)$/);
+  assert.match(generator, /source-grounded-policy-ai-(?:6-generate-content|7-evidence-anchors|8-cambridge-style|9-visual-svg|10-strict-lesson-scope|11-visual-enforced|12-advanced-visuals|13-trusted-enrichment)/);
+  assert.match(pkg.version, /^0\.0\.(?:32|33|34|35|36|37|38|39|40|41|42|43|44|45)$/);
 });

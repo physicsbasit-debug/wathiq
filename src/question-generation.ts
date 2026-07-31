@@ -17,7 +17,7 @@ import type { LessonCatalogOption } from "./lesson-catalog.js";
 import { SCIENCE_ASSESSMENT_POLICY_ID } from "./assessment-policy.js";
 import { parseQuestionVisualSpec } from "./question-visual.js";
 
-export const SOURCE_GENERATION_VERSION = "source-grounded-policy-ai-12-advanced-visuals";
+export const SOURCE_GENERATION_VERSION = "source-grounded-policy-ai-13-trusted-enrichment";
 export const GENERATION_BATCH_SIZE = 2;
 
 export type QuestionReferenceScopeMode = "page-range" | "page-neighborhood" | "strict-title-fallback" | "legacy-title";
@@ -64,6 +64,7 @@ export interface QuestionGenerationRequest {
   grade: number;
   subject: string;
   difficulty: Difficulty;
+  trustedEnrichmentEnabled: boolean;
   references: QuestionGenerationReference[];
   officialPlanItems: QuestionGenerationItem[];
   items: QuestionGenerationItem[];
@@ -79,6 +80,9 @@ export interface GeneratedAlternative {
   questionForm: QuestionDesignPattern;
   workingRequired: boolean;
   sourceSupport: string;
+  enrichmentSupport: string;
+  enrichmentSourceTitle: string;
+  enrichmentSourceUrl: string;
   needsReview: boolean;
 }
 
@@ -128,6 +132,17 @@ function isQuestionDesignPattern(value: unknown): value is QuestionDesignPattern
   return typeof value === "string" && (QUESTION_DESIGN_PATTERNS as readonly string[]).includes(value);
 }
 
+
+function safeExternalUrl(value: string): string {
+  if (!value) return "";
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "https:" || parsed.protocol === "http:" ? parsed.toString() : "";
+  } catch {
+    return "";
+  }
+}
+
 function parseAlternative(value: unknown, expected: QuestionGenerationItem): GeneratedAlternative {
   const record = asRecord(value);
   if (!record) throw new Error("استجابة مولد الأسئلة تحتوي بديلًا غير صالح.");
@@ -144,6 +159,9 @@ function parseAlternative(value: unknown, expected: QuestionGenerationItem): Gen
   const questionForm = isQuestionDesignPattern(record.questionForm) ? record.questionForm : null;
   const workingRequired = record.workingRequired === true;
   const sourceSupport = typeof record.sourceSupport === "string" ? record.sourceSupport.trim() : "";
+  const enrichmentSupport = typeof record.enrichmentSupport === "string" ? record.enrichmentSupport.trim() : "";
+  const enrichmentSourceTitle = typeof record.enrichmentSourceTitle === "string" ? record.enrichmentSourceTitle.trim() : "";
+  const enrichmentSourceUrl = safeExternalUrl(typeof record.enrichmentSourceUrl === "string" ? record.enrichmentSourceUrl.trim() : "");
   const needsReview = record.needsReview === true;
 
   if (!text || !answer || !rationale || !sourceSupport || !questionForm) {
@@ -178,7 +196,7 @@ function parseAlternative(value: unknown, expected: QuestionGenerationItem): Gen
     throw new Error("سؤال غير موضوعي أعاد بدائل اختيار من متعدد على نحو غير صالح.");
   }
 
-  return { stimulus, text, options, answer, rationale, markScheme, questionForm, workingRequired, sourceSupport, needsReview };
+  return { stimulus, text, options, answer, rationale, markScheme, questionForm, workingRequired, sourceSupport, enrichmentSupport, enrichmentSourceTitle, enrichmentSourceUrl, needsReview };
 }
 
 export function parseQuestionGenerationResponse(
@@ -358,6 +376,7 @@ export function buildQuestionGenerationRequest(
   requestedPlan: PlanItem[],
   officialPlan: PlanItem[] = requestedPlan,
   lessonCatalog: readonly LessonCatalogOption[] = [],
+  trustedEnrichmentEnabled = true,
 ): QuestionGenerationRequest {
   const normalizedLessons = lessons.map((lesson) => lesson.trim()).filter(Boolean);
   if (normalizedLessons.length < 2 || normalizedLessons.length > 5) {
@@ -412,6 +431,7 @@ export function buildQuestionGenerationRequest(
     grade,
     subject,
     difficulty,
+    trustedEnrichmentEnabled,
     references: requestReferences,
     officialPlanItems: officialPlan.map((item, index) => {
       const reference = item.sourceReferenceId ? referenceById.get(item.sourceReferenceId) : undefined;
@@ -445,6 +465,9 @@ export function applyGeneratedQuestions(
       questionForm: alternative.questionForm,
       workingRequired: alternative.workingRequired,
       sourceSupport: alternative.sourceSupport,
+      ...(alternative.enrichmentSupport ? { enrichmentSupport: alternative.enrichmentSupport } : {}),
+      ...(alternative.enrichmentSourceTitle ? { enrichmentSourceTitle: alternative.enrichmentSourceTitle } : {}),
+      ...(alternative.enrichmentSourceUrl ? { enrichmentSourceUrl: alternative.enrichmentSourceUrl } : {}),
       needsReview: alternative.needsReview,
     }));
     return { ...item, visual: generated.visual, proposals };
@@ -467,7 +490,7 @@ export class QuestionGenerationService {
   async generate(request: QuestionGenerationRequest): Promise<QuestionGenerationResponse> {
     const session = await this.sessionProvider();
     const controller = new AbortController();
-    const timeout = globalThis.setTimeout(() => controller.abort(), 68_000);
+    const timeout = globalThis.setTimeout(() => controller.abort(), 95_000);
     try {
       const response = await this.fetcher(this.endpoint, {
         method: "POST",
@@ -491,7 +514,7 @@ export class QuestionGenerationService {
       return parseQuestionGenerationResponse(payload, request.items);
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
-        throw new Error("تأخرت دفعة توليد الأسئلة أكثر من 65 ثانية. أعد المحاولة؛ لن تُفقد الدفعات المكتملة.");
+        throw new Error("تأخرت دفعة توليد الأسئلة أكثر من 90 ثانية. أعد المحاولة؛ لن تُفقد الدفعات المكتملة.");
       }
       throw error;
     } finally {

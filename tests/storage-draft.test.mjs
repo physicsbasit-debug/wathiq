@@ -106,12 +106,32 @@ test("يحافظ على مرحلة الخطة لمسودة منشأة بالإص
     sourceReferences: twoLessonReferences(),
     sourceRetrievalVersion: SOURCE_RETRIEVAL_VERSION,
     currentStep: 3,
-    generationVersion: "source-grounded-policy-ai-12-advanced-visuals",
+    generationVersion: "source-grounded-policy-ai-13-trusted-enrichment",
     plan: [{ id: "plan-1", proposals: [] }],
   });
   assert.ok(draft);
   assert.equal(draft.currentStep, 3);
   assert.equal(draft.sourceReferences[0].lessonTopic, "1-1 الشحنة الكهربائية");
+});
+
+test("يرقي مسودة C3 المكتملة إلى عقد C4 دون حذف الأسئلة", () => {
+  const draft = normalizeExamDraft({
+    id: "c3-compatible",
+    grade: 10,
+    subjectId: "physics",
+    assessmentPolicyId: "oman-science-assessment-2025-2026",
+    lessonTopics: ["1-1 الشحنة الكهربائية", "1-2 التأثيرات الكهربائية"],
+    sourceReferences: twoLessonReferences(),
+    sourceRetrievalVersion: SOURCE_RETRIEVAL_VERSION,
+    currentStep: 3,
+    generationVersion: "source-grounded-policy-ai-12-advanced-visuals",
+    plan: [{ id: "plan-c3", proposals: [{ id: "proposal-c3" }] }],
+  });
+  assert.ok(draft);
+  assert.equal(draft.currentStep, 3);
+  assert.equal(draft.generationVersion, "source-grounded-policy-ai-13-trusted-enrichment");
+  assert.equal(draft.plan.length, 1);
+  assert.equal(draft.plan[0].proposals.length, 1);
 });
 
 test("يرحّل المسودة القديمة إلى قالب التقويم الرسمي للصف العاشر", () => {

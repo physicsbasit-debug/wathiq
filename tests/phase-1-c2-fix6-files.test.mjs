@@ -8,7 +8,7 @@ const edge = await readFile(new URL("../supabase/functions/generate-source-quest
 const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 
 test("يثبت Fix 6 ربط دليل الدرس بنطاق الصفحات الموثق", () => {
-  assert.match(pkg.version, /^0\.0\.(?:42|43|44)$/);
+  assert.match(pkg.version, /^0\.0\.(?:42|43|44|45)$/);
   assert.match(generator, /page-range/);
   assert.match(generator, /page-neighborhood/);
   assert.match(generator, /strict-title-fallback/);
@@ -18,7 +18,7 @@ test("يثبت Fix 6 ربط دليل الدرس بنطاق الصفحات الم
 
 test("ترسل الواجهة شجرة الدروس إلى باني طلب التوليد دون مسح المفردات المكتملة", () => {
   assert.match(app, /state\.lessonCatalog/);
-  assert.match(generator, /SOURCE_GENERATION_VERSION\s*=\s*"source-grounded-policy-ai-12-advanced-visuals"/);
+  assert.match(generator, /SOURCE_GENERATION_VERSION\s*=\s*"source-grounded-policy-ai-(?:12-advanced-visuals|13-trusted-enrichment)"/);
 });
 
 test("يقبل الخادم مرجع الصفحة الموثقة ويبقي البحث الاحتياطي مقيدًا بعنوان الدرس", () => {

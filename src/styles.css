@@ -1626,3 +1626,73 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
 @media print {
   .qv-table-head, .qv-table-row-head, .qv-instrument-liquid, .qv-instrument-fill, .qv-flow-node, .qv-lens, .qv-prism, .qv-pivot { fill: #eee; }
 }
+
+/* Phase 1-C4: trusted curriculum enrichment */
+.trusted-enrichment-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  margin: 18px 0;
+  padding: 16px 18px;
+  border: 1px solid #d8e2f0;
+  border-radius: 16px;
+  background: #f8fbff;
+  cursor: pointer;
+}
+.trusted-enrichment-card.enabled {
+  border-color: #b9d9cc;
+  background: #f3fbf7;
+}
+.trusted-enrichment-card > input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.trusted-enrichment-check {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid #b8c5d8;
+  border-radius: 7px;
+  background: #fff;
+  color: #176b4a;
+}
+.trusted-enrichment-card.enabled .trusted-enrichment-check {
+  border-color: #71b397;
+  background: #e8f7ef;
+}
+.trusted-enrichment-card strong,
+.trusted-enrichment-card small {
+  display: block;
+}
+.trusted-enrichment-card strong {
+  margin-bottom: 5px;
+  color: #19355d;
+}
+.trusted-enrichment-card small {
+  color: #64748b;
+  line-height: 1.8;
+}
+.proposal-enrichment-evidence {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid #d6e4f3;
+  border-radius: 12px;
+  background: #f7fbff;
+}
+.proposal-enrichment-evidence p {
+  margin: 6px 0;
+}
+.proposal-enrichment-evidence a {
+  font-weight: 700;
+  color: #1d5c93;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+@media (max-width: 680px) {
+  .trusted-enrichment-card {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+}

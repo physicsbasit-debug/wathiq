@@ -12,6 +12,9 @@ const MAX_REFERENCES = 6;
 const MAX_REFERENCE_CHARACTERS = 4_200;
 const MAX_TOTAL_REFERENCE_CHARACTERS = 24_000;
 const GEMINI_TIMEOUT_MS = 30_000;
+const ENRICHMENT_TIMEOUT_MS = 14_000;
+const ENRICHMENT_CACHE_TTL_MS = 20 * 60_000;
+const ENRICHMENT_MAX_SEGMENTS = 6;
 const MARK_SCHEME_REPAIR_TIMEOUT_MS = 12_000;
 const MARK_SCHEME_REPAIR_MAX_OUTPUT_TOKENS = 900;
 const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent`;
@@ -124,6 +127,7 @@ interface GenerationRequest {
   grade: number;
   subject: string;
   difficulty: Difficulty;
+  trustedEnrichmentEnabled: boolean;
   references: GenerationReference[];
   officialPlanItems: GenerationItem[];
   items: GenerationItem[];
@@ -146,6 +150,7 @@ interface ModelGeneratedAlternative {
   questionForm: QuestionDesignPattern;
   workingRequired: boolean;
   sourceEvidenceId: string;
+  enrichmentEvidenceId: string;
   needsReview: boolean;
 }
 
@@ -177,6 +182,9 @@ interface GeneratedAlternative {
   questionForm: QuestionDesignPattern;
   workingRequired: boolean;
   sourceSupport: string;
+  enrichmentSupport: string;
+  enrichmentSourceTitle: string;
+  enrichmentSourceUrl: string;
   needsReview: boolean;
 }
 
@@ -203,6 +211,25 @@ interface EvidenceCatalog {
   referenceContentById: Map<string, string>;
   referenceById: Map<string, GenerationReference>;
 }
+
+interface TrustedEnrichmentSegment {
+  id: string;
+  text: string;
+  sourceTitle: string;
+  sourceUrl: string;
+}
+
+interface TrustedEnrichmentContext {
+  segments: TrustedEnrichmentSegment[];
+  attempted: boolean;
+}
+
+interface EnrichmentCacheEntry {
+  expiresAt: number;
+  context: TrustedEnrichmentContext;
+}
+
+const enrichmentCache = new Map<string, EnrichmentCacheEntry>();
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders(req) });
@@ -232,9 +259,156 @@ Deno.serve(async (req) => {
       status: errorStatus(error),
       message: errorMessage(error),
     });
-    return json(req, { error: errorMessage(error), requestId }, errorStatus(error));
+    return json(req, {
+      error: errorMessage(error),
+      requestId,
+      ...(isRetryableGenerationError(error) ? { code: "GENERATION_TEMPORARILY_UNAVAILABLE", retryAfterMs: 6_000 } : {}),
+    }, errorStatus(error));
   }
 });
+
+
+function trustedEnrichmentCacheKey(request: GenerationRequest): string {
+  return JSON.stringify({
+    grade: request.grade,
+    subject: normalizeForEvidence(request.subject),
+    lessons: request.lessons.map(normalizeForEvidence).sort(),
+    references: request.references.map((reference) => `${reference.sourceId}:${reference.pageFrom}-${reference.pageTo}`).sort(),
+  });
+}
+
+function candidateTrustedHost(value: string): string {
+  const compact = value.trim().toLowerCase().replace(/^www\./, "");
+  if (!compact) return "";
+  try {
+    return new URL(compact.includes("://") ? compact : `https://${compact}`).hostname.replace(/^www\./, "");
+  } catch {
+    const match = compact.match(/(?:^|\s|\/)([a-z0-9.-]+\.(?:gov(?:\.[a-z]{2})?|edu(?:\.[a-z]{2})?|ac\.[a-z]{2}|org|int|ch))(?:\s|\/|$)/i);
+    return match?.[1]?.replace(/^www\./, "") ?? "";
+  }
+}
+
+function isTrustedScientificHost(host: string): boolean {
+  const normalized = host.trim().toLowerCase().replace(/^www\./, "");
+  if (!normalized) return false;
+  const exact = new Set([
+    "cambridgeinternational.org", "who.int", "iaea.org", "unesco.org", "un.org", "oecd.org",
+    "cern.ch", "royalsociety.org", "physics.org", "rsc.org", "acs.org",
+  ]);
+  if (exact.has(normalized)) return true;
+  const officialSuffix = /(?:^|\.)(?:gov|edu|ac)\.[a-z]{2,3}$/u.test(normalized);
+  return normalized.endsWith(".gov")
+    || normalized.endsWith(".edu")
+    || officialSuffix
+    || normalized === "moe.gov.om"
+    || [...exact].some((domain) => normalized.endsWith(`.${domain}`));
+}
+
+function trustedGroundingChunk(value: unknown): { sourceTitle: string; sourceUrl: string } | null {
+  const chunk = asRecord(value);
+  const web = asRecord(chunk?.web);
+  const sourceUrl = typeof web?.uri === "string" ? web.uri.trim() : "";
+  const sourceTitle = typeof web?.title === "string" ? web.title.trim() : "";
+  const uriHost = sourceUrl ? candidateTrustedHost(sourceUrl) : "";
+  const titleHost = sourceTitle ? candidateTrustedHost(sourceTitle) : "";
+  if (!sourceUrl || (!isTrustedScientificHost(uriHost) && !isTrustedScientificHost(titleHost))) return null;
+  return { sourceTitle: sourceTitle || titleHost || uriHost, sourceUrl };
+}
+
+function extractTrustedEnrichmentContext(payload: unknown): TrustedEnrichmentContext {
+  const record = asRecord(payload);
+  const candidate = Array.isArray(record?.candidates) ? asRecord(record.candidates[0]) : null;
+  const content = asRecord(candidate?.content);
+  const parts = Array.isArray(content?.parts) ? content.parts : [];
+  const responseText = parts.map((part) => {
+    const item = asRecord(part);
+    return typeof item?.text === "string" ? item.text : "";
+  }).join("");
+  const grounding = asRecord(candidate?.groundingMetadata);
+  const rawChunks = Array.isArray(grounding?.groundingChunks) ? grounding.groundingChunks : [];
+  const trustedChunks = rawChunks.map(trustedGroundingChunk);
+  const supports = Array.isArray(grounding?.groundingSupports) ? grounding.groundingSupports : [];
+  const segments: TrustedEnrichmentSegment[] = [];
+  const seen = new Set<string>();
+
+  for (const supportValue of supports) {
+    const support = asRecord(supportValue);
+    const segment = asRecord(support?.segment);
+    let text = typeof segment?.text === "string" ? segment.text.trim() : "";
+    if (!text && typeof segment?.startIndex === "number" && typeof segment?.endIndex === "number") {
+      text = responseText.slice(segment.startIndex, segment.endIndex).trim();
+    }
+    const indices = Array.isArray(support?.groundingChunkIndices)
+      ? support.groundingChunkIndices.filter((index): index is number => Number.isSafeInteger(index))
+      : [];
+    const source = indices.map((index) => trustedChunks[index]).find((item) => item !== null) ?? null;
+    const normalizedText = normalizeForEvidence(text);
+    if (!source || normalizedText.length < 24 || seen.has(normalizedText)) continue;
+    seen.add(normalizedText);
+    segments.push({
+      id: `WEB-${segments.length + 1}`,
+      text: text.slice(0, 520),
+      sourceTitle: source.sourceTitle.slice(0, 180),
+      sourceUrl: source.sourceUrl.slice(0, 1_200),
+    });
+    if (segments.length >= ENRICHMENT_MAX_SEGMENTS) break;
+  }
+  return { segments, attempted: true };
+}
+
+function enrichmentSearchPrompt(request: GenerationRequest): string {
+  const sourceBriefs = request.references.map((reference) => ({
+    lesson: reference.lessonTopic,
+    source: reference.sourceTitle,
+    pages: reference.pageFrom === reference.pageTo ? `${reference.pageFrom}` : `${reference.pageFrom}-${reference.pageTo}`,
+    curriculumExcerpt: reference.content.slice(0, 900),
+  }));
+  return [
+    "ابحث عن إثراء علمي قصير يخدم بناء أسئلة مدرسية متوافقة مع المنهج العُماني.",
+    "استخدم فقط مصادر حكومية أو جامعية أو منظمات علمية رسمية وموثوقة، ولا تستخدم ويكيبيديا أو المدونات أو مواقع الأسئلة العامة.",
+    "قدّم من أربع إلى ست جمل مستقلة فقط، وكل جملة تصلح كسياق واقعي أو بيانات أو تجربة أو تطبيق للدرس.",
+    "لا تضف حقيقة يجب على الطالب معرفتها إذا لم تكن مثبتة في مقتطف المنهج. المرجع المدرسي أدناه هو الحاكم للمفهوم والإجابة.",
+    "لا تنسخ سؤال اختبار منشورًا، ولا تذكر أرقام صفحات أو أسماء وحدات في الجمل.",
+    JSON.stringify({ grade: request.grade, subject: request.subject, lessons: request.lessons, sourceBriefs }),
+  ].join("\n");
+}
+
+async function prepareTrustedEnrichment(request: GenerationRequest, requestId: string): Promise<TrustedEnrichmentContext> {
+  if (!request.trustedEnrichmentEnabled) return { segments: [], attempted: false };
+  const key = trustedEnrichmentCacheKey(request);
+  const cached = enrichmentCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.context;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), ENRICHMENT_TIMEOUT_MS);
+  try {
+    logStage(requestId, "trusted_enrichment_search_started", { lessonCount: request.lessons.length });
+    const response = await fetch(GEMINI_API_URL, {
+      method: "POST",
+      headers: { "x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: enrichmentSearchPrompt(request) }] }],
+        tools: [{ google_search: {} }],
+        store: false,
+        generationConfig: { candidateCount: 1, maxOutputTokens: 1_200, thinkingConfig: { thinkingBudget: 0 } },
+      }),
+      signal: controller.signal,
+    });
+    const payload = await response.json() as unknown;
+    if (!response.ok) {
+      logStage(requestId, "trusted_enrichment_search_skipped", { status: response.status, reason: "provider_error" });
+      return { segments: [], attempted: true };
+    }
+    const context = extractTrustedEnrichmentContext(payload);
+    enrichmentCache.set(key, { expiresAt: Date.now() + ENRICHMENT_CACHE_TTL_MS, context });
+    return context;
+  } catch (error) {
+    logStage(requestId, "trusted_enrichment_search_skipped", { reason: errorMessage(error) });
+    return { segments: [], attempted: true };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 async function generateAndValidate(request: GenerationRequest, requestId: string): Promise<GeneratedPayload> {
   const evidenceCatalog = buildEvidenceCatalog(request.references);
@@ -242,13 +416,19 @@ async function generateAndValidate(request: GenerationRequest, requestId: string
     fragmentCount: evidenceCatalog.fragments.length,
     referenceCount: evidenceCatalog.byReferenceId.size,
   });
+  const enrichment = await prepareTrustedEnrichment(request, requestId);
+  logStage(requestId, "trusted_enrichment_ready", {
+    enabled: request.trustedEnrichmentEnabled,
+    attempted: enrichment.attempted,
+    segmentCount: enrichment.segments.length,
+  });
   let lastError: unknown = null;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     try {
-      const payload = await callGemini(request, evidenceCatalog, attempt > 1, requestId, attempt);
+      const payload = await callGemini(request, evidenceCatalog, enrichment, attempt > 1, requestId, attempt);
       try {
         const markSchemeSafePayload = await repairGeneratedPayloadMarkSchemes(payload, request, requestId);
-        const hydrated = validateAndHydrateGeneratedPayload(markSchemeSafePayload, request, evidenceCatalog);
+        const hydrated = validateAndHydrateGeneratedPayload(markSchemeSafePayload, request, evidenceCatalog, enrichment);
         logStage(requestId, "questions_validated", {
           attempt,
           itemCount: hydrated.items.length,
@@ -266,16 +446,33 @@ async function generateAndValidate(request: GenerationRequest, requestId: string
       }
     } catch (error) {
       lastError = error;
-      if (attempt === 2 || !isRetryableGenerationError(error)) break;
+      if (attempt === 2 || !isRetryableGenerationError(error) || isTransportRetryExhausted(error)) break;
       await delay(700);
     }
   }
   throw lastError instanceof Error ? lastError : new Error("تعذر إنشاء أسئلة صالحة من المصدر.");
 }
 
+function exponentialBackoffWithJitter(attempt: number): number {
+  const base = Math.min(4_000, 800 * (2 ** Math.max(0, attempt - 1)));
+  return base + Math.floor(Math.random() * 350);
+}
+
+function normalizeTransientGeminiMessage(message: string, status: number): string {
+  const normalized = message.toLowerCase();
+  if (status === 429 || status === 503 || /high demand|overload|resource exhausted|try again later|temporarily unavailable/u.test(normalized)) {
+    return "النموذج مشغول مؤقتًا بسبب ارتفاع الطلب. أعاد واثق المحاولة تلقائيًا؛ احتُفظ بالمفردات المكتملة ويمكن الضغط على التالي لاحقًا لإكمال الباقي فقط.";
+  }
+  if (status === 408 || /timeout|timed out/u.test(normalized)) {
+    return "تأخر رد النموذج مؤقتًا. احتُفظ بالمفردات المكتملة ويمكن متابعة الباقي دون إعادة ما اكتمل.";
+  }
+  return message;
+}
+
 async function callGemini(
   request: GenerationRequest,
   evidenceCatalog: EvidenceCatalog,
+  enrichment: TrustedEnrichmentContext,
   repairAttempt: boolean,
   requestId: string,
   attempt: number,
@@ -283,50 +480,65 @@ async function callGemini(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
   const startedAt = Date.now();
+  const requestBody = JSON.stringify({
+    systemInstruction: {
+      parts: [{ text: buildSystemInstructions() }],
+    },
+    contents: [{
+      role: "user",
+      parts: [{ text: buildUserPrompt(request, evidenceCatalog, enrichment, repairAttempt) }],
+    }],
+    store: false,
+    generationConfig: {
+      candidateCount: 1,
+      maxOutputTokens: generationOutputTokenLimit(request.items),
+      thinkingConfig: { thinkingBudget: generationThinkingBudget(request.items) },
+      responseMimeType: "application/json",
+      responseJsonSchema: generationSchema(
+        request.items,
+        evidenceCatalog.fragments.map((fragment) => fragment.id),
+        enrichment.segments.map((segment) => segment.id),
+      ),
+    },
+  });
   logStage(requestId, "gemini_request_started", {
     attempt,
     repairAttempt,
     itemCount: request.items.length,
     referenceCount: request.references.length,
+    enrichmentCount: enrichment.segments.length,
     api: "generateContent",
   });
   try {
-    const response = await fetch(GEMINI_API_URL, {
-      method: "POST",
-      headers: {
-        "x-goog-api-key": GEMINI_API_KEY,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        systemInstruction: {
-          parts: [{ text: buildSystemInstructions() }],
+    let payload: unknown = null;
+    for (let transportAttempt = 1; transportAttempt <= 3; transportAttempt += 1) {
+      const response = await fetch(GEMINI_API_URL, {
+        method: "POST",
+        headers: {
+          "x-goog-api-key": GEMINI_API_KEY,
+          "Content-Type": "application/json",
         },
-        contents: [{
-          role: "user",
-          parts: [{ text: buildUserPrompt(request, evidenceCatalog, repairAttempt) }],
-        }],
-        store: false,
-        generationConfig: {
-          candidateCount: 1,
-          maxOutputTokens: generationOutputTokenLimit(request.items),
-          thinkingConfig: { thinkingBudget: generationThinkingBudget(request.items) },
-          responseMimeType: "application/json",
-          responseJsonSchema: generationSchema(request.items, evidenceCatalog.fragments.map((fragment) => fragment.id)),
-        },
-      }),
-      signal: controller.signal,
-    });
-    const payload = await response.json() as unknown;
-    if (!response.ok) {
-      const message = geminiError(payload, `تعذر الاتصال بمولد الأسئلة (${response.status}).`);
+        body: requestBody,
+        signal: controller.signal,
+      });
+      payload = await response.json() as unknown;
+      if (response.ok) break;
+
+      const providerMessage = geminiError(payload, `تعذر الاتصال بمولد الأسئلة (${response.status}).`);
+      const message = normalizeTransientGeminiMessage(providerMessage, response.status);
+      const transient = response.status >= 500 || response.status === 408 || response.status === 429;
       logStage(requestId, "gemini_http_failed", {
         attempt,
+        transportAttempt,
         status: response.status,
+        transient,
         durationMs: Date.now() - startedAt,
       });
-      if (response.status >= 500 || response.status === 408 || response.status === 429) {
-        throw retryableError(message);
+      if (transient && transportAttempt < 3) {
+        await delay(exponentialBackoffWithJitter(transportAttempt));
+        continue;
       }
+      if (transient) throw transportRetryableError(message);
       throw httpError(message, 400);
     }
 
@@ -352,7 +564,7 @@ async function callGemini(
     return parseGeneratedJson(output.text);
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
-      throw retryableError("تأخر مولد الأسئلة أكثر من المدة المسموحة.");
+      throw transportRetryableError("تأخر مولد الأسئلة أكثر من المدة المسموحة. احتفظ واثق بالمفردات المكتملة ويمكن متابعة الباقي لاحقًا.");
     }
     throw error;
   } finally {
@@ -681,7 +893,9 @@ function buildSystemInstructions(): string {
     "أنت محرر اختبارات علوم مدرسية باللغة العربية لسلطنة عُمان.",
     "التزم أولًا بوثيقة تقويم تعلم الطلبة في مواد العلوم للصفوف 5-10، إصدار 2025/2026؛ فهي المرجع الحاكم للدرجات والأنواع والأهداف والصعوبة.",
     "استلهم جودة بناء مفردات Cambridge Science دون نسخ أسئلة محفوظة: سياق علمي موجز، تدرج من المعرفة إلى التطبيق والاستدلال، بيانات أو تمثيلات عند الحاجة، وأفعال أمر دقيقة مرتبطة بالدرجة.",
-    "مهمتك إنشاء أسئلة من النصوص المرجعية المرفقة فقط، دون إضافة معلومة علمية من الذاكرة أو الإنترنت.",
+    "الكتاب المدرسي والمقاطع المرجعية المرفقة هي المصدر الحاكم للمفهوم والإجابة ونطاق المعرفة المطلوبة من الطالب.",
+    "قد يرفق الخادم trustedEnrichment من بحث موثق في مصادر علمية رسمية. استخدمه فقط لإثراء السياق أو البيانات أو المثال أو التجربة، ولا تجعله يضيف معرفة مطلوبة خارج ما يثبته المرجع المدرسي.",
+    "إذا استخدمت trustedEnrichment في بديل، أعد enrichmentEvidenceId المطابق. إذا لم تستخدمه فأعد سلسلة فارغة. لا تعتبر ذاكرة النموذج مصدرًا ولا تخترع روابط أو حقائق.",
     "أنشئ ثلاثة بدائل مختلفة لكل مفردة مرسلة في هذه الدفعة فقط، مع الحفاظ حرفيًا على الدرس ونوع السؤال وهدف التقويم ومستوى الصعوبة والدرجة ونمط styleTarget.",
     "لا تخلط بين الدروس؛ كل مفردة مرتبطة باسم درس ومرجع صفحة محددين في الخطة.",
     "يُمنع إنشاء أسئلة عن اسم الوحدة أو رقمها أو اسم الكتاب أو الصفحة أو موضع الدرس في المنهج؛ المطلوب قياس المحتوى العلمي للدرس فقط.",
@@ -706,7 +920,7 @@ function buildSystemInstructions(): string {
     "للإجابة القصيرة والطويلة: اجعل options مصفوفة فارغة، واكتب إجابة نموذجية قابلة للتصحيح.",
     "أعد markScheme كمصفوفة نصية طولها يساوي marks تمامًا. كل عنصر معيار تصحيح مستقل يستحق درجة واحدة، ولا تستخدم نقاطًا فارغة أو أنصاف درجات.",
     "أعد stimulus كسلسلة فارغة فقط للسؤال المفهومي المباشر؛ الأنماط السياقية والحسابية والبيانية والاستقصائية تحتاج متنًا أو بيانات واضحة.",
-    "لكل بديل اختر sourceEvidenceId واحدًا فقط من allowedEvidenceIds الخاصة بالمفردة نفسها.",
+    "لكل بديل اختر sourceEvidenceId واحدًا فقط من allowedEvidenceIds الخاصة بالمفردة نفسها، وأعد enrichmentEvidenceId من allowedEnrichmentIds أو سلسلة فارغة.",
     "لا تنسخ اقتباس المصدر داخل JSON؛ الخادم سيضيف نص الدليل الموثوق من المقطع المختار.",
     "لا تسأل عن أرقام صفحات أو حقوق نشر أو مقدمة الكتاب إلا إذا كان الموضوع المطلوب عنها صراحة.",
     "إذا كان النص المرجعي ضعيفًا لمفردة معينة، أنشئ سؤالًا أبسط على حقيقة صريحة واضبط needsReview=true. لا تخترع.",
@@ -717,7 +931,7 @@ function buildSystemInstructions(): string {
   ].join("\n");
 }
 
-function buildUserPrompt(request: GenerationRequest, evidenceCatalog: EvidenceCatalog, repairAttempt: boolean): string {
+function buildUserPrompt(request: GenerationRequest, evidenceCatalog: EvidenceCatalog, enrichment: TrustedEnrichmentContext, repairAttempt: boolean): string {
   const references = request.references.map((reference) => ({
     id: reference.id,
     sourceTitle: reference.sourceTitle,
@@ -727,6 +941,11 @@ function buildUserPrompt(request: GenerationRequest, evidenceCatalog: EvidenceCa
       id: fragment.id,
       text: fragment.text,
     })),
+  }));
+  const trustedEnrichment = enrichment.segments.map((segment) => ({
+    id: segment.id,
+    text: segment.text,
+    sourceTitle: segment.sourceTitle,
   }));
   return JSON.stringify({
     task: repairAttempt
@@ -742,6 +961,7 @@ function buildUserPrompt(request: GenerationRequest, evidenceCatalog: EvidenceCa
       difficulty: request.difficulty,
     },
     references,
+    trustedEnrichment,
     officialPlanSummary: request.officialPlanItems.map((item) => ({
       planItemId: item.planItemId,
       lessonLabel: item.lessonLabel,
@@ -756,6 +976,7 @@ function buildUserPrompt(request: GenerationRequest, evidenceCatalog: EvidenceCa
       ...item,
       fixedVisual: buildServerOwnedVisualSpec(item, request),
       allowedEvidenceIds: (evidenceCatalog.byReferenceId.get(item.sourceReferenceId) ?? []).map((fragment) => fragment.id),
+      allowedEnrichmentIds: enrichment.segments.map((segment) => segment.id),
     })),
     outputContract: {
       topLevelType: "object",
@@ -763,14 +984,14 @@ function buildUserPrompt(request: GenerationRequest, evidenceCatalog: EvidenceCa
       itemCount: request.items.length,
       alternativesPerItem: 3,
       exactPlanItemIds: request.items.map((item) => item.planItemId),
-      evidenceRule: "أعد sourceEvidenceId من allowedEvidenceIds الخاصة بالمفردة فقط.",
+      evidenceRule: "أعد sourceEvidenceId من allowedEvidenceIds الخاصة بالمفردة فقط. أعد enrichmentEvidenceId من allowedEnrichmentIds عند استخدام إثراء خارجي، وإلا فأعد سلسلة فارغة.",
       styleRule: "اجعل questionForm مطابقًا حرفيًا لـ styleTarget. أعد markScheme كمصفوفة طولها يساوي marks تمامًا، وكل عنصر فيها معيار مستقل غير فارغ لدرجة واحدة.",
       visualRule: "لا تعد visual في JSON. إذا كان fixedVisual.type لا يساوي none، يجب أن تعتمد جميع البدائل الثلاثة على الشكل نفسه اعتمادًا جوهريًا وتذكر الشكل أو الرسم في نص السؤال؛ وإلا فستُرفض المفردة.",
     },
   });
 }
 
-function generationSchema(requestedItems: GenerationItem[], evidenceIds: string[]): Record<string, unknown> {
+function generationSchema(requestedItems: GenerationItem[], evidenceIds: string[], enrichmentIds: string[] = []): Record<string, unknown> {
   return {
     type: "object",
     description: "النتيجة النهائية لتوليد مفردات الاختبار، ويجب أن تحتوي المفتاح items فقط.",
@@ -836,9 +1057,14 @@ function generationSchema(requestedItems: GenerationItem[], evidenceIds: string[
                       enum: evidenceIds,
                       description: "معرف مقطع الدليل المختار من allowedEvidenceIds الخاصة بالمفردة.",
                     },
+                    enrichmentEvidenceId: {
+                      type: "string",
+                      enum: ["", ...enrichmentIds],
+                      description: "معرف إثراء رسمي مستخدم في السياق، أو سلسلة فارغة عند عدم استخدام إثراء خارجي.",
+                    },
                     needsReview: { type: "boolean" },
                   },
-                  required: ["stimulus", "text", "options", "answer", "rationale", "markScheme", "questionForm", "workingRequired", "sourceEvidenceId", "needsReview"],
+                  required: ["stimulus", "text", "options", "answer", "rationale", "markScheme", "questionForm", "workingRequired", "sourceEvidenceId", "enrichmentEvidenceId", "needsReview"],
                   additionalProperties: false,
                 },
               },
@@ -862,6 +1088,7 @@ function parseGenerationRequest(value: unknown): GenerationRequest {
   const subject = requireText(record.subject, "اسم المادة غير موجود.", 120);
   const grade = requireInteger(record.grade, "الصف الدراسي غير صالح.", 1, 12);
   const difficulty = requireEnum(record.difficulty, ["سهل", "متوسط", "متقدم"] as const, "مستوى الصعوبة غير صالح.");
+  const trustedEnrichmentEnabled = record.trustedEnrichmentEnabled === true;
   if (!Array.isArray(record.lessons) || record.lessons.length < 2 || record.lessons.length > 5) {
     throw httpError("يجب إرسال درسين إلى خمسة دروس.", 400);
   }
@@ -998,7 +1225,7 @@ function parseGenerationRequest(value: unknown): GenerationRequest {
       throw httpError("دفعة التوليد لا تطابق خطة الاختبار الرسمية.", 400);
     }
   }
-  return { assessmentType, assessmentPolicyId, topic, lessons, grade, subject, difficulty, references, officialPlanItems, items };
+  return { assessmentType, assessmentPolicyId, topic, lessons, grade, subject, difficulty, trustedEnrichmentEnabled, references, officialPlanItems, items };
 }
 
 function validateOfficialAssessmentPlan(assessmentType: AssessmentType, grade: number, items: GenerationItem[]): void {
@@ -1164,6 +1391,7 @@ function validateAndHydrateGeneratedPayload(
   payload: ModelGeneratedPayload,
   request: GenerationRequest,
   evidenceCatalog: EvidenceCatalog,
+  enrichment: TrustedEnrichmentContext = { segments: [], attempted: false },
 ): GeneratedPayload {
   if (!payload || !Array.isArray(payload.items)) throw retryableError("بنية الأسئلة المولدة غير صالحة.");
   const requestedById = new Map(request.items.map((item) => [item.planItemId, item]));
@@ -1193,6 +1421,7 @@ function validateAndHydrateGeneratedPayload(
           requested.marks,
           requested.lessonLabel,
           requested.regenerationAnchor,
+          enrichment,
         )
       ),
     });
@@ -1744,6 +1973,7 @@ function validateAndHydrateAlternative(
   marks: number,
   lessonLabel: string,
   regenerationAnchor?: RegenerationAnchor,
+  enrichment: TrustedEnrichmentContext = { segments: [], attempted: false },
 ): GeneratedAlternative {
   if (!alternative || typeof alternative !== "object") throw retryableError("أحد بدائل الأسئلة غير صالح.");
   for (const field of ["text", "answer", "rationale", "sourceEvidenceId"] as const) {
@@ -1798,13 +2028,25 @@ function validateAndHydrateAlternative(
     throw retryableError("المرجع المختار لا يثبت ارتباط السؤال بالدرس المحدد.");
   }
   const questionMaterial = `${alternative.stimulus} ${alternative.text} ${alternative.answer} ${alternative.rationale}`;
-  if (!hasEvidenceAffinity(questionMaterial, evidence.text, lessonLabel)) {
-    throw retryableError("السؤال المولد لا يرتبط بصورة كافية بدليل المرجع المحدد.");
+  const fullReferenceContent = evidenceCatalog.referenceContentById.get(sourceReferenceId) ?? evidence.text;
+  const directEvidenceAffinity = hasEvidenceAffinity(questionMaterial, evidence.text, lessonLabel);
+  const fullReferenceAffinity = hasEvidenceAffinity(questionMaterial, fullReferenceContent, lessonLabel);
+  if (!directEvidenceAffinity && !fullReferenceAffinity) {
+    throw retryableError("السؤال المولد لا يرتبط بصورة كافية بدليل المرجع المدرسي المحدد.");
   }
   if (regenerationAnchor && !hasRegenerationSimilarity(questionMaterial, regenerationAnchor, lessonLabel)) {
     throw retryableError("إعادة التوليد ابتعدت عن مفهوم السؤال المختار بدل تقديم صياغة مشابهة.");
   }
-  const weakAffinity = false;
+  const enrichmentEvidenceId = typeof alternative.enrichmentEvidenceId === "string"
+    ? alternative.enrichmentEvidenceId.trim()
+    : "";
+  const enrichmentSegment = enrichmentEvidenceId
+    ? enrichment.segments.find((segment) => segment.id === enrichmentEvidenceId)
+    : undefined;
+  if (enrichmentEvidenceId && !enrichmentSegment) {
+    throw retryableError("اختار مولد الأسئلة إثراءً خارجيًا غير موثق أو غير مسموح.");
+  }
+  const weakAffinity = !directEvidenceAffinity && fullReferenceAffinity;
   const commandReview = questionType !== "اختيار من متعدد" && !hasAppropriateCommandWord(alternative.text, marks);
   return {
     stimulus: alternative.stimulus.trim(),
@@ -1816,6 +2058,9 @@ function validateAndHydrateAlternative(
     questionForm: alternative.questionForm,
     workingRequired: alternative.workingRequired,
     sourceSupport: evidence.text,
+    enrichmentSupport: enrichmentSegment?.text ?? "",
+    enrichmentSourceTitle: enrichmentSegment?.sourceTitle ?? "",
+    enrichmentSourceUrl: enrichmentSegment?.sourceUrl ?? "",
     needsReview: alternative.needsReview || weakAffinity || commandReview,
   };
 }
@@ -2094,6 +2339,16 @@ function httpError(message: string, status: number): Error & { status: number; r
 
 function retryableError(message: string): Error & { status: number; retryable: boolean } {
   return Object.assign(new Error(message), { status: 502, retryable: true });
+}
+
+function transportRetryableError(message: string): Error & { status: number; retryable: boolean; transportRetryExhausted: boolean } {
+  return Object.assign(new Error(message), { status: 503, retryable: true, transportRetryExhausted: true });
+}
+
+function isTransportRetryExhausted(error: unknown): boolean {
+  return typeof error === "object" && error !== null
+    && "transportRetryExhausted" in error
+    && (error as { transportRetryExhausted?: unknown }).transportRetryExhausted === true;
 }
 
 function errorStatus(error: unknown): number {

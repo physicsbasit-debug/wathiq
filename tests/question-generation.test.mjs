@@ -123,6 +123,7 @@ test("يبني طلب الدفعة من سياق المقطع الكامل وم�
   assert.equal(request.officialPlanItems.length, 2);
   assert.equal(request.assessmentType, "اختبار قصير رسمي");
   assert.equal(request.assessmentPolicyId, "oman-science-assessment-2025-2026");
+  assert.equal(request.trustedEnrichmentEnabled, true);
 });
 
 
@@ -187,8 +188,21 @@ test("يتحقق من ثلاثة بدائل ثم يربطها بخطة الاخ�
   assert.equal(generated[0].proposals[0].answer, "خاصية فيزيائية");
   assert.equal(generated[0].proposals[0].questionForm, "مفهومي");
   assert.deepEqual(generated[0].proposals[0].markScheme, ["تحديد العبارة العلمية الصحيحة."]);
-  assert.equal(SOURCE_GENERATION_VERSION, "source-grounded-policy-ai-12-advanced-visuals");
+  assert.equal(SOURCE_GENERATION_VERSION, "source-grounded-policy-ai-13-trusted-enrichment");
   assert.equal(parsed.requestId, "WQ-TEST1234");
+});
+
+test("يحفظ أثر الإثراء الرسمي ويرفض روابط البروتوكولات غير الآمنة", () => {
+  const payload = validPayload();
+  payload.items[0].alternatives[0].enrichmentSupport = "تطبيق علمي رسمي يدعم سياق السؤال.";
+  payload.items[0].alternatives[0].enrichmentSourceTitle = "مصدر علمي رسمي";
+  payload.items[0].alternatives[0].enrichmentSourceUrl = "javascript:alert(1)";
+  payload.items[0].alternatives[1].enrichmentSupport = "تطبيق علمي رسمي آخر.";
+  payload.items[0].alternatives[1].enrichmentSourceTitle = "nasa.gov";
+  payload.items[0].alternatives[1].enrichmentSourceUrl = "https://www.nasa.gov/science/";
+  const parsed = parseQuestionGenerationResponse(payload, requestItems());
+  assert.equal(parsed.items[0].alternatives[0].enrichmentSourceUrl, "");
+  assert.match(parsed.items[0].alternatives[1].enrichmentSourceUrl, /^https:\/\/www\.nasa\.gov/);
 });
 
 test("يرفض سؤال اختيار من متعدد لا تطابق إجابته أحد البدائل", () => {
