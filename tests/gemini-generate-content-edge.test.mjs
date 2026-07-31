@@ -48,6 +48,7 @@ async function loadEdgeHelpers() {
     normalizeTransientGeminiMessage,
     hasEvidenceAffinity,
     isTransportRetryExhausted,
+    hasSufficientQuestionContext,
   };\n`;
 
   const javascript = ts.transpileModule(source, {
@@ -134,6 +135,21 @@ test("يستخرج فقط الجمل المسندة إلى مصادر رسمية
 test("يعرب رسالة الضغط المؤقت بدل تمرير خطأ Gemini الإنجليزي", () => {
   assert.match(helpers.normalizeTransientGeminiMessage("This model is currently experiencing high demand. Please try again later.", 503), /النموذج مشغول مؤقتًا/);
   assert.match(helpers.normalizeTransientGeminiMessage("request timed out", 408), /تأخر رد النموذج/);
+});
+
+test("يعد الرسم أو الجدول متنًا صالحًا ولا يرفض السؤال البصري بسبب stimulus فارغ", () => {
+  assert.equal(helpers.hasSufficientQuestionContext(
+    "",
+    "بالاعتماد على الجدول المرفق، استنتج العلاقة بين الزمن والمسافة.",
+    "بيانات",
+    "data_table",
+  ), true);
+  assert.equal(helpers.hasSufficientQuestionContext(
+    "",
+    "فسر النتيجة.",
+    "سياقي",
+    "none",
+  ), false);
 });
 
 
@@ -829,4 +845,62 @@ test("يبني الخادم جداول وأجهزة قياس وأشعة وقوى
   assert.equal(ray.variant, "reflection");
   assert.ok(force.vectors.length >= 2);
   assert.ok(flow.labels.length >= 3);
+});
+
+
+test("تمرر المحاولة الثانية سبب رفض stimulus بدل إعادة التوليد بتوجيه عام", async () => {
+  const request = {
+    assessmentType: "اختبار قصير رسمي",
+    assessmentPolicyId: "oman-science-assessment-2025-2026",
+    topic: "الضغط",
+    lessons: ["1-1 الضغط", "1-2 الضغط في السوائل"],
+    grade: 10,
+    subject: "الفيزياء",
+    difficulty: "متوسط",
+    trustedEnrichmentEnabled: false,
+    references: [{
+      id: "R-CONTEXT", sourceId: "S", sourceTitle: "كتاب الطالب", sourceKind: "كتاب الطالب",
+      pageFrom: 20, pageTo: 20, content: "الضغط يساوي القوة المؤثرة عموديًا مقسومة على مساحة السطح.",
+      lessonTopic: "1-1 الضغط", lessonScopeMode: "page-range", lessonPageFrom: 20, lessonPageTo: 20,
+    }],
+    officialPlanItems: [{
+      planItemId: "P-CONTEXT", questionType: "إجابة قصيرة", cognitiveLevel: "تطبيق",
+      marks: 1, sourceReferenceId: "R-CONTEXT", lessonLabel: "1-1 الضغط",
+      styleTarget: "سياقي", visualTarget: "none",
+    }],
+    items: [{
+      planItemId: "P-CONTEXT", questionType: "إجابة قصيرة", cognitiveLevel: "تطبيق",
+      marks: 1, sourceReferenceId: "R-CONTEXT", lessonLabel: "1-1 الضغط",
+      styleTarget: "سياقي", visualTarget: "none",
+    }],
+  };
+  const alternatives = (valid) => Array.from({ length: 3 }, (_, index) => ({
+    stimulus: valid ? "يؤثر جسم بالقوة نفسها على سطحين مختلفي المساحة." : "",
+    text: valid ? `فسر لماذا يكون الضغط أكبر على السطح الأصغر. ${index + 1}` : "فسر النتيجة.",
+    options: [],
+    answer: "لأن الضغط يزداد عندما تقل مساحة السطح عند ثبات القوة.",
+    rationale: "الضغط يساوي القوة مقسومة على المساحة.",
+    markScheme: ["ربط زيادة الضغط بنقصان مساحة السطح عند ثبات القوة."],
+    questionForm: "سياقي",
+    workingRequired: false,
+    sourceEvidenceId: "EV-1-1",
+    enrichmentEvidenceId: "",
+    needsReview: false,
+  }));
+  let fetchCount = 0;
+  let secondPrompt = null;
+  sandbox.__fetchImpl = async (_url, init) => {
+    fetchCount += 1;
+    const body = JSON.parse(init.body);
+    if (fetchCount === 2) secondPrompt = JSON.parse(body.contents[0].parts[0].text);
+    const payload = { items: [{ planItemId: "P-CONTEXT", alternatives: alternatives(fetchCount > 1) }] };
+    return new Response(JSON.stringify({
+      candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(payload) }] } }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+
+  const result = await helpers.generateAndValidate(request, "WQ-CONTEXT-REPAIR");
+  assert.equal(fetchCount, 2);
+  assert.match(secondPrompt.previousValidationError, /لا يحتوي متنًا أو بيانات كافية/);
+  assert.match(result.items[0].alternatives[0].stimulus, /سطحين مختلفي المساحة/);
 });

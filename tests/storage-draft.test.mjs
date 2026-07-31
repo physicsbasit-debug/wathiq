@@ -129,7 +129,7 @@ test("يرقي مسودة C3 المكتملة إلى عقد C4 دون حذف ا�
   });
   assert.ok(draft);
   assert.equal(draft.currentStep, 3);
-  assert.equal(draft.generationVersion, "source-grounded-policy-ai-13-trusted-enrichment");
+  assert.equal(draft.generationVersion, "source-grounded-policy-ai-14-contextual-stimulus-alignment");
   assert.equal(draft.plan.length, 1);
   assert.equal(draft.plan[0].proposals.length, 1);
 });

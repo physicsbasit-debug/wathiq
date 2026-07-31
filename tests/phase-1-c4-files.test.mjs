@@ -17,8 +17,8 @@ function enrichmentToggleHandler() {
 }
 
 test("يثبت Phase 1-C4 وإصدار التوليد الموثوق", () => {
-  assert.equal(pkg.version, "0.0.45");
-  assert.match(client, /source-grounded-policy-ai-13-trusted-enrichment/);
+  assert.equal(pkg.version, "0.0.46");
+  assert.match(client, /source-grounded-policy-ai-14-contextual-stimulus-alignment/);
   assert.match(domain, /trustedEnrichmentEnabled:\s*true/);
   assert.match(storage, /candidate\.trustedEnrichmentEnabled !== false/);
 });
