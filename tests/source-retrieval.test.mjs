@@ -62,7 +62,7 @@ test("يستبعد صفحة الفهرس حتى لو احتوت اسم الدر�
     candidate(0, 12, "المحتويات\nالوحدة 9 النشاط الإشعاعي في كل مكان 12\nالوحدة 10 الفيزياء النووية 30\n1-1 الكهرباء الساكنة 40\n2-1 الضغط 80"),
     candidate(1, 45, "النشاط الإشعاعي هو الانبعاث التلقائي لإشعاع من نوى غير مستقرة. وتوجد أنواع مختلفة من الإشعاع."),
   ]);
-  assert.equal(SOURCE_RETRIEVAL_VERSION, "strict-lesson-scope-1");
+  assert.equal(SOURCE_RETRIEVAL_VERSION, "strict-lesson-scope-2-tree-pages");
   assert.equal(result.references.length, 1);
   assert.equal(result.references[0].pageFrom, 45);
   assert.equal(isLikelyNavigationOrMetadataChunk("المحتويات الوحدة 1 12 الوحدة 2 30 الوحدة 3 50 الوحدة 4 70"), true);

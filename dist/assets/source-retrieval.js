@@ -5,7 +5,7 @@ const STOP_WORDS = new Set([
     "ذلك", "تلك", "ثم", "او", "أو", "و", "ف", "ب", "ك", "ل", "التي", "الذي", "الذين", "مع", "بين",
     "درس", "موضوع", "وحدة", "اختبار", "شرح", "تعريف", "كل", "مكان", "داخل", "خارج",
 ]);
-export const SOURCE_RETRIEVAL_VERSION = "strict-lesson-scope-1";
+export const SOURCE_RETRIEVAL_VERSION = "strict-lesson-scope-2-tree-pages";
 export function normalizeArabicSearchText(value) {
     return value
         .normalize("NFKC")

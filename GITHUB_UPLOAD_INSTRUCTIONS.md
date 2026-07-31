@@ -1,12 +1,12 @@
-# تعليمات الرفع — Phase 1-C2 Fix 2
+# تعليمات الرفع — Phase 1-C2 Fix 3
 
 ## اسم الفرع
 
-`phase-1c2-fix2-toc-lesson-picker`
+`phase-1c2-fix3-hierarchical-book-tree`
 
 ## رسالة الحفظ
 
-`feat: select exam lessons from the indexed table of contents`
+`feat: add hierarchical book unit lesson tree`
 
 ## الخطوات
 
@@ -17,11 +17,12 @@
 5. ادمج الفرع في `main`.
 6. انتظر اكتمال GitHub Pages.
 7. افتح واثق ونفذ `Ctrl + F5`.
-8. اختر الصف والمادة، ثم حدد من درسين إلى خمسة من القائمة.
+8. افتح اختبارًا جديدًا، واختر الصف العاشر ثم الفيزياء.
+9. افتح اسم كتاب الطالب، ثم الوحدة، وحدد من درسين إلى خمسة.
 
 ## لا يلزم
 
 - لا إعادة نشر وظيفة Supabase.
 - لا SQL.
 - لا أسرار جديدة.
-- لا إعادة فهرسة إذا كان المصدر مفهرسًا بالفعل.
+- لا إعادة فهرسة للكتاب.

@@ -1,59 +1,42 @@
-Phase 1-C2 Fix 1 — strict lesson scope, similar regeneration, and library exports
+Phase 1-C2 Fix 3 — Hierarchical Book Tree
 
-This package is an overlay over Phase 1-C2. It blocks off-topic generation, invalidates contaminated source matches, anchors regeneration to the selected question, and adds preview/export actions for completed drafts and approved exams.
+Branch: phase-1c2-fix3-hierarchical-book-tree
+Commit: feat: add hierarchical book unit lesson tree
+Version: 0.0.39
 
-CHANGED FILES
-CHANGED_FILES_MANIFEST.txt
-GITHUB_UPLOAD_INSTRUCTIONS.md
-README.md
-dist/assets/app.js
-dist/assets/app.js.map
-dist/assets/domain.js
-dist/assets/domain.js.map
-dist/assets/exam-export.js
-dist/assets/exam-export.js.map
-dist/assets/question-generation.js
-dist/assets/question-generation.js.map
-dist/assets/source-retrieval.js
-dist/assets/source-retrieval.js.map
-dist/assets/storage.js
-dist/assets/storage.js.map
-dist/assets/styles.css
-docs/PHASE_1_C2_FIX1_STRICT_LESSON_SCOPE.md
-docs/PHASE_1_C2_FIX1_TEST_REPORT.md
-package.json
-src/app.ts
-src/domain.ts
-src/exam-export.ts
-src/question-generation.ts
-src/source-retrieval.ts
-src/storage.ts
-src/styles.css
-src/types.ts
-supabase/functions/generate-source-questions/index.ts
-tests/gemini-generate-content-edge.test.mjs
-tests/phase-1-a-simple-source-brief.test.mjs
-tests/phase-1-b-files.test.mjs
-tests/phase-1-b3-files.test.mjs
-tests/phase-1-b4-files.test.mjs
-tests/phase-1-b5-files.test.mjs
-tests/phase-1-b6-files.test.mjs
-tests/phase-1-b7-files.test.mjs
-tests/phase-1-b8-files.test.mjs
-tests/phase-1-c1-files.test.mjs
-tests/phase-1-c1-fix2-files.test.mjs
-tests/phase-1-c2-files.test.mjs
-tests/phase-1-c2-fix1-files.test.mjs
-tests/question-generation.test.mjs
-tests/source-retrieval.test.mjs
-tests/storage-draft.test.mjs
+Core changes:
+- src/book-content-tree.ts (new)
+- src/app.ts
+- src/lesson-catalog.ts
+- src/source-retrieval.ts
+- src/styles.css
+- package.json
 
-NO CHANGES
-- SQL migrations
-- secrets
-- GitHub Pages workflow
-- indexed source files
+Deployment assets:
+- dist/assets/book-content-tree.js
+- dist/assets/book-content-tree.js.map
+- dist/assets/app.js
+- dist/assets/app.js.map
+- dist/assets/lesson-catalog.js
+- dist/assets/lesson-catalog.js.map
+- dist/assets/source-retrieval.js
+- dist/assets/source-retrieval.js.map
+- dist/assets/styles.css
 
-DEPLOYMENT NOTE
-- Redeploy supabase/functions/generate-source-questions/index.ts after merge.
-- Existing drafts using the old retrieval version return to the content step and must rematch lessons; books do not need reindexing.
+Documentation:
+- README.md
+- GITHUB_UPLOAD_INSTRUCTIONS.md
+- docs/PHASE_1_C2_FIX3_HIERARCHICAL_BOOK_TREE.md
+- docs/PHASE_1_C2_FIX3_TEST_REPORT.md
+
+Tests:
+- tests/book-content-tree.test.mjs (new)
+- tests/phase-1-c2-fix3-files.test.mjs (new)
+- legacy phase tests updated only to accept version 0.0.39 and the new tree wording
+- tests/source-retrieval.test.mjs updated for strict-lesson-scope-2-tree-pages
+
+Unchanged:
+- supabase/functions/generate-source-questions/index.ts
+- all SQL files
+- .github/workflows/pages.yml
+- secrets and runtime configuration
