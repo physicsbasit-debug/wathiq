@@ -17,7 +17,7 @@ import type { LessonCatalogOption } from "./lesson-catalog.js";
 import { SCIENCE_ASSESSMENT_POLICY_ID } from "./assessment-policy.js";
 import { parseQuestionVisualSpec } from "./question-visual.js";
 
-export const SOURCE_GENERATION_VERSION = "source-grounded-policy-ai-13-trusted-enrichment";
+export const SOURCE_GENERATION_VERSION = "source-grounded-policy-ai-14-contextual-stimulus-alignment";
 export const GENERATION_BATCH_SIZE = 2;
 
 export type QuestionReferenceScopeMode = "page-range" | "page-neighborhood" | "strict-title-fallback" | "legacy-title";
@@ -173,7 +173,7 @@ function parseAlternative(value: unknown, expected: QuestionGenerationItem): Gen
   if (markScheme.length !== expected.marks) {
     throw new Error("نموذج التصحيح لا يوزع نقطة واضحة لكل درجة.");
   }
-  if (["سياقي", "حسابي", "بيانات", "استقصائي"].includes(questionForm) && !stimulus) {
+  if (!hasSufficientQuestionContext(stimulus, text, questionForm, expected.visualTarget)) {
     throw new Error("أحد الأسئلة السياقية لا يحتوي متنًا أو بيانات كافية.");
   }
   if (questionForm === "حسابي" && !workingRequired) {
@@ -181,7 +181,7 @@ function parseAlternative(value: unknown, expected: QuestionGenerationItem): Gen
   }
   if (expected.visualTarget !== "none") {
     const visualReference = normalizeVisualText(`${stimulus} ${text}`);
-    if (!/(الشكل|الرسم|المخطط|الدائره|البيانات الممثله|التمثيل)/u.test(visualReference)) {
+    if (!/(الشكل|الرسم|المخطط|الدائره|الجدول|التدريج|الجهاز|البيانات الممثله|التمثيل)/u.test(visualReference)) {
       throw new Error("السؤال البصري لا يعتمد صراحة على الشكل المرفق.");
     }
   }
@@ -294,6 +294,36 @@ function normalizeVisualText(value: string): string {
     .replace(/ى/g, "ي")
     .replace(/ة/g, "ه")
     .toLowerCase();
+}
+
+function hasSufficientQuestionContext(
+  stimulus: string,
+  text: string,
+  questionForm: QuestionDesignPattern,
+  visualTarget: QuestionVisualType,
+): boolean {
+  if (!["سياقي", "حسابي", "بيانات", "استقصائي"].includes(questionForm)) return true;
+  if (stimulus.trim().length >= 12) return true;
+
+  const normalized = normalizeVisualText(text);
+  const referencesVisual = /(الشكل|الرسم|المخطط|الدائره|الجدول|البيانات الممثله|التمثيل|التدريج)/u.test(normalized);
+  if (visualTarget !== "none" && referencesVisual) return true;
+
+  const digitCount = (text.match(/[0-9٠-٩]/g) ?? []).length;
+  if (questionForm === "حسابي") {
+    return digitCount >= 2
+      && /(احسب|اوجد|حدد)/u.test(normalized)
+      && /(نيوتن|باسكال|متر|سم|ملم|ثانيه|دقيقه|فولت|امبير|اوم|جول|واط|كجم|جرام|درجه)/u.test(normalized);
+  }
+  if (questionForm === "بيانات") {
+    return digitCount >= 2 || /(جدول|بيانات|نتائج|قيم|قراءه|قياسات)/u.test(normalized);
+  }
+  if (questionForm === "استقصائي") {
+    return normalized.length >= 38
+      && /(تجرب|متغير|قياس|اداه|خطوات|نتائج|دقه|موثوقيه|تحكم|ثابت)/u.test(normalized);
+  }
+  return normalized.length >= 42
+    && /(عندما|اثناء|لاحظ|قام|استخدم|وضع|تعرض|في موقف|لدى|يمر|يعمل)/u.test(normalized);
 }
 
 function deriveQuestionVisualTarget(

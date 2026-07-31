@@ -1,47 +1,40 @@
-# Phase 1-C4 — Changed Files Manifest
+Phase 1-C4 Fix 1 — Contextual Stimulus Alignment
 
-ارفع هذه الملفات فوق Phase 1-C3 مع الحفاظ على المسارات:
+Base: Phase 1-C4 / 0.0.45
+Target: 0.0.46
+Generation contract: source-grounded-policy-ai-14-contextual-stimulus-alignment
+Tests: 306 passed / 0 failed
 
-- CHANGED_FILES_MANIFEST.txt
-- GITHUB_UPLOAD_INSTRUCTIONS.md
-- README.md
-- docs/PHASE_1_C4_TEST_REPORT.md
-- docs/PHASE_1_C4_TRUSTED_CURRICULUM_ENRICHMENT.md
+Changed files:
 - package.json
-- src/app.ts
-- src/domain.ts
+- README.md
+- docs/PHASE_1_C4_FIX1_TEST_REPORT.md
+- docs/PHASE_1_C4_FIX1_CONTEXTUAL_STIMULUS_ALIGNMENT.md
 - src/question-generation.ts
 - src/storage.ts
-- src/styles.css
-- src/types.ts
-- supabase/functions/generate-source-questions/index.ts
-- tests/gemini-generate-content-edge.test.mjs
-- tests/phase-1-a-simple-source-brief.test.mjs
-- tests/phase-1-b-files.test.mjs
+- src/app.ts
+- tests/phase-1-c2-fix5-files.test.mjs
 - tests/phase-1-b3-files.test.mjs
-- tests/phase-1-b4-files.test.mjs
-- tests/phase-1-b5-files.test.mjs
 - tests/phase-1-b6-files.test.mjs
-- tests/phase-1-b7-files.test.mjs
+- tests/phase-1-b4-files.test.mjs
 - tests/phase-1-b8-files.test.mjs
+- tests/phase-1-c2-fix7-files.test.mjs
+- tests/phase-1-c2-fix3-files.test.mjs
+- tests/phase-1-b7-files.test.mjs
 - tests/phase-1-c1-files.test.mjs
-- tests/phase-1-c1-fix2-files.test.mjs
-- tests/phase-1-c2-files.test.mjs
 - tests/phase-1-c2-fix1-files.test.mjs
 - tests/phase-1-c2-fix2-files.test.mjs
-- tests/phase-1-c2-fix3-files.test.mjs
-- tests/phase-1-c2-fix4-files.test.mjs
-- tests/phase-1-c2-fix5-files.test.mjs
-- tests/phase-1-c2-fix6-files.test.mjs
-- tests/phase-1-c2-fix7-files.test.mjs
-- tests/phase-1-c3-files.test.mjs
-- tests/phase-1-c4-files.test.mjs
+- tests/gemini-generate-content-edge.test.mjs
+- tests/phase-1-c2-files.test.mjs
 - tests/question-generation.test.mjs
+- tests/phase-1-c1-fix2-files.test.mjs
+- tests/phase-1-a-simple-source-brief.test.mjs
+- tests/phase-1-c2-fix6-files.test.mjs
+- tests/phase-1-b-files.test.mjs
+- tests/phase-1-c4-files.test.mjs
+- tests/phase-1-c3-files.test.mjs
 - tests/storage-draft.test.mjs
-
-## خارج النطاق
-
-- لا SQL.
-- لا workflow.
-- لا ملف أسرار أو بيئة.
-- `dist/` يبنى تلقائيًا من المصدر في GitHub Actions.
+- tests/phase-1-c2-fix4-files.test.mjs
+- tests/phase-1-b5-files.test.mjs
+- tests/phase-1-c4-fix1-files.test.mjs
+- supabase/functions/generate-source-questions/index.ts

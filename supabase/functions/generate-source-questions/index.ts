@@ -423,9 +423,10 @@ async function generateAndValidate(request: GenerationRequest, requestId: string
     segmentCount: enrichment.segments.length,
   });
   let lastError: unknown = null;
+  let repairFeedback = "";
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     try {
-      const payload = await callGemini(request, evidenceCatalog, enrichment, attempt > 1, requestId, attempt);
+      const payload = await callGemini(request, evidenceCatalog, enrichment, attempt > 1, requestId, attempt, repairFeedback);
       try {
         const markSchemeSafePayload = await repairGeneratedPayloadMarkSchemes(payload, request, requestId);
         const hydrated = validateAndHydrateGeneratedPayload(markSchemeSafePayload, request, evidenceCatalog, enrichment);
@@ -436,11 +437,12 @@ async function generateAndValidate(request: GenerationRequest, requestId: string
         return hydrated;
       } catch (validationError) {
         const payloadRecord = asRecord(payload);
+        repairFeedback = errorMessage(validationError);
         logStage(requestId, "generation_validation_failed", {
           attempt,
           topLevelKeys: payloadRecord ? Object.keys(payloadRecord).slice(0, 8) : [],
           returnedItemCount: Array.isArray(payloadRecord?.items) ? payloadRecord.items.length : null,
-          message: errorMessage(validationError),
+          message: repairFeedback,
         });
         throw validationError;
       }
@@ -476,6 +478,7 @@ async function callGemini(
   repairAttempt: boolean,
   requestId: string,
   attempt: number,
+  repairFeedback = "",
 ): Promise<ModelGeneratedPayload> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
@@ -486,7 +489,7 @@ async function callGemini(
     },
     contents: [{
       role: "user",
-      parts: [{ text: buildUserPrompt(request, evidenceCatalog, enrichment, repairAttempt) }],
+      parts: [{ text: buildUserPrompt(request, evidenceCatalog, enrichment, repairAttempt, repairFeedback) }],
     }],
     store: false,
     generationConfig: {
@@ -919,19 +922,19 @@ function buildSystemInstructions(): string {
     "استخدم صياغة عربية قصيرة وواضحة، وتجنب النفي قدر الإمكان والنفي المزدوج، ولا تضع معلومات غير لازمة للإجابة.",
     "للإجابة القصيرة والطويلة: اجعل options مصفوفة فارغة، واكتب إجابة نموذجية قابلة للتصحيح.",
     "أعد markScheme كمصفوفة نصية طولها يساوي marks تمامًا. كل عنصر معيار تصحيح مستقل يستحق درجة واحدة، ولا تستخدم نقاطًا فارغة أو أنصاف درجات.",
-    "أعد stimulus كسلسلة فارغة فقط للسؤال المفهومي المباشر؛ الأنماط السياقية والحسابية والبيانية والاستقصائية تحتاج متنًا أو بيانات واضحة.",
+    "أعد stimulus كسلسلة فارغة للسؤال المفهومي المباشر، ويجوز أن يكون فارغًا في السؤال البصري فقط عندما يحمل fixedVisual المتن أو البيانات ويشير نص السؤال إليه صراحة. في بقية الأنماط السياقية والحسابية والبيانية والاستقصائية يجب أن يوجد سياق كافٍ في stimulus أو داخل نص السؤال نفسه.",
     "لكل بديل اختر sourceEvidenceId واحدًا فقط من allowedEvidenceIds الخاصة بالمفردة نفسها، وأعد enrichmentEvidenceId من allowedEnrichmentIds أو سلسلة فارغة.",
     "لا تنسخ اقتباس المصدر داخل JSON؛ الخادم سيضيف نص الدليل الموثوق من المقطع المختار.",
     "لا تسأل عن أرقام صفحات أو حقوق نشر أو مقدمة الكتاب إلا إذا كان الموضوع المطلوب عنها صراحة.",
     "إذا كان النص المرجعي ضعيفًا لمفردة معينة، أنشئ سؤالًا أبسط على حقيقة صريحة واضبط needsReview=true. لا تخترع.",
     "لا تستخدم عبارات مثل: بالرجوع إلى النص أو وفقًا للمصدر داخل نص السؤال.",
-    "إذا كان fixedVisual.type لا يساوي none، فيجب أن تعتمد صياغة كل بديل على الشكل اعتمادًا حقيقيًا وتذكر بوضوح: بالشكل المرفق أو الرسم المرفق أو البيانات الممثلة. لا تكتب سؤالًا يمكن حله دون النظر إلى الشكل.",
+    "إذا كان fixedVisual.type لا يساوي none، فيجب أن تعتمد صياغة كل بديل على الشكل اعتمادًا حقيقيًا وتذكر بوضوح: بالشكل المرفق أو الرسم المرفق أو الجدول المرفق أو التدريج أو البيانات الممثلة. لا تكتب سؤالًا يمكن حله دون النظر إلى الشكل.",
     "لا تجعل الشكل يكشف الإجابة مباشرة؛ استخدمه لتقديم التجهيز أو العلاقة أو البيانات التي يحتاج الطالب إلى تحليلها.",
     "لا تضع شروحًا خارج مخطط JSON المطلوب.",
   ].join("\n");
 }
 
-function buildUserPrompt(request: GenerationRequest, evidenceCatalog: EvidenceCatalog, enrichment: TrustedEnrichmentContext, repairAttempt: boolean): string {
+function buildUserPrompt(request: GenerationRequest, evidenceCatalog: EvidenceCatalog, enrichment: TrustedEnrichmentContext, repairAttempt: boolean, repairFeedback = ""): string {
   const references = request.references.map((reference) => ({
     id: reference.id,
     sourceTitle: reference.sourceTitle,
@@ -949,8 +952,9 @@ function buildUserPrompt(request: GenerationRequest, evidenceCatalog: EvidenceCa
   }));
   return JSON.stringify({
     task: repairAttempt
-      ? "أعد التوليد بدقة أكبر. التزم بعدد البدائل واختر sourceEvidenceId صالحًا من allowedEvidenceIds لكل مفردة."
+      ? "أعد التوليد بدقة أكبر، وصحح سبب رفض المحاولة السابقة تحديدًا مع إبقاء الخطة والدرس والدرجة كما هي."
       : "أنشئ بدائل الأسئلة الموثقة من مقاطع الأدلة المحددة.",
+    previousValidationError: repairAttempt ? repairFeedback : "",
     exam: {
       assessmentType: request.assessmentType,
       assessmentPolicyId: request.assessmentPolicyId,
@@ -985,8 +989,8 @@ function buildUserPrompt(request: GenerationRequest, evidenceCatalog: EvidenceCa
       alternativesPerItem: 3,
       exactPlanItemIds: request.items.map((item) => item.planItemId),
       evidenceRule: "أعد sourceEvidenceId من allowedEvidenceIds الخاصة بالمفردة فقط. أعد enrichmentEvidenceId من allowedEnrichmentIds عند استخدام إثراء خارجي، وإلا فأعد سلسلة فارغة.",
-      styleRule: "اجعل questionForm مطابقًا حرفيًا لـ styleTarget. أعد markScheme كمصفوفة طولها يساوي marks تمامًا، وكل عنصر فيها معيار مستقل غير فارغ لدرجة واحدة.",
-      visualRule: "لا تعد visual في JSON. إذا كان fixedVisual.type لا يساوي none، يجب أن تعتمد جميع البدائل الثلاثة على الشكل نفسه اعتمادًا جوهريًا وتذكر الشكل أو الرسم في نص السؤال؛ وإلا فستُرفض المفردة.",
+      styleRule: "اجعل questionForm مطابقًا حرفيًا لـ styleTarget. أعد markScheme كمصفوفة طولها يساوي marks تمامًا، وكل عنصر فيها معيار مستقل غير فارغ لدرجة واحدة. في الأسئلة غير المفهومية اجعل stimulus غير فارغ، إلا إذا كان fixedVisual يحمل السياق أو البيانات ويشير text إليه صراحة، أو كان text نفسه يتضمن السياق كاملًا.",
+      visualRule: "لا تعد visual في JSON. إذا كان fixedVisual.type لا يساوي none، يجب أن تعتمد جميع البدائل الثلاثة على الشكل نفسه اعتمادًا جوهريًا وتذكر الشكل أو الرسم أو الجدول أو التدريج في نص السؤال؛ وإلا فستُرفض المفردة.",
     },
   });
 }
@@ -1023,7 +1027,11 @@ function generationSchema(requestedItems: GenerationItem[], evidenceIds: string[
                   properties: {
                     stimulus: {
                       type: "string",
-                      description: "متن أو سياق أو بيانات السؤال. يكون فارغًا فقط للمفردة المفهومية المباشرة.",
+                      description: requestedItem.styleTarget === "مفهومي"
+                        ? "متن اختياري للسؤال المفهومي المباشر."
+                        : requestedItem.visualTarget !== "none"
+                          ? "متن نصي إضافي اختياري؛ يجوز أن يكون فارغًا إذا كان fixedVisual نفسه يحمل السياق أو البيانات ويشير نص السؤال إليه صراحة."
+                          : "متن أو سياق أو بيانات السؤال. يجب ألا يكون فارغًا إلا إذا تضمّن نص السؤال نفسه السياق أو المعطيات كاملة.",
                     },
                     text: { type: "string", description: "نص المطلوب بصياغة عربية واضحة وفعل أمر مناسب." },
                     options: {
@@ -1963,6 +1971,36 @@ function normalizeModelMarkScheme(value: unknown, marks: number): string[] {
   return requiredPoints;
 }
 
+function hasSufficientQuestionContext(
+  stimulus: string,
+  text: string,
+  questionForm: QuestionDesignPattern,
+  visualTarget: QuestionVisualType,
+): boolean {
+  if (!["سياقي", "حسابي", "بيانات", "استقصائي"].includes(questionForm)) return true;
+  if (stimulus.trim().length >= 12) return true;
+
+  const normalized = normalizeForEvidence(text);
+  const referencesVisual = /(الشكل|الرسم|المخطط|الدائره|الجدول|البيانات الممثله|التمثيل|التدريج)/u.test(normalized);
+  if (visualTarget !== "none" && referencesVisual) return true;
+
+  const digitCount = (text.match(/[0-9٠-٩]/g) ?? []).length;
+  if (questionForm === "حسابي") {
+    return digitCount >= 2
+      && /(احسب|اوجد|حدد)/u.test(normalized)
+      && /(نيوتن|باسكال|متر|سم|ملم|ثانيه|دقيقه|فولت|امبير|اوم|جول|واط|كجم|جرام|درجه)/u.test(normalized);
+  }
+  if (questionForm === "بيانات") {
+    return digitCount >= 2 || /(جدول|بيانات|نتائج|قيم|قراءه|قياسات)/u.test(normalized);
+  }
+  if (questionForm === "استقصائي") {
+    return normalized.length >= 38
+      && /(تجرب|متغير|قياس|اداه|خطوات|نتائج|دقه|موثوقيه|تحكم|ثابت)/u.test(normalized);
+  }
+  return normalized.length >= 42
+    && /(عندما|اثناء|لاحظ|قام|استخدم|وضع|تعرض|في موقف|لدى|يمر|يعمل)/u.test(normalized);
+}
+
 function validateAndHydrateAlternative(
   alternative: ModelGeneratedAlternative,
   questionType: QuestionType,
@@ -1992,7 +2030,12 @@ function validateAndHydrateAlternative(
     throw retryableError("مولد الأسئلة لم يلتزم بنمط السؤال المحدد في الخطة.");
   }
   const markScheme = normalizeModelMarkScheme(alternative.markScheme, marks);
-  if (["سياقي", "حسابي", "بيانات", "استقصائي"].includes(alternative.questionForm) && !alternative.stimulus.trim()) {
+  if (!hasSufficientQuestionContext(
+    alternative.stimulus,
+    alternative.text,
+    alternative.questionForm,
+    requestedVisualTarget,
+  )) {
     throw retryableError("أحد الأسئلة السياقية لا يحتوي متنًا أو بيانات كافية.");
   }
   if (alternative.questionForm === "حسابي" && !alternative.workingRequired) {
@@ -2000,7 +2043,7 @@ function validateAndHydrateAlternative(
   }
   if (requestedVisualTarget !== "none") {
     const visualReference = normalizeForEvidence(`${alternative.stimulus} ${alternative.text}`);
-    if (!/(الشكل|الرسم|المخطط|الدائره|البيانات الممثله|التمثيل)/u.test(visualReference)) {
+    if (!/(الشكل|الرسم|المخطط|الدائره|الجدول|التدريج|الجهاز|البيانات الممثله|التمثيل)/u.test(visualReference)) {
       throw retryableError("السؤال البصري لا يعتمد صراحة على الشكل المرفق.");
     }
   }

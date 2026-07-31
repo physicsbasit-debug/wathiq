@@ -19,6 +19,16 @@ function noVisual() {
   };
 }
 
+function lineVisual() {
+  return {
+    type: "line_graph", title: "المسافة والزمن", altText: "رسم خطي للمسافة والزمن",
+    xAxisLabel: "الزمن", xAxisUnit: "s", yAxisLabel: "المسافة", yAxisUnit: "m",
+    xMin: 0, xMax: 2, yMin: 0, yMax: 4,
+    points: [{ x: 0, y: 0, label: "" }, { x: 1, y: 2, label: "" }, { x: 2, y: 4, label: "" }],
+    labels: [], values: [], components: [], annotations: [],
+  };
+}
+
 function requestItems() {
   return [{
     planItemId: "plan-1",
@@ -188,8 +198,57 @@ test("يتحقق من ثلاثة بدائل ثم يربطها بخطة الاخ�
   assert.equal(generated[0].proposals[0].answer, "خاصية فيزيائية");
   assert.equal(generated[0].proposals[0].questionForm, "مفهومي");
   assert.deepEqual(generated[0].proposals[0].markScheme, ["تحديد العبارة العلمية الصحيحة."]);
-  assert.equal(SOURCE_GENERATION_VERSION, "source-grounded-policy-ai-13-trusted-enrichment");
+  assert.equal(SOURCE_GENERATION_VERSION, "source-grounded-policy-ai-14-contextual-stimulus-alignment");
   assert.equal(parsed.requestId, "WQ-TEST1234");
+});
+
+test("يقبل stimulus فارغًا عندما يحمل الرسم البيانات ويشير السؤال إليه صراحة", () => {
+  const expected = [{
+    planItemId: "plan-visual", questionType: "إجابة قصيرة", cognitiveLevel: "تطبيق",
+    marks: 1, sourceReferenceId: "ref-visual", lessonLabel: "الحركة",
+    styleTarget: "بيانات", visualTarget: "line_graph",
+  }];
+  const payload = {
+    items: [{
+      planItemId: "plan-visual",
+      visual: lineVisual(),
+      alternatives: [1, 2, 3].map((index) => ({
+        stimulus: "",
+        text: `بالاعتماد على الرسم المرفق، استنتج العلاقة بين المسافة والزمن. ${index}`,
+        options: [],
+        answer: "تزداد المسافة طرديًا مع الزمن.",
+        rationale: "يمثل الرسم خطًا مستقيمًا يمر بنقطة الأصل.",
+        markScheme: ["استنتاج العلاقة الطردية الصحيحة."],
+        questionForm: "بيانات",
+        workingRequired: false,
+        sourceSupport: "توضح بيانات الحركة تغير المسافة مع الزمن.",
+        needsReview: false,
+      })),
+    }],
+    model: "gemini-test", generatedAt: "2026-07-31T12:00:00.000Z", requestId: "WQ-VISUAL",
+  };
+  const parsed = parseQuestionGenerationResponse(payload, expected);
+  assert.equal(parsed.items[0].alternatives[0].stimulus, "");
+  assert.equal(parsed.items[0].visual.type, "line_graph");
+});
+
+test("يبقي رفض السؤال السياقي القصير إذا غاب المتن والرسم والسياق المضمن", () => {
+  const expected = [{
+    planItemId: "plan-context", questionType: "إجابة قصيرة", cognitiveLevel: "تطبيق",
+    marks: 1, sourceReferenceId: "ref-context", lessonLabel: "الضغط",
+    styleTarget: "سياقي", visualTarget: "none",
+  }];
+  const payload = {
+    items: [{
+      planItemId: "plan-context", visual: noVisual(),
+      alternatives: [1, 2, 3].map(() => ({
+        stimulus: "", text: "فسر النتيجة.", options: [], answer: "إجابة.", rationale: "تفسير.",
+        markScheme: ["نقطة صحيحة."], questionForm: "سياقي", workingRequired: false,
+        sourceSupport: "دليل المصدر.", needsReview: false,
+      })),
+    }], model: "gemini-test", generatedAt: "2026-07-31T12:00:00.000Z", requestId: "WQ-CONTEXT",
+  };
+  assert.throws(() => parseQuestionGenerationResponse(payload, expected), /لا يحتوي متنًا أو بيانات كافية/);
 });
 
 test("يحفظ أثر الإثراء الرسمي ويرفض روابط البروتوكولات غير الآمنة", () => {

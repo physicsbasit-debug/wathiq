@@ -13,6 +13,7 @@ const LEGACY_SOURCES_KEY = "wathiq.phase0c.sources";
 
 const COMPATIBLE_GENERATION_VERSIONS = new Set([
   SOURCE_GENERATION_VERSION,
+  "source-grounded-policy-ai-13-trusted-enrichment",
   "source-grounded-policy-ai-12-advanced-visuals",
 ]);
 

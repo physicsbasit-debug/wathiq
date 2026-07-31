@@ -32,5 +32,5 @@ test("Edge Function تستخدم Gemini generateContent ومخطط JSON ومفت
 test("تسجل Supabase الوظيفة الجديدة ويُرفع إصدار واثق", () => {
   assert.match(config, /\[functions\.generate-source-questions\]/);
   assert.match(config, /verify_jwt\s*=\s*false/);
-  assert.match(pkg.version, /^0\.0\.(?:32|33|34|35|36|37|38|39|40|41|42|43|44|45)$/);
+  assert.match(pkg.version, /^0\.0\.(?:32|33|34|35|36|37|38|39|40|41|42|43|44|45|46)$/);
 });

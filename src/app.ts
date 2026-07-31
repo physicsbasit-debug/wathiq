@@ -1587,16 +1587,12 @@ async function generateQuestionsForPlan(plan: PlanItem[]): Promise<boolean> {
   state.questionGenerationBusy = true;
   render();
   try {
-    for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
-      const batch = batches[batchIndex];
-      if (!batch) continue;
-      state.questionGenerationMessage = `جارٍ إنشاء الدفعة ${batchIndex + 1} من ${batches.length}؛ اكتمل ${completedCount} من ${plan.length} مفردات…`;
-      render();
+    const generateBatch = async (batch: PlanItem[]): Promise<void> => {
       const request = buildQuestionGenerationRequest(
         state.draft.assessmentType,
         state.draft.topic,
         state.draft.lessonTopics,
-        state.draft.grade,
+        state.draft.grade!,
         subject,
         state.draft.difficulty,
         state.draft.sourceReferences,
@@ -1613,6 +1609,23 @@ async function generateQuestionsForPlan(plan: PlanItem[]): Promise<boolean> {
       state.draft.generatedAt = response.generatedAt;
       completedCount += batch.length;
       scheduleSave();
+    };
+
+    for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
+      const batch = batches[batchIndex];
+      if (!batch) continue;
+      state.questionGenerationMessage = `جارٍ إنشاء الدفعة ${batchIndex + 1} من ${batches.length}؛ اكتمل ${completedCount} من ${plan.length} مفردات…`;
+      render();
+      try {
+        await generateBatch(batch);
+      } catch (batchError) {
+        if (batch.length === 1) throw batchError;
+        state.questionGenerationMessage = `تعذر اعتماد دفعة من مفردتين؛ يعزل واثق كل مفردة الآن حتى لا تضيع المفردة السليمة. اكتمل ${completedCount} من ${plan.length}…`;
+        render();
+        for (const isolatedItem of batch) {
+          await generateBatch([isolatedItem]);
+        }
+      }
     }
     state.draft.selectedProposalByPlanItem = {};
     state.questionGenerationBusy = false;
