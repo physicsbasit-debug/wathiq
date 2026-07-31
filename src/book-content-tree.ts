@@ -16,12 +16,15 @@ interface CuratedBookDefinition {
   id: string;
   matches(source: ManagedSource): boolean;
   totalPages: number;
+  /** Number of PDF pages that precede the printed page numbering used by the book TOC. */
+  pdfPageOffset: number;
   units: CuratedUnitDefinition[];
 }
 
 const GRADE_10_PHYSICS_STUDENT_BOOK: CuratedBookDefinition = {
   id: "oman-g10-physics-student-book-s1-2021",
   totalPages: 124,
+  pdfPageOffset: 3,
   matches(source) {
     const normalizedTitle = `${source.title} ${source.fileName ?? ""}`
       .replace(/[أإآ]/g, "ا")
@@ -142,6 +145,10 @@ function nextPageEnd(currentStart: number, nextStart: number | undefined, fallba
   return Math.max(currentStart, nextStart - 1);
 }
 
+function toPdfPage(printedPage: number, definition: CuratedBookDefinition, totalPages: number): number {
+  return Math.min(totalPages, Math.max(1, printedPage + definition.pdfPageOffset));
+}
+
 function buildNodes(source: ManagedSource, definition: CuratedBookDefinition): SourceStructureNode[] {
   const timestamp = source.updatedAt || source.createdAt || new Date(0).toISOString();
   const totalPages = source.extractedPageCount || definition.totalPages;
@@ -150,7 +157,9 @@ function buildNodes(source: ManagedSource, definition: CuratedBookDefinition): S
 
   definition.units.forEach((unit, unitIndex) => {
     const nextUnit = definition.units[unitIndex + 1];
-    const unitEnd = nextPageEnd(unit.pageStart, nextUnit?.pageStart, totalPages);
+    const unitStart = toPdfPage(unit.pageStart, definition, totalPages);
+    const nextUnitStart = nextUnit ? toPdfPage(nextUnit.pageStart, definition, totalPages) : undefined;
+    const unitEnd = nextPageEnd(unitStart, nextUnitStart, totalPages);
     const unitId = `curated-${definition.id}-${source.id}-u${unitIndex + 1}`;
     nodes.push({
       id: unitId,
@@ -158,30 +167,32 @@ function buildNodes(source: ManagedSource, definition: CuratedBookDefinition): S
       parentId: null,
       nodeType: "وحدة",
       title: unit.title,
-      pageStart: unit.pageStart,
+      pageStart: unitStart,
       pageEnd: unitEnd,
       orderIndex: orderIndex++,
       confidence: 1,
       reviewStatus: "معتمد",
-      extractionMethod: `curated:${definition.id}`,
+      extractionMethod: `curated:${definition.id}:printed-${unit.pageStart}:pdf-offset-${definition.pdfPageOffset}`,
       createdAt: timestamp,
       updatedAt: timestamp,
     });
 
     unit.lessons.forEach((lesson, lessonIndex) => {
       const nextLesson = unit.lessons[lessonIndex + 1];
+      const lessonStart = toPdfPage(lesson.pageStart, definition, totalPages);
+      const nextLessonStart = nextLesson ? toPdfPage(nextLesson.pageStart, definition, totalPages) : undefined;
       nodes.push({
         id: `curated-${definition.id}-${source.id}-${lesson.code}`,
         sourceId: source.id,
         parentId: unitId,
         nodeType: "درس",
         title: `${lesson.code} ${lesson.title}`,
-        pageStart: lesson.pageStart,
-        pageEnd: nextPageEnd(lesson.pageStart, nextLesson?.pageStart, unitEnd),
+        pageStart: lessonStart,
+        pageEnd: nextPageEnd(lessonStart, nextLessonStart, unitEnd),
         orderIndex: orderIndex++,
         confidence: 1,
         reviewStatus: "معتمد",
-        extractionMethod: `curated:${definition.id}`,
+        extractionMethod: `curated:${definition.id}:printed-${lesson.pageStart}:pdf-offset-${definition.pdfPageOffset}`,
         createdAt: timestamp,
         updatedAt: timestamp,
       });

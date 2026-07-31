@@ -31,10 +31,10 @@ test("يحصر استرجاع كل درس في مصدره ونطاق صفحات�
   assert.match(app, /candidate\.source\.id === catalogLesson\.sourceId/);
   assert.match(app, /candidate\.chunk\.pageFrom <= pageEnd/);
   assert.match(app, /candidate\.chunk\.pageTo >= pageStart/);
-  assert.match(app, /rankSourceChunks\(query, scopedCandidates, 2\)/);
+  assert.match(app, /rankSourceChunks\(query, exactPageScoped, 2\)/);
 });
 
 test("يحافظ على وظيفة التوليد دون تعديل ويثبت الإصدار الجديد", () => {
   assert.match(edge, /generateContent/);
-  assert.equal(pkg.version, "0.0.39");
+  assert.match(pkg.version, /^0\.0\.(?:39|40)$/);
 });

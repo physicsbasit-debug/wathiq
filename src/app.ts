@@ -1727,15 +1727,19 @@ async function prepareSourceContext(): Promise<boolean> {
         ? candidates.filter((candidate) => candidate.source.id === catalogLesson.sourceId)
         : candidates;
       const pageStart = catalogLesson?.pageStart;
-      const pageScoped = pageStart
-        ? sourceScoped.filter((candidate) => {
-            const pageEnd = catalogLesson?.pageEnd ?? pageStart;
-            return candidate.chunk.pageFrom <= pageEnd && candidate.chunk.pageTo >= pageStart;
-          })
+      const pageEnd = catalogLesson?.pageEnd ?? pageStart;
+      const exactPageScoped = pageStart && pageEnd
+        ? sourceScoped.filter((candidate) => candidate.chunk.pageFrom <= pageEnd && candidate.chunk.pageTo >= pageStart)
         : sourceScoped;
-      const scopedCandidates = pageScoped.length ? pageScoped : sourceScoped;
+      // Curated TOC pages are mapped to PDF pages, but extraction boundaries may drift by a page or two.
+      // Search the exact lesson range first, then a small PDF neighbourhood, then the source with strict title matching.
+      const paddedPageScoped = pageStart && pageEnd
+        ? sourceScoped.filter((candidate) => candidate.chunk.pageFrom <= pageEnd + 3 && candidate.chunk.pageTo >= Math.max(1, pageStart - 3))
+        : sourceScoped;
       const query = catalogLesson ? `${catalogLesson.code} ${catalogLesson.title}` : lesson;
-      const result = rankSourceChunks(query, scopedCandidates, 2);
+      const exactResult = rankSourceChunks(query, exactPageScoped, 2);
+      const paddedResult = exactResult.references.length ? exactResult : rankSourceChunks(query, paddedPageScoped, 2);
+      const result = paddedResult.references.length ? paddedResult : rankSourceChunks(query, sourceScoped, 2);
       return {
         lesson,
         references: result.references.map((reference) => ({

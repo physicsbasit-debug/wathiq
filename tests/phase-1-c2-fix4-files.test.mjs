@@ -1,0 +1,18 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+
+const tree = fs.readFileSync("src/book-content-tree.ts", "utf8");
+const app = fs.readFileSync("src/app.ts", "utf8");
+const retrieval = fs.readFileSync("src/source-retrieval.ts", "utf8");
+const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+
+test("يثبت ربط الصفحات المطبوعة بصفحات PDF مع بحث متدرج آمن", () => {
+  assert.equal(pkg.version, "0.0.40");
+  assert.match(tree, /pdfPageOffset:\s*3/);
+  assert.match(tree, /toPdfPage/);
+  assert.match(retrieval, /strict-lesson-scope-3-pdf-pages/);
+  assert.match(app, /exactPageScoped/);
+  assert.match(app, /paddedPageScoped/);
+  assert.match(app, /pageEnd \+ 3/);
+});

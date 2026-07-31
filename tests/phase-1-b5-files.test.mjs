@@ -13,7 +13,7 @@ test("تبقي استخراج JSON المتوازن ورمز التتبع بعد
   assert.match(edge, /stripMarkdownFence/);
   assert.match(edge, /createRequestId/);
   assert.match(generator, /رمز التتبع/);
-  assert.match(pkg.version, /^0\.0\.(?:32|33|34|35|36|37|38|39)$/);
+  assert.match(pkg.version, /^0\.0\.(?:32|33|34|35|36|37|38|39|40)$/);
 });
 
 test("لا تسجل نص المصدر أو مفتاح Gemini في مراحل التشخيص", () => {

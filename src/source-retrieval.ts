@@ -8,7 +8,7 @@ const STOP_WORDS = new Set([
   "درس", "موضوع", "وحدة", "اختبار", "شرح", "تعريف", "كل", "مكان", "داخل", "خارج",
 ]);
 
-export const SOURCE_RETRIEVAL_VERSION = "strict-lesson-scope-2-tree-pages";
+export const SOURCE_RETRIEVAL_VERSION = "strict-lesson-scope-3-pdf-pages";
 
 export interface SourceChunkCandidate {
   source: ManagedSource;
