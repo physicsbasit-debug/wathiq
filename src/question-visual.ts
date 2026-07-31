@@ -1,9 +1,12 @@
 import type {
   CircuitComponent,
   QuestionVisualPoint,
+  QuestionVisualRole,
+  QuestionVisualSeries,
   QuestionVisualSpec,
   QuestionVisualType,
   QuestionVisualVariant,
+  QuestionVisualVector,
 } from "./types.js";
 
 export const QUESTION_VISUAL_TYPES: readonly QuestionVisualType[] = [
@@ -12,6 +15,12 @@ export const QUESTION_VISUAL_TYPES: readonly QuestionVisualType[] = [
   "bar_chart",
   "pressure_diagram",
   "circuit_diagram",
+  "electrostatic_diagram",
+  "data_table",
+  "instrument_scale",
+  "ray_diagram",
+  "force_diagram",
+  "flow_diagram",
 ];
 
 export const QUESTION_VISUAL_VARIANTS: readonly QuestionVisualVariant[] = [
@@ -22,8 +31,28 @@ export const QUESTION_VISUAL_VARIANTS: readonly QuestionVisualVariant[] = [
   "liquid_column",
   "series_circuit",
   "measurement_circuit",
+  "charge_transfer",
+  "attraction_repulsion",
+  "electric_field",
   "trend",
   "comparison",
+  "multi_series",
+  "table_completion",
+  "table_comparison",
+  "thermometer",
+  "burette",
+  "measuring_cylinder",
+  "meter_scale",
+  "reflection",
+  "refraction",
+  "converging_lens",
+  "prism",
+  "free_body",
+  "balanced_forces",
+  "moments",
+  "linear_flow",
+  "cycle_flow",
+  "state_change",
 ];
 
 export const CIRCUIT_COMPONENTS: readonly CircuitComponent[] = [
@@ -36,12 +65,20 @@ export const CIRCUIT_COMPONENTS: readonly CircuitComponent[] = [
   "voltmeter",
 ];
 
+export const QUESTION_VISUAL_ROLES: readonly QuestionVisualRole[] = ["read", "calculate", "interpret", "compare", "complete", "draw", "evaluate"];
+
 const VISUAL_LABELS: Record<QuestionVisualType, string> = {
   none: "دون رسم",
   line_graph: "رسم بياني خطي",
   bar_chart: "رسم أعمدة",
   pressure_diagram: "مخطط ضغط ثنائي الأبعاد",
   circuit_diagram: "دائرة كهربائية مبسطة",
+  electrostatic_diagram: "مخطط كهرباء ساكنة ثنائي الأبعاد",
+  data_table: "جدول بيانات علمي",
+  instrument_scale: "تدريج جهاز قياس",
+  ray_diagram: "مخطط أشعة وبصريات",
+  force_diagram: "مخطط قوى وحركة",
+  flow_diagram: "مخطط عملية أو تسلسل",
 };
 
 export function questionVisualTypeLabel(type: QuestionVisualType): string {
@@ -54,6 +91,10 @@ export function isQuestionVisualType(value: unknown): value is QuestionVisualTyp
 
 export function isQuestionVisualVariant(value: unknown): value is QuestionVisualVariant {
   return typeof value === "string" && (QUESTION_VISUAL_VARIANTS as readonly string[]).includes(value);
+}
+
+export function isQuestionVisualRole(value: unknown): value is QuestionVisualRole {
+  return typeof value === "string" && (QUESTION_VISUAL_ROLES as readonly string[]).includes(value);
 }
 
 export function isCircuitComponent(value: unknown): value is CircuitComponent {
@@ -100,12 +141,50 @@ function cleanPoints(value: unknown): QuestionVisualPoint[] {
   }).slice(0, 10);
 }
 
+function cleanSeries(value: unknown): QuestionVisualSeries[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    const record = asRecord(entry);
+    if (!record) return [];
+    const label = cleanText(record.label, 50);
+    const points = cleanPoints(record.points);
+    return label && points.length >= 2 ? [{ label, points }] : [];
+  }).slice(0, 4);
+}
+
+function cleanStringMatrix(value: unknown, maxRows = 8, maxColumns = 6): string[][] {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, maxRows).flatMap((row) => {
+    if (!Array.isArray(row)) return [];
+    return [[...row.slice(0, maxColumns).map((cell) => cleanText(cell, 80))]];
+  });
+}
+
+function cleanVectors(value: unknown): QuestionVisualVector[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    const record = asRecord(entry);
+    if (!record) return [];
+    const fields = [record.x, record.y, record.dx, record.dy, record.magnitude];
+    if (fields.some((field) => typeof field !== "number" || !Number.isFinite(field))) return [];
+    return [{
+      label: cleanText(record.label, 50),
+      x: record.x as number,
+      y: record.y as number,
+      dx: record.dx as number,
+      dy: record.dy as number,
+      magnitude: record.magnitude as number,
+    }];
+  }).slice(0, 8);
+}
+
 export function emptyQuestionVisualSpec(): QuestionVisualSpec {
   return {
     type: "none",
     visualId: "",
     variant: "default",
     purpose: "",
+    role: "read",
     title: "",
     altText: "",
     xAxisLabel: "",
@@ -117,10 +196,16 @@ export function emptyQuestionVisualSpec(): QuestionVisualSpec {
     yMin: 0,
     yMax: 1,
     points: [],
+    series: [],
     labels: [],
     values: [],
     components: [],
     annotations: [],
+    tableColumns: [],
+    tableRows: [],
+    tableCells: [],
+    hiddenCells: [],
+    vectors: [],
   };
 }
 
@@ -138,6 +223,7 @@ export function parseQuestionVisualSpec(value: unknown, expectedType?: QuestionV
     visualId: cleanText(record.visualId, 80),
     variant: isQuestionVisualVariant(record.variant) ? record.variant : "default",
     purpose: cleanText(record.purpose, 160),
+    role: isQuestionVisualRole(record.role) ? record.role : "read",
     title: cleanText(record.title),
     altText: cleanText(record.altText, 240),
     xAxisLabel: cleanText(record.xAxisLabel, 60),
@@ -149,12 +235,18 @@ export function parseQuestionVisualSpec(value: unknown, expectedType?: QuestionV
     yMin: finiteNumber(record.yMin),
     yMax: finiteNumber(record.yMax, 1),
     points: cleanPoints(record.points),
-    labels: cleanTextArray(record.labels, 10),
+    series: cleanSeries(record.series),
+    labels: cleanTextArray(record.labels, 12),
     values: cleanNumberArray(record.values, 10),
     components: Array.isArray(record.components)
       ? record.components.filter(isCircuitComponent).slice(0, 7)
       : [],
-    annotations: cleanTextArray(record.annotations, 8, 100),
+    annotations: cleanTextArray(record.annotations, 12, 100),
+    tableColumns: cleanTextArray(record.tableColumns, 6, 70),
+    tableRows: cleanTextArray(record.tableRows, 8, 70),
+    tableCells: cleanStringMatrix(record.tableCells),
+    hiddenCells: cleanTextArray(record.hiddenCells, 12, 16),
+    vectors: cleanVectors(record.vectors),
   };
 
   validateQuestionVisualSpec(spec);
@@ -165,12 +257,30 @@ export function diversifyQuestionVisualSpec(spec: QuestionVisualSpec, index: num
   if (spec.type === "none") return { ...spec, visualId: spec.visualId || "", variant: spec.variant ?? "default" };
   const pressureVariants: QuestionVisualVariant[] = ["submerged_object", "depth_comparison", "force_area", "liquid_column"];
   const circuitVariants: QuestionVisualVariant[] = ["series_circuit", "measurement_circuit"];
-  const graphVariants: QuestionVisualVariant[] = ["trend", "comparison"];
+  const electrostaticVariants: QuestionVisualVariant[] = ["charge_transfer", "attraction_repulsion", "electric_field"];
+  const graphVariants: QuestionVisualVariant[] = ["trend", "comparison", "multi_series"];
+  const tableVariants: QuestionVisualVariant[] = ["table_completion", "table_comparison"];
+  const scaleVariants: QuestionVisualVariant[] = ["thermometer", "burette", "measuring_cylinder", "meter_scale"];
+  const rayVariants: QuestionVisualVariant[] = ["reflection", "refraction", "converging_lens", "prism"];
+  const forceVariants: QuestionVisualVariant[] = ["free_body", "balanced_forces", "moments"];
+  const flowVariants: QuestionVisualVariant[] = ["linear_flow", "cycle_flow", "state_change"];
   const fallback = (spec.type === "pressure_diagram"
     ? pressureVariants[index % pressureVariants.length]
     : spec.type === "circuit_diagram"
       ? circuitVariants[index % circuitVariants.length]
-      : graphVariants[index % graphVariants.length]) ?? "default";
+      : spec.type === "electrostatic_diagram"
+        ? electrostaticVariants[index % electrostaticVariants.length]
+        : spec.type === "data_table"
+          ? tableVariants[index % tableVariants.length]
+          : spec.type === "instrument_scale"
+            ? scaleVariants[index % scaleVariants.length]
+            : spec.type === "ray_diagram"
+              ? rayVariants[index % rayVariants.length]
+              : spec.type === "force_diagram"
+                ? forceVariants[index % forceVariants.length]
+                : spec.type === "flow_diagram"
+                  ? flowVariants[index % flowVariants.length]
+                  : graphVariants[index % graphVariants.length]) ?? "default";
   return {
     ...spec,
     visualId: spec.visualId || `visual-${planItemId || index + 1}`,
@@ -185,10 +295,11 @@ export function validateQuestionVisualSpec(spec: QuestionVisualSpec): void {
 
   if (spec.type === "line_graph") {
     validateAxes(spec);
-    if (spec.points.length < 2 || spec.points.length > 10) {
-      throw new Error("الرسم الخطي يحتاج نقطتين إلى عشر نقاط.");
+    const groups = spec.series.length ? spec.series.map((series) => series.points) : [spec.points];
+    if (groups.length < 1 || groups.length > 4 || groups.some((points) => points.length < 2 || points.length > 10)) {
+      throw new Error("الرسم الخطي يحتاج سلسلة إلى أربع سلاسل، بكل منها نقطتان إلى عشر نقاط.");
     }
-    if (spec.points.some((point) => point.x < spec.xMin || point.x > spec.xMax || point.y < spec.yMin || point.y > spec.yMax)) {
+    if (groups.flat().some((point) => point.x < spec.xMin || point.x > spec.xMax || point.y < spec.yMin || point.y > spec.yMax)) {
       throw new Error("إحدى نقاط الرسم الخطي خارج نطاق المحاور.");
     }
     return;
@@ -225,6 +336,76 @@ export function validateQuestionVisualSpec(spec: QuestionVisualSpec): void {
     if (!spec.components.some((component) => component === "lamp" || component === "resistor")) {
       throw new Error("الدائرة الكهربائية تحتاج حملًا مثل مصباح أو مقاومة.");
     }
+    return;
+  }
+
+  if (spec.type === "electrostatic_diagram") {
+    if (!["charge_transfer", "attraction_repulsion", "electric_field"].includes(spec.variant ?? "")) {
+      throw new Error("نوع مخطط الكهرباء الساكنة غير صالح.");
+    }
+    if (spec.labels.length < 2) {
+      throw new Error("مخطط الكهرباء الساكنة يحتاج جسمين أو عنصرين على الأقل.");
+    }
+    return;
+  }
+
+  if (spec.type === "data_table") {
+    if (spec.tableColumns.length < 2 || spec.tableColumns.length > 6) {
+      throw new Error("جدول البيانات يحتاج عمودين إلى ستة أعمدة.");
+    }
+    if (spec.tableRows.length < 2 || spec.tableRows.length > 8 || spec.tableCells.length !== spec.tableRows.length) {
+      throw new Error("جدول البيانات يحتاج صفين إلى ثمانية صفوف مع بيانات مكتملة البنية.");
+    }
+    if (spec.tableCells.some((row) => row.length !== spec.tableColumns.length)) {
+      throw new Error("عدد خلايا أحد صفوف الجدول لا يطابق عدد الأعمدة.");
+    }
+    if (spec.hiddenCells.some((key) => !/^r\d+c\d+$/u.test(key))) {
+      throw new Error("أحد مواضع الخلايا المخفية غير صالح.");
+    }
+    return;
+  }
+
+  if (spec.type === "instrument_scale") {
+    if (!["thermometer", "burette", "measuring_cylinder", "meter_scale"].includes(spec.variant ?? "")) {
+      throw new Error("نوع تدريج جهاز القياس غير صالح.");
+    }
+    if (spec.values.length < 4) throw new Error("تدريج الجهاز يحتاج الحد الأدنى والأعلى والخطوة والقراءة.");
+    const [min, max, step, reading] = spec.values;
+    if (min === undefined || max === undefined || step === undefined || reading === undefined
+      || max <= min || step <= 0 || reading < min || reading > max) {
+      throw new Error("قيم تدريج جهاز القياس غير صالحة.");
+    }
+    return;
+  }
+
+  if (spec.type === "ray_diagram") {
+    if (!["reflection", "refraction", "converging_lens", "prism"].includes(spec.variant ?? "")) {
+      throw new Error("نوع مخطط الأشعة غير صالح.");
+    }
+    if (spec.values.length < 2) throw new Error("مخطط الأشعة يحتاج قيمًا هندسية أساسية.");
+    return;
+  }
+
+  if (spec.type === "force_diagram") {
+    if (!["free_body", "balanced_forces", "moments"].includes(spec.variant ?? "")) {
+      throw new Error("نوع مخطط القوى غير صالح.");
+    }
+    if (spec.vectors.length < 2 || spec.vectors.length > 8) {
+      throw new Error("مخطط القوى يحتاج متجهين إلى ثمانية متجهات.");
+    }
+    if (spec.vectors.some((vector) => vector.magnitude <= 0 || (vector.dx === 0 && vector.dy === 0))) {
+      throw new Error("أحد متجهات القوة غير صالح.");
+    }
+    return;
+  }
+
+  if (spec.type === "flow_diagram") {
+    if (!["linear_flow", "cycle_flow", "state_change"].includes(spec.variant ?? "")) {
+      throw new Error("نوع مخطط العملية غير صالح.");
+    }
+    if (spec.labels.length < 3 || spec.labels.length > 7) {
+      throw new Error("مخطط العملية يحتاج ثلاث مراحل إلى سبع مراحل.");
+    }
   }
 }
 
@@ -254,11 +435,11 @@ function axisCaption(label: string, unit: string): string {
 
 function renderLineGraph(spec: QuestionVisualSpec): string {
   const width = 640;
-  const height = 360;
+  const height = 380;
   const left = 78;
-  const right = 28;
-  const top = 45;
-  const bottom = 66;
+  const right = 34;
+  const top = 48;
+  const bottom = 78;
   const plotWidth = width - left - right;
   const plotHeight = height - top - bottom;
   const x = (value: number) => left + ((value - spec.xMin) / (spec.xMax - spec.xMin)) * plotWidth;
@@ -271,10 +452,19 @@ function renderLineGraph(spec: QuestionVisualSpec): string {
     const yValue = spec.yMax - ratio * (spec.yMax - spec.yMin);
     return `<line x1="${gx}" y1="${top}" x2="${gx}" y2="${top + plotHeight}" class="qv-grid"/><line x1="${left}" y1="${gy}" x2="${left + plotWidth}" y2="${gy}" class="qv-grid"/><text x="${gx}" y="${top + plotHeight + 23}" class="qv-tick" text-anchor="middle">${escapeXml(numberLabel(xValue))}</text><text x="${left - 12}" y="${gy + 4}" class="qv-tick" text-anchor="end">${escapeXml(numberLabel(yValue))}</text>`;
   }).join("");
-  const ordered = [...spec.points].sort((a, b) => a.x - b.x);
-  const polyline = ordered.map((point) => `${x(point.x)},${y(point.y)}`).join(" ");
-  const points = ordered.map((point) => `<circle cx="${x(point.x)}" cy="${y(point.y)}" r="4.5" class="qv-point"/>${point.label ? `<text x="${x(point.x) + 7}" y="${y(point.y) - 8}" class="qv-point-label">${escapeXml(point.label)}</text>` : ""}`).join("");
-  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}"><text x="${width / 2}" y="25" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text>${grid}<line x1="${left}" y1="${top + plotHeight}" x2="${left + plotWidth}" y2="${top + plotHeight}" class="qv-axis"/><line x1="${left}" y1="${top}" x2="${left}" y2="${top + plotHeight}" class="qv-axis"/><polyline points="${polyline}" class="qv-line"/>${points}<text x="${left + plotWidth / 2}" y="${height - 12}" class="qv-axis-label" text-anchor="middle">${escapeXml(axisCaption(spec.xAxisLabel, spec.xAxisUnit))}</text><text x="18" y="${top + plotHeight / 2}" class="qv-axis-label" text-anchor="middle" transform="rotate(-90 18 ${top + plotHeight / 2})">${escapeXml(axisCaption(spec.yAxisLabel, spec.yAxisUnit))}</text></svg>`;
+  const groups: QuestionVisualSeries[] = spec.series.length
+    ? spec.series
+    : [{ label: spec.annotations[0] || "البيانات", points: spec.points }];
+  const rendered = groups.map((series, seriesIndex) => {
+    const ordered = [...series.points].sort((a, b) => a.x - b.x);
+    const polyline = ordered.map((point) => `${x(point.x)},${y(point.y)}`).join(" ");
+    const points = ordered.map((point) => `<circle cx="${x(point.x)}" cy="${y(point.y)}" r="4.2" class="qv-point qv-series-${seriesIndex}"/>${point.label ? `<text x="${x(point.x) + 7}" y="${y(point.y) - 8}" class="qv-point-label">${escapeXml(point.label)}</text>` : ""}`).join("");
+    return `<polyline points="${polyline}" class="qv-line qv-series-${seriesIndex}"/>${points}`;
+  }).join("");
+  const legend = groups.length > 1
+    ? groups.map((series, index) => `<g transform="translate(${left + index * 150} ${height - 35})"><line x1="0" y1="0" x2="32" y2="0" class="qv-line qv-series-${index}"/><text x="40" y="4" class="qv-legend">${escapeXml(series.label)}</text></g>`).join("")
+    : "";
+  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}"><text x="${width / 2}" y="26" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text>${grid}<line x1="${left}" y1="${top + plotHeight}" x2="${left + plotWidth}" y2="${top + plotHeight}" class="qv-axis"/><line x1="${left}" y1="${top}" x2="${left}" y2="${top + plotHeight}" class="qv-axis"/>${rendered}<text x="${left + plotWidth / 2}" y="${height - 50}" class="qv-axis-label" text-anchor="middle">${escapeXml(axisCaption(spec.xAxisLabel, spec.xAxisUnit))}</text><text x="18" y="${top + plotHeight / 2}" class="qv-axis-label" text-anchor="middle" transform="rotate(-90 18 ${top + plotHeight / 2})">${escapeXml(axisCaption(spec.yAxisLabel, spec.yAxisUnit))}</text>${legend}</svg>`;
 }
 
 function renderBarChart(spec: QuestionVisualSpec): string {
@@ -353,6 +543,187 @@ function renderPressureDiagram(spec: QuestionVisualSpec): string {
   return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}"><text x="${width / 2}" y="26" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text><path d="M ${tankX} ${tankY} V ${tankY + tankH} H ${tankX + tankW} V ${tankY}" class="qv-vessel"/><rect x="${tankX + 2}" y="${liquidTop}" width="${tankW - 4}" height="${tankY + tankH - liquidTop - 2}" class="qv-liquid"/><line x1="${tankX}" y1="${liquidTop}" x2="${tankX + tankW}" y2="${liquidTop}" class="qv-surface"/><circle cx="${objectX}" cy="${objectY}" r="18" class="qv-object"/><text x="${objectX}" y="${objectY + 4}" class="qv-object-label" text-anchor="middle">${escapeXml(objectLabel)}</text><line x1="${objectX - 54}" y1="${liquidTop}" x2="${objectX - 54}" y2="${objectY}" class="qv-depth"/><path d="M ${objectX - 60} ${liquidTop + 8} L ${objectX - 54} ${liquidTop} L ${objectX - 48} ${liquidTop + 8} M ${objectX - 60} ${objectY - 8} L ${objectX - 54} ${objectY} L ${objectX - 48} ${objectY - 8}" class="qv-depth"/><text x="${objectX - 68}" y="${(liquidTop + objectY) / 2}" class="qv-annotation" text-anchor="end">العمق h</text><text x="${tankX + 16}" y="${liquidTop + 28}" class="qv-liquid-label">${escapeXml(liquidLabel)}</text>${annotations}</svg>`;
 }
 
+
+
+function renderElectrostaticDiagram(spec: QuestionVisualSpec): string {
+  const width = 640;
+  const height = 360;
+  const variant = spec.variant ?? "charge_transfer";
+  const first = spec.labels[0] ?? "الجسم 1";
+  const second = spec.labels[1] ?? "الجسم 2";
+
+  if (variant === "electric_field") {
+    const leftX = 210;
+    const rightX = 430;
+    const centerY = 190;
+    const fieldLines = [-90, -55, -20, 20, 55, 90].map((offset, index) => {
+      const curve = index < 3 ? -55 : 55;
+      return `<path d="M ${leftX + 24} ${centerY + offset * .55} C ${320 - curve} ${centerY + offset}, ${320 + curve} ${centerY + offset}, ${rightX - 24} ${centerY + offset * .55}" class="qv-field-line" marker-end="url(#qv-arrow)"/>`;
+    }).join("");
+    return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}"><defs><marker id="qv-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" class="qv-arrow-fill"/></marker></defs><text x="${width / 2}" y="28" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text>${fieldLines}<circle cx="${leftX}" cy="${centerY}" r="31" class="qv-charged-object"/><circle cx="${rightX}" cy="${centerY}" r="31" class="qv-charged-object"/><text x="${leftX}" y="${centerY + 8}" class="qv-charge-main" text-anchor="middle">+</text><text x="${rightX}" y="${centerY + 8}" class="qv-charge-main" text-anchor="middle">−</text><text x="${leftX}" y="${centerY + 58}" class="qv-annotation" text-anchor="middle">${escapeXml(first)}</text><text x="${rightX}" y="${centerY + 58}" class="qv-annotation" text-anchor="middle">${escapeXml(second)}</text></svg>`;
+  }
+
+  if (variant === "attraction_repulsion") {
+    const leftX = 225;
+    const rightX = 415;
+    const centerY = 190;
+    const unlike = (spec.values[0] ?? 0) >= 0.5;
+    const secondSign = unlike ? "−" : "+";
+    const arrows = unlike
+      ? `<line x1="290" y1="${centerY}" x2="315" y2="${centerY}" class="qv-force-arrow" marker-end="url(#qv-force-head)"/><line x1="350" y1="${centerY}" x2="325" y2="${centerY}" class="qv-force-arrow" marker-end="url(#qv-force-head)"/>`
+      : `<line x1="290" y1="${centerY}" x2="255" y2="${centerY}" class="qv-force-arrow" marker-end="url(#qv-force-head)"/><line x1="350" y1="${centerY}" x2="385" y2="${centerY}" class="qv-force-arrow" marker-end="url(#qv-force-head)"/>`;
+    return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}"><defs><marker id="qv-force-head" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" class="qv-arrow-fill"/></marker></defs><text x="${width / 2}" y="28" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text><line x1="${leftX}" y1="85" x2="${leftX}" y2="150" class="qv-string"/><line x1="${rightX}" y1="85" x2="${rightX}" y2="150" class="qv-string"/><circle cx="${leftX}" cy="${centerY}" r="38" class="qv-charged-object"/><circle cx="${rightX}" cy="${centerY}" r="38" class="qv-charged-object"/><text x="${leftX}" y="${centerY + 10}" class="qv-charge-main" text-anchor="middle">+</text><text x="${rightX}" y="${centerY + 10}" class="qv-charge-main" text-anchor="middle">${secondSign}</text>${arrows}<text x="${leftX}" y="${centerY + 68}" class="qv-annotation" text-anchor="middle">${escapeXml(first)}</text><text x="${rightX}" y="${centerY + 68}" class="qv-annotation" text-anchor="middle">${escapeXml(second)}</text></svg>`;
+  }
+
+  const rodX = 160;
+  const clothX = 390;
+  const y = 170;
+  const paperPieces = Array.from({ length: 6 }, (_, index) => {
+    const px = 120 + index * 38;
+    const py = 280 + (index % 2) * 13;
+    return `<rect x="${px}" y="${py}" width="18" height="8" class="qv-paper-piece" transform="rotate(${index % 2 ? -12 : 10} ${px + 9} ${py + 4})"/>`;
+  }).join("");
+  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}"><defs><marker id="qv-electron-head" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" class="qv-arrow-fill"/></marker></defs><text x="${width / 2}" y="28" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text><rect x="${rodX}" y="${y}" width="220" height="24" rx="12" class="qv-rod" transform="rotate(-8 ${rodX + 110} ${y + 12})"/><path d="M ${clothX} ${y - 35} q 50 -18 92 12 v 90 q -50 18 -96 -8 z" class="qv-cloth"/><path d="M ${clothX - 6} ${y + 2} C 350 ${y - 28}, 330 ${y - 14}, 300 ${y - 2}" class="qv-electron-arrow" marker-end="url(#qv-electron-head)"/><text x="335" y="${y - 32}" class="qv-annotation">اتجاه الدلك</text><text x="${rodX + 110}" y="${y + 65}" class="qv-annotation" text-anchor="middle">${escapeXml(first)}</text><text x="${clothX + 45}" y="${y + 88}" class="qv-annotation" text-anchor="middle">${escapeXml(second)}</text>${paperPieces}<text x="230" y="330" class="qv-annotation" text-anchor="middle">قصاصات ورق خفيفة</text></svg>`;
+}
+
+function renderDataTable(spec: QuestionVisualSpec): string {
+  const width = 640;
+  const rowHeight = 44;
+  const top = 58;
+  const left = 40;
+  const right = 40;
+  const rowLabelWidth = spec.tableRows.some(Boolean) ? 110 : 0;
+  const tableWidth = width - left - right;
+  const dataWidth = tableWidth - rowLabelWidth;
+  const colWidth = dataWidth / spec.tableColumns.length;
+  const height = top + rowHeight * (spec.tableRows.length + 1) + 44;
+  const header = spec.tableColumns.map((column, index) => {
+    const x = left + rowLabelWidth + index * colWidth;
+    return `<rect x="${x}" y="${top}" width="${colWidth}" height="${rowHeight}" class="qv-table-head"/><text x="${x + colWidth / 2}" y="${top + 27}" class="qv-table-text qv-table-head-text" text-anchor="middle">${escapeXml(column)}</text>`;
+  }).join("");
+  const corner = rowLabelWidth ? `<rect x="${left}" y="${top}" width="${rowLabelWidth}" height="${rowHeight}" class="qv-table-head"/><text x="${left + rowLabelWidth / 2}" y="${top + 27}" class="qv-table-text qv-table-head-text" text-anchor="middle">الحالة</text>` : "";
+  const rows = spec.tableRows.map((rowLabel, rowIndex) => {
+    const y = top + (rowIndex + 1) * rowHeight;
+    const label = rowLabelWidth ? `<rect x="${left}" y="${y}" width="${rowLabelWidth}" height="${rowHeight}" class="qv-table-row-head"/><text x="${left + rowLabelWidth / 2}" y="${y + 27}" class="qv-table-text" text-anchor="middle">${escapeXml(rowLabel)}</text>` : "";
+    const cells = spec.tableColumns.map((_, colIndex) => {
+      const x = left + rowLabelWidth + colIndex * colWidth;
+      const key = `r${rowIndex}c${colIndex}`;
+      const hidden = spec.hiddenCells.includes(key);
+      const content = hidden ? "" : (spec.tableCells[rowIndex]?.[colIndex] ?? "");
+      return `<rect x="${x}" y="${y}" width="${colWidth}" height="${rowHeight}" class="${hidden ? "qv-table-cell qv-table-missing" : "qv-table-cell"}"/>${hidden ? `<line x1="${x + 14}" y1="${y + 29}" x2="${x + colWidth - 14}" y2="${y + 29}" class="qv-answer-line"/>` : `<text x="${x + colWidth / 2}" y="${y + 27}" class="qv-table-text" text-anchor="middle">${escapeXml(content)}</text>`}`;
+    }).join("");
+    return `${label}${cells}`;
+  }).join("");
+  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}"><text x="${width / 2}" y="28" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text>${corner}${header}${rows}</svg>`;
+}
+
+function renderInstrumentScale(spec: QuestionVisualSpec): string {
+  const width = 640;
+  const height = 380;
+  const [min = 0, max = 100, step = 10, reading = 50] = spec.values;
+  const unit = spec.labels[1] ?? "";
+  const device = spec.labels[0] ?? "جهاز قياس";
+  const top = 58;
+  const bottom = 318;
+  const scaleHeight = bottom - top;
+  const ratio = (reading - min) / (max - min);
+  const inverted = spec.variant === "burette";
+  const valueToY = (value: number) => inverted
+    ? top + ((value - min) / (max - min)) * scaleHeight
+    : bottom - ((value - min) / (max - min)) * scaleHeight;
+  const tickCount = Math.max(2, Math.min(30, Math.round((max - min) / step)));
+  const ticks = Array.from({ length: tickCount + 1 }, (_, index) => {
+    const value = min + index * ((max - min) / tickCount);
+    const y = valueToY(value);
+    const major = index % Math.max(1, Math.round(tickCount / 5)) === 0;
+    return `<line x1="${major ? 282 : 292}" y1="${y}" x2="320" y2="${y}" class="qv-scale-tick"/><text x="270" y="${y + 4}" class="qv-tick" text-anchor="end">${major ? escapeXml(numberLabel(value)) : ""}</text>`;
+  }).join("");
+  const readingY = valueToY(reading);
+  const body = spec.variant === "thermometer"
+    ? `<rect x="320" y="${top}" width="36" height="${scaleHeight}" rx="18" class="qv-instrument-body"/><circle cx="338" cy="330" r="25" class="qv-instrument-body"/><rect x="331" y="${readingY}" width="14" height="${330 - readingY}" rx="7" class="qv-instrument-fill"/>`
+    : spec.variant === "measuring_cylinder"
+      ? `<path d="M 315 ${top} V ${bottom} Q 315 340 338 340 Q 361 340 361 ${bottom} V ${top}" class="qv-instrument-body"/><rect x="318" y="${readingY}" width="40" height="${bottom - readingY}" class="qv-instrument-liquid"/><path d="M 318 ${readingY} Q 338 ${readingY + 8} 358 ${readingY}" class="qv-meniscus"/>`
+      : spec.variant === "burette"
+        ? `<rect x="326" y="${top}" width="24" height="${scaleHeight}" class="qv-instrument-body"/><line x1="338" y1="${bottom}" x2="338" y2="346" class="qv-instrument-body"/><line x1="318" y1="334" x2="358" y2="334" class="qv-instrument-body"/><rect x="329" y="${readingY}" width="18" height="${bottom - readingY}" class="qv-instrument-liquid"/><path d="M 329 ${readingY} Q 338 ${readingY + 5} 347 ${readingY}" class="qv-meniscus"/>`
+        : `<path d="M 210 280 A 128 128 0 0 1 466 280" class="qv-meter-arc"/><line x1="338" y1="280" x2="${338 + 105 * Math.cos(Math.PI - ratio * Math.PI)}" y2="${280 - 105 * Math.sin(ratio * Math.PI)}" class="qv-meter-needle"/><circle cx="338" cy="280" r="7" class="qv-node"/>`;
+  const horizontalScale = spec.variant === "meter_scale" ? Array.from({ length: 6 }, (_, i) => {
+    const angle = Math.PI - (i / 5) * Math.PI;
+    const x1 = 338 + 118 * Math.cos(angle);
+    const y1 = 280 - 118 * Math.sin(angle);
+    const x2 = 338 + 100 * Math.cos(angle);
+    const y2 = 280 - 100 * Math.sin(angle);
+    const value = min + (i / 5) * (max - min);
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" class="qv-scale-tick"/><text x="${338 + 138 * Math.cos(angle)}" y="${284 - 138 * Math.sin(angle)}" class="qv-tick" text-anchor="middle">${escapeXml(numberLabel(value))}</text>`;
+  }).join("") : ticks;
+  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}"><text x="${width / 2}" y="28" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text>${body}${horizontalScale}<text x="470" y="90" class="qv-annotation">${escapeXml(device)}</text><text x="470" y="116" class="qv-annotation">الوحدة: ${escapeXml(unit || "—")}</text></svg>`;
+}
+
+function renderRayDiagram(spec: QuestionVisualSpec): string {
+  const width = 640;
+  const height = 360;
+  const variant = spec.variant ?? "reflection";
+  const marker = `qv-ray-${escapeXml(spec.visualId || "default")}`;
+  const defs = `<defs><marker id="${marker}" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" class="qv-arrow-fill"/></marker></defs>`;
+  if (variant === "reflection") {
+    const angle = Math.max(20, Math.min(70, spec.values[0] ?? 40));
+    const dx = 150 * Math.sin(angle * Math.PI / 180);
+    const dy = 150 * Math.cos(angle * Math.PI / 180);
+    return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}">${defs}<text x="${width / 2}" y="28" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text><line x1="110" y1="250" x2="530" y2="250" class="qv-mirror"/><line x1="320" y1="70" x2="320" y2="300" class="qv-normal"/><line x1="${320 - dx}" y1="${250 - dy}" x2="320" y2="250" class="qv-ray" marker-end="url(#${marker})"/><line x1="320" y1="250" x2="${320 + dx}" y2="${250 - dy}" class="qv-ray" marker-end="url(#${marker})"/><text x="115" y="275" class="qv-annotation">مرآة مستوية</text><text x="330" y="88" class="qv-annotation">العمود المقام</text></svg>`;
+  }
+  if (variant === "refraction") {
+    return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}">${defs}<text x="${width / 2}" y="28" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text><line x1="90" y1="190" x2="550" y2="190" class="qv-boundary"/><line x1="320" y1="60" x2="320" y2="320" class="qv-normal"/><line x1="170" y1="75" x2="320" y2="190" class="qv-ray" marker-end="url(#${marker})"/><line x1="320" y1="190" x2="385" y2="310" class="qv-ray" marker-end="url(#${marker})"/><text x="500" y="165" class="qv-annotation">الوسط الأول</text><text x="500" y="225" class="qv-annotation">الوسط الثاني</text></svg>`;
+  }
+  if (variant === "converging_lens") {
+    return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}">${defs}<text x="${width / 2}" y="28" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text><line x1="70" y1="190" x2="570" y2="190" class="qv-principal-axis"/><path d="M 320 80 Q 275 190 320 300 Q 365 190 320 80" class="qv-lens"/><line x1="115" y1="125" x2="320" y2="125" class="qv-ray"/><line x1="320" y1="125" x2="500" y2="190" class="qv-ray" marker-end="url(#${marker})"/><line x1="115" y1="125" x2="320" y2="190" class="qv-ray"/><line x1="320" y1="190" x2="500" y2="245" class="qv-ray" marker-end="url(#${marker})"/><text x="332" y="70" class="qv-annotation">عدسة محدبة</text></svg>`;
+  }
+  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}">${defs}<text x="${width / 2}" y="28" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text><path d="M 300 75 L 455 270 L 190 270 Z" class="qv-prism"/><line x1="80" y1="150" x2="275" y2="150" class="qv-ray" marker-end="url(#${marker})"/><line x1="275" y1="150" x2="410" y2="236" class="qv-ray"/><line x1="410" y1="236" x2="550" y2="280" class="qv-ray" marker-end="url(#${marker})"/><text x="310" y="315" class="qv-annotation" text-anchor="middle">منشور زجاجي</text></svg>`;
+}
+
+function renderForceDiagram(spec: QuestionVisualSpec): string {
+  const width = 640;
+  const height = 360;
+  const marker = `qv-force-${escapeXml(spec.visualId || "default")}`;
+  const vectors = spec.vectors.map((vector, index) => {
+    const x1 = 320 + vector.x;
+    const y1 = 190 + vector.y;
+    const scale = Math.min(1.5, Math.max(0.55, vector.magnitude / 10));
+    const x2 = x1 + vector.dx * scale;
+    const y2 = y1 + vector.dy * scale;
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" class="qv-force-arrow qv-vector-${index}" marker-end="url(#${marker})"/><text x="${x2 + (vector.dx >= 0 ? 8 : -8)}" y="${y2 - 7}" class="qv-annotation" text-anchor="${vector.dx >= 0 ? "start" : "end"}">${escapeXml(vector.label)}</text>`;
+  }).join("");
+  const support = spec.variant === "moments"
+    ? `<line x1="130" y1="230" x2="510" y2="230" class="qv-beam"/><path d="M 300 230 L 340 230 L 320 275 Z" class="qv-pivot"/><text x="320" y="302" class="qv-annotation" text-anchor="middle">نقطة الارتكاز</text>`
+    : `<rect x="265" y="150" width="110" height="80" class="qv-object"/><text x="320" y="195" class="qv-object-label" text-anchor="middle">${escapeXml(spec.labels[0] ?? "الجسم")}</text><line x1="150" y1="230" x2="490" y2="230" class="qv-surface"/>`;
+  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}"><defs><marker id="${marker}" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" class="qv-arrow-fill"/></marker></defs><text x="${width / 2}" y="28" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text>${support}${vectors}</svg>`;
+}
+
+function renderFlowDiagram(spec: QuestionVisualSpec): string {
+  const width = 640;
+  const height = spec.variant === "cycle_flow" ? 420 : 330;
+  const marker = `qv-flow-${escapeXml(spec.visualId || "default")}`;
+  const node = (x: number, y: number, label: string, index: number) => `<rect x="${x - 62}" y="${y - 25}" width="124" height="50" rx="12" class="qv-flow-node"/><text x="${x}" y="${y + 5}" class="qv-flow-text" text-anchor="middle">${escapeXml(label || `المرحلة ${index + 1}`)}</text>`;
+  if (spec.variant === "cycle_flow") {
+    const cx = 320;
+    const cy = 220;
+    const radius = 125;
+    const positions = spec.labels.map((_, index) => {
+      const angle = -Math.PI / 2 + (index / spec.labels.length) * Math.PI * 2;
+      return { x: cx + Math.cos(angle) * radius, y: cy + Math.sin(angle) * radius };
+    });
+    const arrows = positions.map((position, index) => {
+      const next = positions[(index + 1) % positions.length]!;
+      return `<line x1="${position.x}" y1="${position.y}" x2="${next.x}" y2="${next.y}" class="qv-flow-arrow" marker-end="url(#${marker})"/>`;
+    }).join("");
+    return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}"><defs><marker id="${marker}" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" class="qv-arrow-fill"/></marker></defs><text x="${width / 2}" y="28" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text>${arrows}${positions.map((position, index) => node(position.x, position.y, spec.labels[index] ?? "", index)).join("")}</svg>`;
+  }
+  const positions = spec.labels.map((_, index) => ({ x: 90 + index * (460 / Math.max(1, spec.labels.length - 1)), y: 175 }));
+  const arrows = positions.slice(0, -1).map((position, index) => {
+    const next = positions[index + 1]!;
+    return `<line x1="${position.x + 64}" y1="${position.y}" x2="${next.x - 70}" y2="${next.y}" class="qv-flow-arrow" marker-end="url(#${marker})"/>${spec.annotations[index] ? `<text x="${(position.x + next.x) / 2}" y="${position.y - 16}" class="qv-annotation" text-anchor="middle">${escapeXml(spec.annotations[index]!)}</text>` : ""}`;
+  }).join("");
+  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}"><defs><marker id="${marker}" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" class="qv-arrow-fill"/></marker></defs><text x="${width / 2}" y="28" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text>${arrows}${positions.map((position, index) => node(position.x, position.y, spec.labels[index] ?? "", index)).join("")}</svg>`;
+}
+
 function circuitSymbol(component: CircuitComponent, x: number, y: number): string {
   switch (component) {
     case "battery":
@@ -404,6 +775,18 @@ export function renderQuestionVisualSvg(spec: QuestionVisualSpec): string {
       ? renderBarChart(spec)
       : spec.type === "pressure_diagram"
         ? renderPressureDiagram(spec)
-        : renderCircuitDiagram(spec);
+        : spec.type === "circuit_diagram"
+          ? renderCircuitDiagram(spec)
+          : spec.type === "electrostatic_diagram"
+            ? renderElectrostaticDiagram(spec)
+            : spec.type === "data_table"
+              ? renderDataTable(spec)
+              : spec.type === "instrument_scale"
+                ? renderInstrumentScale(spec)
+                : spec.type === "ray_diagram"
+                  ? renderRayDiagram(spec)
+                  : spec.type === "force_diagram"
+                    ? renderForceDiagram(spec)
+                    : renderFlowDiagram(spec);
   return `<figure class="question-visual question-visual-${spec.type}" data-visual-id="${escapeXml(spec.visualId ?? "")}" data-visual-variant="${escapeXml(spec.variant ?? "default")}">${svg}<figcaption>${escapeXml(spec.altText)}</figcaption></figure>`;
 }

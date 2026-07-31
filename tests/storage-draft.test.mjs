@@ -106,7 +106,7 @@ test("يحافظ على مرحلة الخطة لمسودة منشأة بالإص
     sourceReferences: twoLessonReferences(),
     sourceRetrievalVersion: SOURCE_RETRIEVAL_VERSION,
     currentStep: 3,
-    generationVersion: "source-grounded-policy-ai-10-strict-lesson-scope",
+    generationVersion: "source-grounded-policy-ai-12-advanced-visuals",
     plan: [{ id: "plan-1", proposals: [] }],
   });
   assert.ok(draft);

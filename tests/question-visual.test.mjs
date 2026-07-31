@@ -110,3 +110,108 @@ test("ينوّع الرسومات الحتمية بين المفردات ولا 
   assert.notEqual(renderQuestionVisualSvg(first), renderQuestionVisualSvg(second));
   assert.match(renderQuestionVisualSvg(third), /مساحة التلامس A|القوة F/);
 });
+
+test("يرسم مخطط كهرباء ساكنة دون صور حرة", () => {
+  const electrostatic = {
+    ...emptyQuestionVisualSpec(),
+    type: "electrostatic_diagram",
+    variant: "charge_transfer",
+    title: "شحن مسطرة بالدلك",
+    altText: "مسطرة بلاستيكية تدلك بقطعة قماش ثم تقرب من قصاصات ورق",
+    labels: ["المسطرة البلاستيكية", "قطعة القماش"],
+    values: [1],
+    annotations: ["اتجاه الدلك"],
+  };
+  const svg = renderQuestionVisualSvg(parseQuestionVisualSpec(electrostatic, "electrostatic_diagram"));
+  assert.match(svg, /qv-rod/);
+  assert.match(svg, /qv-paper-piece/);
+  assert.match(svg, /اتجاه الدلك/);
+  assert.equal(questionVisualTypeLabel("electrostatic_diagram"), "مخطط كهرباء ساكنة ثنائي الأبعاد");
+});
+
+test("يرسم منحنيين للمقارنة مع مفتاح واضح", () => {
+  const visual = {
+    ...emptyQuestionVisualSpec(),
+    type: "line_graph",
+    variant: "multi_series",
+    title: "مقارنة منحنيين",
+    altText: "رسم خطي يقارن حالتين",
+    xAxisLabel: "الزمن",
+    xAxisUnit: "s",
+    yAxisLabel: "درجة الحرارة",
+    yAxisUnit: "°C",
+    xMin: 0,
+    xMax: 3,
+    yMin: 0,
+    yMax: 60,
+    series: [
+      { label: "العينة أ", points: [{ x: 0, y: 20, label: "" }, { x: 1, y: 30, label: "" }, { x: 2, y: 40, label: "" }] },
+      { label: "العينة ب", points: [{ x: 0, y: 20, label: "" }, { x: 1, y: 26, label: "" }, { x: 2, y: 31, label: "" }] },
+    ],
+  };
+  const svg = renderQuestionVisualSvg(parseQuestionVisualSpec(visual, "line_graph"));
+  assert.match(svg, /العينة أ/);
+  assert.match(svg, /العينة ب/);
+  assert.match(svg, /qv-series-1/);
+});
+
+test("يرسم جدول بيانات بخلية ناقصة وتدريج جهاز قياس", () => {
+  const table = {
+    ...emptyQuestionVisualSpec(),
+    type: "data_table",
+    variant: "table_completion",
+    title: "نتائج تجربة",
+    altText: "جدول قراءات مع قيمة ناقصة",
+    tableColumns: ["الزمن (s)", "المسافة (m)"],
+    tableRows: ["1", "2", "3"],
+    tableCells: [["0", "0"], ["1", "2"], ["2", "4"]],
+    hiddenCells: ["r1c1"],
+  };
+  const scale = {
+    ...emptyQuestionVisualSpec(),
+    type: "instrument_scale",
+    variant: "thermometer",
+    title: "قراءة ميزان حرارة",
+    altText: "ميزان حرارة بقراءة محددة",
+    labels: ["ميزان حرارة", "°C"],
+    values: [-10, 100, 10, 40],
+  };
+  assert.match(renderQuestionVisualSvg(parseQuestionVisualSpec(table, "data_table")), /qv-table-missing/);
+  assert.match(renderQuestionVisualSvg(parseQuestionVisualSpec(scale, "instrument_scale")), /qv-instrument-fill/);
+  assert.throws(() => parseQuestionVisualSpec({ ...table, tableCells: [["0"]] }, "data_table"), /عدد خلايا|بيانات مكتملة/);
+});
+
+test("يرسم مخططات الأشعة والقوى والعمليات بصيغة SVG حتمية", () => {
+  const ray = {
+    ...emptyQuestionVisualSpec(),
+    type: "ray_diagram",
+    variant: "reflection",
+    title: "انعكاس الضوء",
+    altText: "شعاع ساقط ومنعكس عند مرآة",
+    values: [40, 40],
+  };
+  const force = {
+    ...emptyQuestionVisualSpec(),
+    type: "force_diagram",
+    variant: "free_body",
+    title: "مخطط جسم حر",
+    altText: "جسم تؤثر عليه أربع قوى",
+    labels: ["الجسم"],
+    vectors: [
+      { label: "الوزن", x: 0, y: 0, dx: 0, dy: 80, magnitude: 10 },
+      { label: "رد الفعل", x: 0, y: 0, dx: 0, dy: -80, magnitude: 10 },
+    ],
+  };
+  const flow = {
+    ...emptyQuestionVisualSpec(),
+    type: "flow_diagram",
+    variant: "linear_flow",
+    title: "تسلسل عملية",
+    altText: "ثلاث مراحل مترابطة بأسهم",
+    labels: ["البداية", "المعالجة", "الناتج"],
+    annotations: ["ثم", "ينتج"],
+  };
+  assert.match(renderQuestionVisualSvg(parseQuestionVisualSpec(ray, "ray_diagram")), /qv-mirror/);
+  assert.match(renderQuestionVisualSvg(parseQuestionVisualSpec(force, "force_diagram")), /qv-force-arrow/);
+  assert.match(renderQuestionVisualSvg(parseQuestionVisualSpec(flow, "flow_diagram")), /qv-flow-node/);
+});

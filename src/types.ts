@@ -7,8 +7,9 @@ export type ItemDifficulty = "منخفض" | "متوسط" | "مرتفع";
 export type ExamTitleOption = "الاختبار القصير الأول" | "الاختبار القصير الثاني" | "الاختبار النهائي";
 export type AssessmentType = "اختبار قصير رسمي" | "امتحان نهاية الفصل الدراسي";
 export type QuestionDesignPattern = "مفهومي" | "سياقي" | "حسابي" | "بيانات" | "استقصائي" | "مقارنة";
-export type QuestionVisualType = "none" | "line_graph" | "bar_chart" | "pressure_diagram" | "circuit_diagram";
-export type QuestionVisualVariant = "default" | "submerged_object" | "depth_comparison" | "force_area" | "liquid_column" | "series_circuit" | "measurement_circuit" | "trend" | "comparison";
+export type QuestionVisualType = "none" | "line_graph" | "bar_chart" | "pressure_diagram" | "circuit_diagram" | "electrostatic_diagram" | "data_table" | "instrument_scale" | "ray_diagram" | "force_diagram" | "flow_diagram";
+export type QuestionVisualVariant = "default" | "submerged_object" | "depth_comparison" | "force_area" | "liquid_column" | "series_circuit" | "measurement_circuit" | "charge_transfer" | "attraction_repulsion" | "electric_field" | "trend" | "comparison" | "multi_series" | "table_completion" | "table_comparison" | "thermometer" | "burette" | "measuring_cylinder" | "meter_scale" | "reflection" | "refraction" | "converging_lens" | "prism" | "free_body" | "balanced_forces" | "moments" | "linear_flow" | "cycle_flow" | "state_change";
+export type QuestionVisualRole = "read" | "calculate" | "interpret" | "compare" | "complete" | "draw" | "evaluate";
 export type CircuitComponent = "battery" | "switch_open" | "switch_closed" | "lamp" | "resistor" | "ammeter" | "voltmeter";
 
 export interface QuestionVisualPoint {
@@ -17,11 +18,26 @@ export interface QuestionVisualPoint {
   label: string;
 }
 
+export interface QuestionVisualSeries {
+  label: string;
+  points: QuestionVisualPoint[];
+}
+
+export interface QuestionVisualVector {
+  label: string;
+  x: number;
+  y: number;
+  dx: number;
+  dy: number;
+  magnitude: number;
+}
+
 export interface QuestionVisualSpec {
   type: QuestionVisualType;
   visualId?: string;
   variant?: QuestionVisualVariant;
   purpose?: string;
+  role?: QuestionVisualRole;
   title: string;
   altText: string;
   xAxisLabel: string;
@@ -33,10 +49,16 @@ export interface QuestionVisualSpec {
   yMin: number;
   yMax: number;
   points: QuestionVisualPoint[];
+  series: QuestionVisualSeries[];
   labels: string[];
   values: number[];
   components: CircuitComponent[];
   annotations: string[];
+  tableColumns: string[];
+  tableRows: string[];
+  tableCells: string[][];
+  hiddenCells: string[];
+  vectors: QuestionVisualVector[];
 }
 
 export interface LearningOutcome {

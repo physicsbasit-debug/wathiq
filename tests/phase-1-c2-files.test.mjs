@@ -11,7 +11,7 @@ const edge = await readFile(new URL("../supabase/functions/generate-source-quest
 const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 
 test("يثبت إصدار C2 ونطاق التجميع والاعتماد والتصدير", () => {
-  assert.match(pkg.version, /^0\.0\.(?:37|38|39|40|41|42)$/);
+  assert.match(pkg.version, /^0\.0\.(?:37|38|39|40|41|42|43|44)$/);
   assert.match(pkg.description, /اعتماد|تصدير/);
   assert.match(app, /interleaveAssessmentItems/);
   assert.match(app, /اعتماد الاختبار/);
@@ -27,7 +27,7 @@ test("يوفر تصدير الطالب ونموذج الإجابة إلى Word �
   assert.match(exporter, /prepareWordHtml/);
   assert.match(exporter, /canvas\.toDataURL\("image\/png"\)/);
   assert.match(exporter, /SVG_RASTER_STYLES/);
-  assert.match(exporter, /popup\.print\(\)/);
+  assert.match(exporter, /frameWindow\.print\(\)/);
   assert.match(exporter, /dir="rtl"/);
   assert.match(styles, /Phase 1-C2/);
 });

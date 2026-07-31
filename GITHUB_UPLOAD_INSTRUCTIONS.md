@@ -1,22 +1,74 @@
-# رفع Phase 1-C2 Fix 6
+# تعليمات رفع حزمة الاستعادة الشاملة — Phase 1-C3
+
+هذه الحزمة مخصصة مباشرة لنسخة `main` الحالية بالإصدار `0.0.42`، وتجمع في رفع واحد:
+
+- إصلاحات Phase 1-C2 Fix 7 الخاصة بالمرئيات وWord وPDF والاختيار من متعدد.
+- محرك Phase 1-C3 للمرئيات التقويمية المتقدمة.
+
+لا يلزم رفع Fix 7 منفردًا قبلها.
 
 ## اسم الفرع
-`phase-1c2-fix6-page-scoped-lesson-evidence`
+
+```text
+phase-1c3-recovery-from-fix6
+```
 
 ## رسالة الحفظ
-`fix: trust verified lesson page scopes for evidence`
 
-## خطوات الرفع
-1. أنشئ الفرع بالاسم أعلاه من آخر `main` بعد Fix 5.
-2. فك حزمة الملفات المعدلة وارفع محتوياتها إلى جذر المستودع مع الاستبدال.
-3. انتظر GitHub Actions حتى تصبح خضراء.
-4. ادمج الفرع في `main` وانتظر GitHub Pages.
-5. افتح في GitHub الملف `supabase/functions/generate-source-questions/index.ts` عبر **Raw** وانسخه كاملًا.
-6. استبدل كود وظيفة `generate-source-questions` في محرر Supabase واضغط **Deploy function**.
-7. نفّذ `Ctrl + F5`، ثم افتح المسودة نفسها واضغط **التالي** لاستكمال المفردات الناقصة فقط.
+```text
+feat: apply visual export fixes and advanced assessment visuals
+```
+
+## الرفع والدمج
+
+1. أنشئ الفرع أعلاه من `main` الحالية.
+2. فك حزمة `changed_files_only`.
+3. ارفع **محتويات الحزمة** إلى جذر مستودع واثق مع الاستبدال.
+4. لا ترفع ملف ZIP نفسه داخل المستودع.
+5. انتظر GitHub Actions؛ النتيجة المتوقعة:
+
+```text
+288 passed
+0 failed
+```
+
+6. بعد ظهور اللون الأخضر، ادمج الفرع في `main`.
+7. انتظر اكتمال GitHub Pages.
+
+## نشر وظيفة Supabase
+
+بعد الدمج فقط:
+
+1. افتح الملف:
+
+```text
+supabase/functions/generate-source-questions/index.ts
+```
+
+2. اضغط **Raw** وانسخ محتواه كاملًا.
+3. افتح وظيفة `generate-source-questions` في Supabase.
+4. استبدل الكود كاملًا واضغط **Deploy function**.
+
+## الاختبار الفعلي
+
+1. نفذ `Ctrl + F5`.
+2. أنشئ اختبارًا جديدًا لأن إصدار عقد التوليد أصبح:
+
+```text
+source-grounded-policy-ai-12-advanced-visuals
+```
+
+3. تحقق من:
+   - ظهور الرسوم والجداول المناسبة داخل الأسئلة.
+   - عدم ظهور حروف أ، ب، ج، د بجانب دوائر الاختيار.
+   - تنزيل Word.
+   - طباعة PDF.
+   - ظهور المرئيات في ورقة الطالب ونموذج الإجابة.
 
 ## لا يلزم
+
+- لا حزمة Fix 7 منفصلة.
+- لا SQL.
+- لا أسرار جديدة.
 - لا إعادة فهرسة.
-- لا SQL أو أسرار جديدة.
 - لا تغيير لمفتاح Gemini.
-- لا حذف للمفردات المكتملة في المسودة.
