@@ -1,16 +1,28 @@
-# Phase 2-A Fix 3 — Changed Files Manifest
+# Phase 2-A Fix 4 — Changed Files Manifest
 
-تُرفع الملفات التالية فوق Phase 2-A Fix 2 (الإصدار التشغيلي `0.0.50`):
+تُرفع الملفات التالية فوق Phase 2-A Fix 3 بالإصدار التشغيلي `0.0.50`:
 
 - CHANGED_FILES_MANIFEST.txt
 - GITHUB_UPLOAD_INSTRUCTIONS.md
-- PHASE_2_A_FIX3_TEST_REPORT.md
+- PHASE_2_A_FIX4_TEST_REPORT.md
 - README.md
-- docs/PHASE_2_A_FIX3_VISUAL_REFERENCE_NORMALIZATION.md
+- docs/PHASE_2_A_FIX4_QUESTION_VISUAL_SEMANTIC_BINDING.md
+- src/assessment-generation-v2.ts
+- src/question-generation.ts
+- src/question-visual.ts
+- src/types.ts
 - supabase/functions/generate-source-questions/index.ts
 - tests/gemini-generate-content-edge.test.mjs
-- tests/phase-1-c2-fix7-files.test.mjs
-- tests/phase-2-a-fix3-visual-reference-normalization.test.mjs
+- tests/phase-2-a-fix4-question-visual-semantic-binding.test.mjs
+
+## ما يعالجه الإصلاح
+
+- تنظيف معرفات التخطيط الداخلية مثل `visual-plan-*` من ورقة الطالب.
+- ربط السؤال دلاليًا بالرسم أو الجدول والبيانات اللازمة للحل.
+- بناء جداول متخصصة حسب هدف التعلم بدل إعادة تدوير جدول عام.
+- رفض الإشارة إلى صفوف أو قياسات غير موجودة.
+- إضافة رمز المحرك إلى مخططات الدوائر عند ورود محرك في السياق.
+- منح محرك V2 محاولة إصلاح ثالثة قبل إظهار الفشل.
 
 ## خارج النطاق
 
@@ -18,6 +30,6 @@
 - لا GitHub workflow.
 - لا أسرار أو `.env`.
 - لا إعادة فهرسة.
-- لا تعديل على Word أو PDF أو تخزين الصور.
-- لا تغيير لعقد التوليد `source-grounded-policy-ai-17-whole-exam-v2`.
+- لا تغيير في Word أو PDF أو تخزين الصور.
+- لا تغيير للإصدار `0.0.50` أو عقد التوليد `source-grounded-policy-ai-17-whole-exam-v2`.
 - `dist/` يُبنى تلقائيًا ولا يدخل حزمة الملفات المعدلة فقط.

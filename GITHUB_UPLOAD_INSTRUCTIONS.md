@@ -1,42 +1,41 @@
-# تعليمات رفع Phase 2-A Fix 3 — تطبيع إحالة الرسوم
+# تعليمات رفع Phase 2-A Fix 4 — الربط الدلالي للسؤال والمرئيات
 
-تُرفع الحزمة فوق نسخة واثق **Phase 2-A Fix 2** بالإصدار التشغيلي `0.0.50`.
+تُرفع الحزمة فوق نسخة واثق **Phase 2-A Fix 3** بالإصدار التشغيلي `0.0.50`.
 
 ## اسم الفرع
 
 ```text
-phase-2a-fix3-visual-reference-normalization
+phase-2a-fix4-question-visual-semantic-binding
 ```
 
 ## رسالة الحفظ
 
 ```text
-fix: normalize visual question references
+fix: bind generated questions to their visuals and data
 ```
 
 ## الخطوات
 
-1. أنشئ الفرع من `main` بعد التأكد أن الإصدار الحالي `0.0.50` وأن Fix 1 وFix 2 مدمجان.
+1. أنشئ الفرع من `main` بعد التأكد أن Phase 2-A Fix 3 مدمج.
 2. فك حزمة `changed_files_only`.
 3. ارفع محتوياتها إلى جذر المستودع مع الاستبدال.
 4. لا ترفع ملف ZIP نفسه.
-5. انتظر GitHub Actions، والنتيجة المطلوبة:
+5. انتظر GitHub Actions. النتيجة المطلوبة:
 
 ```text
-361 passed
+371 passed
 0 failed
 ```
 
 6. بعد اللون الأخضر ادمج الفرع.
-7. أعد نشر وظيفة Supabase:
+7. أعد نشر:
 
 ```text
 supabase/functions/generate-source-questions/index.ts
 ```
 
-
-8. نفذ `Ctrl + F5` بعد اكتمال نشر GitHub Pages.
-9. افتح المسودة نفسها واضغط **التالي**؛ لا حاجة إلى إنشاء اختبار جديد.
+8. نفذ `Ctrl + F5` بعد نشر GitHub Pages.
+9. أنشئ اختبارًا قصيرًا جديدًا بمحرك **تصميم الاختبار كاملًا** لاختبار الربط الجديد من البداية.
 
 ## لا يلزم
 
@@ -44,4 +43,4 @@ supabase/functions/generate-source-questions/index.ts
 - لا سر جديد.
 - لا إعادة فهرسة.
 - لا رفع دليل المعلم.
-- لا تغيير في نموذج Gemini أو الصور.
+- لا تعديل إعدادات Gemini.

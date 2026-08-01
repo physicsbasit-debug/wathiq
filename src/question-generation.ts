@@ -168,6 +168,16 @@ export function shouldRequireCalculationWorking(
   return questionForm === "حسابي" && Number.isFinite(marks) && marks >= 2;
 }
 
+const INTERNAL_GENERATION_TOKEN_PATTERN = /\(?\b(?:visual-plan|visual_item|blueprint-item|plan-item)[-_]?\d+\b\)?/giu;
+
+export function sanitizeGeneratedQuestionText(value: string): string {
+  return value
+    .replace(INTERNAL_GENERATION_TOKEN_PATTERN, " ")
+    .replace(/\(\s*\)/gu, " ")
+    .replace(/\s+([،؛:,.!?؟])/gu, "$1")
+    .replace(/\s{2,}/gu, " ")
+    .trim();
+}
 
 function safeExternalUrl(value: string): string {
   if (!value) return "";
@@ -182,15 +192,15 @@ function safeExternalUrl(value: string): string {
 function parseAlternative(value: unknown, expected: QuestionGenerationItem): GeneratedAlternative {
   const record = asRecord(value);
   if (!record) throw new Error("استجابة مولد الأسئلة تحتوي بديلًا غير صالح.");
-  const stimulus = typeof record.stimulus === "string" ? record.stimulus.trim() : "";
-  const text = typeof record.text === "string" ? record.text.trim() : "";
+  const stimulus = typeof record.stimulus === "string" ? sanitizeGeneratedQuestionText(record.stimulus) : "";
+  const text = typeof record.text === "string" ? sanitizeGeneratedQuestionText(record.text) : "";
   const options = Array.isArray(record.options)
-    ? record.options.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean)
+    ? record.options.filter((item): item is string => typeof item === "string").map((item) => sanitizeGeneratedQuestionText(item)).filter(Boolean)
     : [];
-  const answer = typeof record.answer === "string" ? record.answer.trim() : "";
-  const rationale = typeof record.rationale === "string" ? record.rationale.trim() : "";
+  const answer = typeof record.answer === "string" ? sanitizeGeneratedQuestionText(record.answer) : "";
+  const rationale = typeof record.rationale === "string" ? sanitizeGeneratedQuestionText(record.rationale) : "";
   const markScheme = Array.isArray(record.markScheme)
-    ? record.markScheme.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean)
+    ? record.markScheme.filter((item): item is string => typeof item === "string").map((item) => sanitizeGeneratedQuestionText(item)).filter(Boolean)
     : [];
   const questionForm = isQuestionDesignPattern(record.questionForm) ? record.questionForm : null;
   const workingRequired = shouldRequireCalculationWorking(questionForm ?? expected.styleTarget, expected.marks);

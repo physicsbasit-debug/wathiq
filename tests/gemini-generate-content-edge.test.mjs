@@ -55,6 +55,8 @@ async function loadEdgeHelpers() {
     findGeneratedImagePart,
     fixedVisualContainsCalculationData,
     normalizeVisualQuestionReference,
+    sanitizeGeneratedDisplayText,
+    validateVisualSemanticBinding,
   };\n`;
 
   const javascript = ts.transpileModule(source, {
@@ -1071,4 +1073,80 @@ test("يختار مطبع الإحالة عبارة مناسبة لكل نوع �
   const plain = helpers.normalizeVisualQuestionReference("", "عرّف القوة.", "none");
   assert.equal(plain.changed, false);
   assert.equal(plain.text, "عرّف القوة.");
+});
+
+
+test("يبني جدول الموصلات من هدف التعلم لا من كلمة الكهرباء العامة", () => {
+  const item = {
+    planItemId: "P-CONDUCTOR", questionType: "إجابة قصيرة", cognitiveLevel: "تطبيق", marks: 1,
+    sourceReferenceId: "R-CONDUCTOR", lessonLabel: "الموصلات والعوازل",
+    outcomeLabel: "يصنف مواد مختلفة إلى موصلات وعوازل من نتيجة مرور التيار",
+    styleTarget: "بيانات", visualTarget: "data_table", scenarioTarget: "laboratory_setup",
+    stimulusTarget: "data_table", skillTarget: "interpret", diversityKey: "visual-plan-4",
+  };
+  const request = {
+    generationMode: "whole_exam_v2", subject: "الفيزياء", topic: "الكهرباء",
+    references: [{ id: "R-CONDUCTOR", content: "النحاس موصل جيد بينما البلاستيك عازل.", lessonTopic: "الموصلات والعوازل" }],
+  };
+  const visual = helpers.buildServerOwnedVisualSpec(item, request);
+  assert.equal(visual.type, "data_table");
+  assert.match(visual.title, /التوصيل الكهربائي/);
+  assert.deepEqual([...visual.tableColumns], ["المادة", "نتيجة اختبار مرور التيار"]);
+  assert.match(visual.tableCells.flat().join(" "), /النحاس|الحديد/);
+});
+
+test("يرفض جدولًا لا تتعامل معه صياغة السؤال أو إجابته", () => {
+  const references = [{
+    id: "R-BIND", sourceId: "student-book", sourceTitle: "كتاب الطالب", sourceKind: "كتاب الطالب",
+    pageFrom: 10, pageTo: 10, content: "النحاس والألومنيوم موصلان للكهرباء، والبلاستيك والخشب عازلان.",
+    lessonTopic: "الموصلات والعوازل", lessonScopeMode: "page-range", lessonPageFrom: 10, lessonPageTo: 10,
+  }];
+  const catalog = helpers.buildEvidenceCatalog(references);
+  const request = {
+    generationMode: "whole_exam_v2", subject: "الفيزياء", topic: "الكهرباء", references,
+    items: [{
+      planItemId: "P-BIND", questionType: "إجابة قصيرة", cognitiveLevel: "تطبيق", marks: 1,
+      sourceReferenceId: "R-BIND", lessonLabel: "الموصلات والعوازل",
+      outcomeLabel: "يصنف مواد مختلفة إلى موصلات وعوازل من نتيجة مرور التيار",
+      styleTarget: "بيانات", visualTarget: "data_table", scenarioTarget: "laboratory_setup",
+      stimulusTarget: "data_table", skillTarget: "interpret", diversityKey: "visual-plan-4",
+    }],
+  };
+  const payload = { items: [{
+    planItemId: "P-BIND", alternatives: [{
+      stimulus: "", text: "بالاستعانة بالجدول المرفق، احسب عدد الإلكترونات التي اكتسبها بالون مشحون.",
+      options: [], answer: "20 إلكترونًا", rationale: "تقسم شحنة الجسم على شحنة الإلكترون.",
+      markScheme: ["حساب عدد الإلكترونات."], questionForm: "بيانات", workingRequired: false,
+      sourceEvidenceId: catalog.fragments[0].id, enrichmentEvidenceId: "", needsReview: false,
+    }],
+  }] };
+  assert.throws(
+    () => helpers.validateAndHydrateGeneratedPayload(payload, request, catalog),
+    /لا يستخدم معنى أعمدة الجدول أو بياناته/,
+  );
+});
+
+test("ينظف معرف visual-plan داخل مسار Edge قبل إرجاع السؤال", () => {
+  assert.equal(
+    helpers.sanitizeGeneratedDisplayText("يوضح الشكل (visual-plan-5) شحن جسم بالدلك."),
+    "يوضح الشكل شحن جسم بالدلك.",
+  );
+});
+
+test("يضع محركًا فعليًا في دائرة سياق العربة الكهربائية", () => {
+  const item = {
+    planItemId: "P-MOTOR", questionType: "إجابة قصيرة", cognitiveLevel: "استدلال", marks: 2,
+    sourceReferenceId: "R-MOTOR", lessonLabel: "الدوائر الكهربائية",
+    outcomeLabel: "يقيم دائرة تحكم في محرك عربة كهربائية ويقترح تحسينًا",
+    styleTarget: "استقصائي", visualTarget: "circuit_diagram", scenarioTarget: "shopping_trolley",
+    stimulusTarget: "decision_case", skillTarget: "evaluate", diversityKey: "visual-plan-5",
+  };
+  const request = {
+    generationMode: "whole_exam_v2", subject: "الفيزياء", topic: "الدوائر الكهربائية",
+    references: [{ id: "R-MOTOR", content: "يستخدم المحرك الكهربائي في تحويل الطاقة الكهربائية إلى حركة.", lessonTopic: "الدوائر الكهربائية" }],
+  };
+  const visual = helpers.buildServerOwnedVisualSpec(item, request);
+  assert.equal(visual.type, "circuit_diagram");
+  assert.equal(visual.components.includes("motor"), true);
+  assert.match(visual.altText, /محرك/);
 });

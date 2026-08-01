@@ -72,6 +72,7 @@ export const CIRCUIT_COMPONENTS: readonly CircuitComponent[] = [
   "switch_closed",
   "lamp",
   "resistor",
+  "motor",
   "ammeter",
   "voltmeter",
 ];
@@ -391,7 +392,7 @@ export function validateQuestionVisualSpec(spec: QuestionVisualSpec): void {
       throw new Error("الدائرة الكهربائية تحتاج مكوّنين إلى سبعة مكونات.");
     }
     if (!spec.components.includes("battery")) throw new Error("الدائرة الكهربائية تحتاج بطارية.");
-    if (!spec.components.some((component) => component === "lamp" || component === "resistor")) {
+    if (!spec.components.some((component) => component === "lamp" || component === "resistor" || component === "motor")) {
       throw new Error("الدائرة الكهربائية تحتاج حملًا مثل مصباح أو مقاومة.");
     }
     return;
@@ -855,6 +856,8 @@ function circuitSymbol(component: CircuitComponent, x: number, y: number): strin
       return `<g transform="translate(${x} ${y})"><circle cx="0" cy="0" r="21" class="qv-component-fill"/><line x1="-14" y1="-14" x2="14" y2="14" class="qv-component"/><line x1="14" y1="-14" x2="-14" y2="14" class="qv-component"/></g>`;
     case "resistor":
       return `<g transform="translate(${x} ${y})"><rect x="-28" y="-12" width="56" height="24" class="qv-component-fill"/></g>`;
+    case "motor":
+      return `<g transform="translate(${x} ${y})"><circle cx="0" cy="0" r="23" class="qv-component-fill"/><text x="0" y="7" class="qv-meter" text-anchor="middle">M</text></g>`;
     case "ammeter":
       return `<g transform="translate(${x} ${y})"><circle cx="0" cy="0" r="21" class="qv-component-fill"/><text x="0" y="7" class="qv-meter" text-anchor="middle">A</text></g>`;
     case "voltmeter":
