@@ -40,7 +40,7 @@ type QuestionDesignPattern = "مفهومي" | "سياقي" | "حسابي" | "ب�
 type QuestionVisualType = "none" | "context_scene" | "line_graph" | "bar_chart" | "pressure_diagram" | "circuit_diagram" | "electrostatic_diagram" | "data_table" | "instrument_scale" | "ray_diagram" | "force_diagram" | "flow_diagram";
 type QuestionVisualVariant = "default" | "door_handle" | "playground_seesaw" | "wrench_tool" | "bicycle_brake" | "shopping_trolley" | "school_bag" | "water_tank" | "solar_panel" | "laboratory_setup" | "road_safety" | "submerged_object" | "depth_comparison" | "force_area" | "liquid_column" | "series_circuit" | "measurement_circuit" | "charge_transfer" | "attraction_repulsion" | "electric_field" | "trend" | "comparison" | "multi_series" | "table_completion" | "table_comparison" | "thermometer" | "burette" | "measuring_cylinder" | "meter_scale" | "reflection" | "refraction" | "converging_lens" | "prism" | "free_body" | "balanced_forces" | "moments" | "linear_flow" | "cycle_flow" | "state_change";
 type QuestionVisualRole = "read" | "calculate" | "interpret" | "compare" | "complete" | "draw" | "evaluate";
-type CircuitComponent = "battery" | "switch_open" | "switch_closed" | "lamp" | "resistor" | "ammeter" | "voltmeter";
+type CircuitComponent = "battery" | "switch_open" | "switch_closed" | "lamp" | "resistor" | "motor" | "ammeter" | "voltmeter";
 type QuestionScenarioTarget = "scientific_abstract" | "door_handle" | "playground_seesaw" | "wrench_tool" | "bicycle_brake" | "shopping_trolley" | "school_bag" | "water_tank" | "solar_panel" | "laboratory_setup" | "road_safety";
 type QuestionStimulusTarget = "concise_text" | "real_life_scene" | "scientific_diagram" | "data_table" | "graph" | "instrument" | "experiment" | "decision_case";
 type QuestionSkillTarget = "recognize" | "apply" | "calculate" | "interpret" | "compare" | "evaluate" | "investigate";
@@ -124,6 +124,29 @@ function normalizeVisualQuestionReference(
     changed: true,
     hasReference: hasExplicitVisualReference(hydratedText),
     prefix,
+  };
+}
+
+const INTERNAL_GENERATION_TOKEN_PATTERN = /\(?\b(?:visual-plan|visual_item|blueprint-item|plan-item)[-_]?\d+\b\)?/giu;
+
+function sanitizeGeneratedDisplayText(value: string): string {
+  return value
+    .replace(INTERNAL_GENERATION_TOKEN_PATTERN, " ")
+    .replace(/\(\s*\)/gu, " ")
+    .replace(/\s+([،؛:,.!?؟])/gu, "$1")
+    .replace(/\s{2,}/gu, " ")
+    .trim();
+}
+
+function sanitizeModelMarkScheme(value: ModelGeneratedAlternative["markScheme"]): ModelGeneratedAlternative["markScheme"] {
+  if (Array.isArray(value)) return value.map((point) => sanitizeGeneratedDisplayText(String(point ?? "")));
+  const record = asRecord(value);
+  if (!record) return value;
+  return {
+    point1: sanitizeGeneratedDisplayText(typeof record.point1 === "string" ? record.point1 : ""),
+    point2: sanitizeGeneratedDisplayText(typeof record.point2 === "string" ? record.point2 : ""),
+    point3: sanitizeGeneratedDisplayText(typeof record.point3 === "string" ? record.point3 : ""),
+    point4: sanitizeGeneratedDisplayText(typeof record.point4 === "string" ? record.point4 : ""),
   };
 }
 
@@ -947,7 +970,8 @@ async function generateAndValidate(request: GenerationRequest, requestId: string
   });
   let lastError: unknown = null;
   let repairFeedback = "";
-  for (let attempt = 1; attempt <= 2; attempt += 1) {
+  const maxAttempts = request.generationMode === "whole_exam_v2" ? 3 : 2;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
       const payload = await callGemini(request, evidenceCatalog, enrichment, attempt > 1, requestId, attempt, repairFeedback);
       try {
@@ -971,7 +995,7 @@ async function generateAndValidate(request: GenerationRequest, requestId: string
       }
     } catch (error) {
       lastError = error;
-      if (attempt === 2 || !isRetryableGenerationError(error) || isTransportRetryExhausted(error)) break;
+      if (attempt === maxAttempts || !isRetryableGenerationError(error) || isTransportRetryExhausted(error)) break;
       await delay(700);
     }
   }
@@ -2268,7 +2292,7 @@ function validateWholeExamGeneratedDiversity(items: GeneratedItem[]): void {
 }
 
 const VISUAL_TYPES: readonly QuestionVisualType[] = ["none", "context_scene", "line_graph", "bar_chart", "pressure_diagram", "circuit_diagram", "electrostatic_diagram", "data_table", "instrument_scale", "ray_diagram", "force_diagram", "flow_diagram"];
-const CIRCUIT_COMPONENTS: readonly CircuitComponent[] = ["battery", "switch_open", "switch_closed", "lamp", "resistor", "ammeter", "voltmeter"];
+const CIRCUIT_COMPONENTS: readonly CircuitComponent[] = ["battery", "switch_open", "switch_closed", "lamp", "resistor", "motor", "ammeter", "voltmeter"];
 
 function emptyVisualSpec(): QuestionVisualSpec {
   return {
@@ -2397,43 +2421,141 @@ function visualRoleForItem(item: GenerationItem): QuestionVisualRole {
   return item.cognitiveLevel === "تطبيق" ? "interpret" : "read";
 }
 
-function scientificTableProfile(context: string): {
+interface ScientificTableProfile {
   columns: string[];
   rows: string[];
   cells: string[][];
-} {
+  title: string;
+  purpose: string;
+  altText: string;
+  annotations: string[];
+  allowHiddenCell: boolean;
+}
+
+function scientificTableProfile(context: string, seed: number): ScientificTableProfile {
+  if (/(موصل|عازل|توصيل كهرب|مرور التيار.*ماد|مواد.*تيار)/u.test(context)) {
+    const materialSets = [
+      [["النحاس", "يمر"], ["الألومنيوم", "يمر"], ["البلاستيك", "لا يمر"], ["الخشب الجاف", "لا يمر"]],
+      [["الحديد", "يمر"], ["الجرافيت", "يمر"], ["المطاط", "لا يمر"], ["الزجاج", "لا يمر"]],
+    ];
+    return {
+      columns: ["المادة", "نتيجة اختبار مرور التيار"],
+      rows: ["1", "2", "3", "4"],
+      cells: materialSets[seed % materialSets.length]!,
+      title: "نتائج اختبار التوصيل الكهربائي",
+      purpose: "تصنيف المواد إلى موصلات وعوازل من نتائج اختبار مرور التيار",
+      altText: "جدول يعرض أسماء مواد مختلفة ونتيجة اختبار مرور التيار الكهربائي خلالها",
+      annotations: ["استند إلى اسم المادة ونتيجة الاختبار عند الإجابة"],
+      allowHiddenCell: false,
+    };
+  }
+  if (/(عدد الالكترون|شحنه.*الكترون|الكترون.*شحنه|اكتسب.*الكترون|فقد.*الكترون|بالون.*شحن)/u.test(context)) {
+    const electronCounts = [20, 25, 30, 40];
+    const count = electronCounts[seed % electronCounts.length]!;
+    const bodyCharge = Number((count * 1.6).toFixed(1));
+    return {
+      columns: ["الكمية", "القيمة"],
+      rows: ["1", "2"],
+      cells: [["شحنة الجسم", `−${bodyCharge} × 10⁻¹⁹ C`], ["شحنة الإلكترون", "−1.6 × 10⁻¹⁹ C"]],
+      title: "بيانات الشحنة الكهربائية",
+      purpose: "حساب عدد الإلكترونات من شحنة جسم وشحنة الإلكترون الواحد",
+      altText: "جدول يعرض شحنة جسم مشحون وشحنة الإلكترون الواحد بوحدة الكولوم",
+      annotations: ["عدد الإلكترونات = مقدار شحنة الجسم ÷ مقدار شحنة الإلكترون"],
+      allowHiddenCell: false,
+    };
+  }
+  if (/(زنبرك|استطاله|قانون هوك|حمل.*نابض|نابض)/u.test(context)) {
+    const k = [20, 25, 40][seed % 3]!;
+    const forces = [1, 2, 3, 4, 5];
+    return {
+      columns: ["القوة (N)", "الاستطالة (cm)"],
+      rows: ["1", "2", "3", "4", "5"],
+      cells: forces.map((force) => [String(force), (force * 100 / k).toFixed(1)]),
+      title: "القوة واستطالة الزنبرك",
+      purpose: "تحليل العلاقة بين القوة واستطالة زنبرك ضمن حد المرونة",
+      altText: "جدول يعرض قوى مختلفة والاستطالة المقابلة لكل قوة في زنبرك",
+      annotations: ["القوة بالنيوتن والاستطالة بالسنتيمتر"],
+      allowHiddenCell: true,
+    };
+  }
+  if (/(تسارع|قوه دفع|كتله.*قوه|قوه.*كتله)/u.test(context)) {
+    const mass = [4, 5, 8][seed % 3]!;
+    const forces = [8, 12, 16, 20, 24];
+    return {
+      columns: ["القوة المحصلة (N)", "الكتلة (kg)"],
+      rows: ["1", "2", "3", "4", "5"],
+      cells: forces.map((force) => [String(force), String(mass)]),
+      title: "قوة الدفع وكتلة الجسم",
+      purpose: "حساب التسارع من القوة المحصلة والكتلة باستخدام قانون نيوتن الثاني",
+      altText: "جدول يعرض خمس قيم للقوة المحصلة مع كتلة جسم ثابتة",
+      annotations: ["التسارع = القوة المحصلة ÷ الكتلة"],
+      allowHiddenCell: false,
+    };
+  }
   if (/(عزم|ارتكاز|ذراع القوه)/u.test(context)) {
+    const offset = seed % 4;
     return {
       columns: ["الموقف", "القوة (N)", "المسافة العمودية عن الارتكاز (m)"],
       rows: ["أ", "ب", "ج", "د"],
-      cells: [["فتح باب", "18", "0.75"], ["مفتاح ربط", "30", "0.25"], ["أرجوحة", "220", "1.2"], ["ذراع مكبح", "12", "0.08"]],
+      cells: [["فتح باب", String(18 + offset), "0.75"], ["مفتاح ربط", String(30 + offset * 2), "0.25"], ["أرجوحة", String(220 + offset * 10), "1.2"], ["ذراع مكبح", String(12 + offset), "0.08"]],
+      title: "القوة والمسافة عن محور الدوران",
+      purpose: "مقارنة عزوم قوى في مواقف حياتية مختلفة",
+      altText: "جدول يعرض القوة والمسافة العمودية عن محور الدوران لأربعة مواقف",
+      annotations: ["العزم = القوة × المسافة العمودية"],
+      allowHiddenCell: false,
     };
   }
   if (/(حرار|تبريد|تسخين|درجه)/u.test(context)) {
+    const start = 20 + (seed % 4);
     return {
       columns: ["الزمن (min)", "درجة الحرارة (°C)"],
       rows: ["1", "2", "3", "4", "5"],
-      cells: [["0", "22"], ["1", "31"], ["2", "39"], ["3", "46"], ["4", "51"]],
+      cells: [["0", String(start)], ["1", String(start + 9)], ["2", String(start + 17)], ["3", String(start + 24)], ["4", String(start + 29)]],
+      title: "تغير درجة الحرارة مع الزمن",
+      purpose: "قراءة نمط تغير درجة الحرارة أثناء تجربة",
+      altText: "جدول يعرض الزمن بالدقائق ودرجة الحرارة بالدرجة المئوية",
+      annotations: ["قارن مقدار التغير بين القياسات"],
+      allowHiddenCell: true,
     };
   }
-  if (/(جهد|تيار|مقاوم|كهرب)/u.test(context)) {
+  if (/(فرق الجهد|شده التيار|قانون اوم|مقاومه كهرب|جهد.*تيار|تيار.*جهد)/u.test(context)) {
+    const resistance = [5, 10, 20][seed % 3]!;
+    const voltages = [1, 2, 3, 4, 5];
     return {
       columns: ["فرق الجهد (V)", "شدة التيار (A)"],
       rows: ["1", "2", "3", "4", "5"],
-      cells: [["1.0", "0.20"], ["2.0", "0.40"], ["3.0", "0.60"], ["4.0", "0.80"], ["5.0", "1.00"]],
+      cells: voltages.map((voltage) => [voltage.toFixed(1), (voltage / resistance).toFixed(2)]),
+      title: "فرق الجهد وشدة التيار",
+      purpose: "تحليل العلاقة بين فرق الجهد وشدة التيار لمقاومة ثابتة",
+      altText: "جدول يعرض فرق الجهد وشدة التيار المقابلة في دائرة كهربائية",
+      annotations: ["الوحدات: الفولت والأمبير"],
+      allowHiddenCell: true,
     };
   }
   if (/(ضغط|عمق|سائل)/u.test(context)) {
+    const factor = [8, 10, 12][seed % 3]!;
+    const depths = [0.5, 1, 1.5, 2, 2.5];
     return {
       columns: ["العمق (m)", "الضغط (kPa)"],
       rows: ["1", "2", "3", "4", "5"],
-      cells: [["0.5", "5"], ["1.0", "10"], ["1.5", "15"], ["2.0", "20"], ["2.5", "25"]],
+      cells: depths.map((depth) => [depth.toFixed(1), String(depth * factor)]),
+      title: "العمق والضغط في سائل",
+      purpose: "تحليل أثر العمق في ضغط السائل",
+      altText: "جدول يعرض عمق نقاط مختلفة والضغط المقابل لها",
+      annotations: ["العمق بالمتر والضغط بالكيلوباسكال"],
+      allowHiddenCell: true,
     };
   }
+  const base = 2 + (seed % 5) * 0.3;
   return {
-    columns: ["رقم القياس", "القيمة"],
+    columns: ["رقم القياس", "القيمة المقاسة (وحدة)"],
     rows: ["1", "2", "3", "4", "5"],
-    cells: [["1", "2.1"], ["2", "3.0"], ["3", "4.2"], ["4", "5.1"], ["5", "6.0"]],
+    cells: Array.from({ length: 5 }, (_, index) => [String(index + 1), (base + index * 1.1).toFixed(1)]),
+    title: "نتائج قياسات تجربة",
+    purpose: "قراءة نمط قياسات علمية مرتبة",
+    altText: "جدول يعرض خمسة قياسات علمية متتابعة مع وحدتها",
+    annotations: ["استخدم القيم الظاهرة فقط"],
+    allowHiddenCell: true,
   };
 }
 
@@ -2460,8 +2582,10 @@ function buildServerOwnedVisualSpec(item: GenerationItem, request: GenerationReq
   if (item.visualTarget === "none") return emptyVisualSpec();
 
   const reference = referenceForVisual(item, request);
-  const context = normalizeVisualContext(`${request.subject} ${request.topic} ${item.lessonLabel} ${reference?.content ?? ""}`);
-  const seed = visualSeed(`${item.planItemId}|${item.lessonLabel}|${item.visualTarget}|${item.styleTarget}`);
+  const focusedContext = normalizeVisualContext(`${item.outcomeLabel} ${item.lessonLabel} ${SCENARIO_GUIDANCE[item.scenarioTarget]} ${STIMULUS_GUIDANCE[item.stimulusTarget]} ${SKILL_GUIDANCE[item.skillTarget]}`);
+  const broadContext = normalizeVisualContext(`${request.subject} ${request.topic} ${reference?.content ?? ""}`);
+  const context = `${focusedContext} ${broadContext}`.trim();
+  const seed = visualSeed(`${item.planItemId}|${item.lessonLabel}|${item.outcomeLabel}|${item.visualTarget}|${item.styleTarget}`);
   const titleSuffix = "";
   const visualId = `visual-${item.planItemId}`;
   const role = visualRoleForItem(item);
@@ -2496,9 +2620,9 @@ function buildServerOwnedVisualSpec(item: GenerationItem, request: GenerationReq
   }
 
   if (item.visualTarget === "data_table") {
-    const profile = scientificTableProfile(context);
-    const hiddenCells = item.styleTarget === "بيانات" || item.cognitiveLevel === "استدلال"
-      ? [`r${1 + (seed % 3)}c1`]
+    const profile = scientificTableProfile(context, seed);
+    const hiddenCells = profile.allowHiddenCell && (item.styleTarget === "بيانات" || item.cognitiveLevel === "استدلال")
+      ? [`r${1 + (seed % Math.max(1, Math.min(3, profile.rows.length - 1)))}c${Math.max(0, profile.columns.length - 1)}`]
       : [];
     return {
       ...emptyVisualSpec(),
@@ -2506,14 +2630,14 @@ function buildServerOwnedVisualSpec(item: GenerationItem, request: GenerationReq
       visualId,
       variant: hiddenCells.length ? "table_completion" : "table_comparison",
       role: hiddenCells.length ? "complete" : role,
-      purpose: hiddenCells.length ? "إكمال قيمة ناقصة ثم تفسير نمط البيانات" : "قراءة بيانات علمية ومقارنتها",
-      title: `جدول بيانات علمية${titleSuffix}`,
-      altText: "جدول منظم يعرض قياسات علمية، وقد يحتوي خلية واحدة يطلب من الطالب إكمالها",
+      purpose: hiddenCells.length ? `${profile.purpose}، مع إكمال قيمة واحدة ناقصة` : profile.purpose,
+      title: `${profile.title}${titleSuffix}`,
+      altText: profile.altText,
       tableColumns: profile.columns,
       tableRows: profile.rows,
       tableCells: profile.cells,
       hiddenCells,
-      annotations: ["استخدم عناوين الأعمدة والوحدات عند الإجابة"],
+      annotations: profile.annotations,
     };
   }
 
@@ -2670,7 +2794,7 @@ function buildServerOwnedVisualSpec(item: GenerationItem, request: GenerationReq
   if (item.visualTarget === "circuit_diagram") {
     const measurement = item.styleTarget === "بيانات" || item.styleTarget === "استقصائي" || item.cognitiveLevel === "استدلال";
     const components: CircuitComponent[] = ["battery", seed % 2 === 0 ? "switch_closed" : "switch_open"];
-    components.push(/مقاوم/u.test(context) ? "resistor" : "lamp");
+    components.push(/محرك|عربه كهربائي|دراجه كهربائي/u.test(context) ? "motor" : /مقاوم/u.test(context) ? "resistor" : "lamp");
     if (measurement) components.push("ammeter");
     return {
       ...emptyVisualSpec(),
@@ -2681,8 +2805,8 @@ function buildServerOwnedVisualSpec(item: GenerationItem, request: GenerationReq
       purpose: measurement ? "قراءة أو تحليل دائرة كهربائية مزودة بجهاز قياس" : "تحديد مكونات ومسار دائرة كهربائية بسيطة",
       title: `${measurement ? "دائرة قياس كهربائية" : "دائرة كهربائية بسيطة"}${titleSuffix}`,
       altText: measurement
-        ? "دائرة كهربائية تحتوي بطارية ومفتاحًا وحملًا وأميترًا"
-        : "دائرة كهربائية تحتوي بطارية ومفتاحًا وحملًا كهربائيًا",
+        ? `دائرة كهربائية تحتوي بطارية ومفتاحًا و${components.includes("motor") ? "محرك" : components.includes("resistor") ? "مقاومة" : "مصباح"} وأميترًا`
+        : `دائرة كهربائية تحتوي بطارية ومفتاحًا و${components.includes("motor") ? "محرك" : components.includes("resistor") ? "مقاومة" : "مصباح"}`,
       components,
       annotations: components.map((component) => ({
         battery: "بطارية",
@@ -2690,6 +2814,7 @@ function buildServerOwnedVisualSpec(item: GenerationItem, request: GenerationReq
         switch_closed: "مفتاح مغلق",
         lamp: "مصباح",
         resistor: "مقاومة",
+        motor: "محرك",
         ammeter: "أميتر",
         voltmeter: "فولتميتر",
       } as Record<CircuitComponent, string>)[component]),
@@ -2697,10 +2822,10 @@ function buildServerOwnedVisualSpec(item: GenerationItem, request: GenerationReq
   }
 
   if (item.visualTarget === "electrostatic_diagram") {
-    const variant: QuestionVisualVariant = item.styleTarget === "استقصائي" || /دلك|قماش|مسطره/u.test(context)
-      ? "charge_transfer"
-      : item.styleTarget === "مقارنة" || item.cognitiveLevel === "استدلال"
-        ? "attraction_repulsion"
+    const variant: QuestionVisualVariant = item.styleTarget === "مقارنة" || item.skillTarget === "compare" || /تجاذب|تنافر|شحنات متماثله|شحنات مختلفه/u.test(focusedContext)
+      ? "attraction_repulsion"
+      : item.styleTarget === "استقصائي" || item.skillTarget === "investigate" || /دلك|قماش|مسطره/u.test(focusedContext)
+        ? "charge_transfer"
         : "electric_field";
     if (variant === "charge_transfer") {
       return {
@@ -2874,7 +2999,135 @@ function fixedVisualContainsCalculationData(visual: QuestionVisualSpec): boolean
   if (visual.type === "pressure_diagram" && visual.variant === "force_area" && visual.role === "calculate") {
     return visual.values.length >= 2 && visual.values[0] > 0 && visual.values[1] > 0;
   }
+  if (visual.type === "data_table" && visual.role === "calculate") {
+    const visibleCells = visual.tableCells.flatMap((row, rowIndex) => row.map((_, columnIndex) => visibleTableCell(visual, rowIndex, columnIndex)));
+    const numericValues = visibleCells.flatMap((cell) => cell.match(/[0-9٠-٩]+(?:[.,][0-9٠-٩]+)?/gu) ?? []);
+    const unitMaterial = `${visual.tableColumns.join(" ")} ${visibleCells.join(" ")}`;
+    return numericValues.length >= 2 && /(N|kg|m|cm|s|V|A|C|Pa|J|W|نيوتن|كجم|متر|ثانيه|فولت|امبير|كولوم|باسكال)/u.test(unitMaterial);
+  }
   return true;
+}
+
+const VISUAL_SEMANTIC_STOP_WORDS = new Set([
+  "الشكل", "الرسم", "المخطط", "الجدول", "المشهد", "المرفق", "المرفقه", "بيانات", "قيم", "قيمه",
+  "قياس", "رقم", "الحاله", "استخدم", "بالاستعانه", "اعتمادا", "اجب", "السوال", "النتيجه", "علمي", "علميه",
+  "وحده", "الوحدات", "عنصر", "عناصر", "يوضح", "يعرض", "اقرا", "قراءه",
+]);
+
+function semanticTokens(value: string): Set<string> {
+  return new Set(normalizeForEvidence(value)
+    .split(/\s+/u)
+    .map(canonicalEvidenceToken)
+    .filter((token) => token.length >= 3 && !VISUAL_SEMANTIC_STOP_WORDS.has(token) && !/^\d+(?:[.,]\d+)?$/u.test(token)));
+}
+
+function semanticOverlap(left: Set<string>, right: Set<string>): number {
+  let count = 0;
+  for (const token of left) if (right.has(token)) count += 1;
+  return count;
+}
+
+function visualSemanticCorpus(visual: QuestionVisualSpec): string {
+  const componentNames: Record<CircuitComponent, string> = {
+    battery: "بطارية",
+    switch_open: "مفتاح مفتوح",
+    switch_closed: "مفتاح مغلق",
+    lamp: "مصباح",
+    resistor: "مقاومة",
+    motor: "محرك",
+    ammeter: "أميتر شدة التيار",
+    voltmeter: "فولتميتر فرق الجهد",
+  };
+  return [
+    visual.title,
+    visual.purpose,
+    visual.altText,
+    visual.xAxisLabel,
+    visual.yAxisLabel,
+    ...visual.labels,
+    ...visual.annotations,
+    ...visual.tableColumns,
+    ...visual.tableRows,
+    ...visual.tableCells.flat(),
+    ...visual.vectors.map((vector) => vector.label),
+    ...visual.components.map((component) => componentNames[component]),
+  ].join(" ");
+}
+
+function visibleTableCell(visual: QuestionVisualSpec, rowIndex: number, columnIndex: number): string {
+  return visual.hiddenCells.includes(`r${rowIndex}c${columnIndex}`) ? "" : (visual.tableCells[rowIndex]?.[columnIndex] ?? "");
+}
+
+function validateTableRowReferences(material: string, visual: QuestionVisualSpec): void {
+  const normalized = normalizeForEvidence(material);
+  const ordinalMap: Array<[RegExp, number]> = [
+    [/(?:القياس|الصف|الحاله)\s+(?:السادس|سادس)/u, 6],
+    [/(?:القياس|الصف|الحاله)\s+(?:السابع|سابع)/u, 7],
+    [/(?:القياس|الصف|الحاله)\s+(?:الثامن|ثامن)/u, 8],
+  ];
+  for (const [pattern, index] of ordinalMap) {
+    if (pattern.test(normalized) && index > visual.tableRows.length) {
+      throw retryableError(`السؤال يشير إلى صف أو قياس رقم ${index} غير موجود في الجدول المرفق.`);
+    }
+  }
+}
+
+function validateDataTableSemanticBinding(
+  alternative: ModelGeneratedAlternative,
+  markScheme: string[],
+  visual: QuestionVisualSpec,
+): void {
+  const material = `${alternative.stimulus} ${alternative.text} ${alternative.answer} ${alternative.rationale} ${markScheme.join(" ")}`;
+  validateTableRowReferences(material, visual);
+  const materialTokens = semanticTokens(material);
+  const tableCore = [visual.title, visual.purpose, ...visual.tableColumns, ...visual.tableCells.flat()].join(" ");
+  const tableTokens = semanticTokens(tableCore);
+  const overlap = semanticOverlap(materialTokens, tableTokens);
+  const visibleNumbers = visual.tableCells.flatMap((row, rowIndex) => row.flatMap((cell, columnIndex) => {
+    const value = visibleTableCell(visual, rowIndex, columnIndex);
+    return value.match(/[0-9٠-٩]+(?:[.,][0-9٠-٩]+)?/gu) ?? [];
+  }));
+  const materialNumbers = new Set(material.match(/[0-9٠-٩]+(?:[.,][0-9٠-٩]+)?/gu) ?? []);
+  const numericOverlap = visibleNumbers.some((number) => materialNumbers.has(number));
+  if (overlap < 1 && !numericOverlap) {
+    throw retryableError("السؤال لا يستخدم معنى أعمدة الجدول أو بياناته؛ أعد بناء السؤال والإجابة مباشرة من الجدول المرفق.");
+  }
+  if (visual.hiddenCells.length) {
+    const [hiddenKey] = visual.hiddenCells;
+    const match = /^r(\d+)c(\d+)$/u.exec(hiddenKey ?? "");
+    if (match) {
+      const expected = visual.tableCells[Number(match[1])]?.[Number(match[2])] ?? "";
+      const asksToComplete = /(اكمل|أكمل|احسب|اوجد|أوجد|توقع|استنتج|حدد القيمه الناقصه)/u.test(normalizeForEvidence(`${alternative.stimulus} ${alternative.text}`));
+      if (!asksToComplete || (expected && !normalizeForEvidence(`${alternative.answer} ${markScheme.join(" ")}`).includes(normalizeForEvidence(expected)))) {
+        throw retryableError("الجدول يحتوي خلية ناقصة لكن السؤال أو نموذج التصحيح لا يطلب إكمالها بالقيمة الصحيحة.");
+      }
+    }
+  }
+}
+
+function validateVisualSemanticBinding(
+  alternative: ModelGeneratedAlternative,
+  markScheme: string[],
+  visual: QuestionVisualSpec,
+): void {
+  if (visual.type === "none") return;
+  if (visual.type === "data_table") {
+    validateDataTableSemanticBinding(alternative, markScheme, visual);
+    return;
+  }
+  const material = `${alternative.stimulus} ${alternative.text} ${alternative.answer} ${alternative.rationale} ${markScheme.join(" ")}`;
+  const overlap = semanticOverlap(semanticTokens(material), semanticTokens(visualSemanticCorpus(visual)));
+  if (visual.type === "circuit_diagram") {
+    if (overlap < 1) throw retryableError("السؤال أو الإجابة لا يتعاملان مع أي مكوّن ظاهر في مخطط الدائرة المرفق.");
+    return;
+  }
+  if (["line_graph", "bar_chart", "instrument_scale"].includes(visual.type)) {
+    if (overlap < 1) throw retryableError("السؤال لا يستخدم المتغير أو الوحدة أو القراءة الظاهرة في المثير البصري المرفق.");
+    return;
+  }
+  if (["context_scene", "electrostatic_diagram", "pressure_diagram", "ray_diagram", "force_diagram", "flow_diagram"].includes(visual.type) && overlap < 1) {
+    throw retryableError("السؤال لا يرتبط دلاليًا بعناصر الرسم المرفق؛ أعد صياغته من محتوى الرسم نفسه.");
+  }
 }
 
 function validateAssessmentQuality(
@@ -2975,6 +3228,15 @@ function validateAndHydrateAlternative(
   if (alternative.questionForm !== requestedStyleTarget) {
     throw retryableError("مولد الأسئلة لم يلتزم بنمط السؤال المحدد في الخطة.");
   }
+  alternative = {
+    ...alternative,
+    stimulus: sanitizeGeneratedDisplayText(alternative.stimulus),
+    text: sanitizeGeneratedDisplayText(alternative.text),
+    options: alternative.options.map((option) => sanitizeGeneratedDisplayText(typeof option === "string" ? option : "")),
+    answer: sanitizeGeneratedDisplayText(alternative.answer),
+    rationale: sanitizeGeneratedDisplayText(alternative.rationale),
+    markScheme: sanitizeModelMarkScheme(alternative.markScheme),
+  };
   const visualReference = normalizeVisualQuestionReference(
     alternative.stimulus,
     alternative.text,
@@ -3001,6 +3263,7 @@ function validateAndHydrateAlternative(
   if (alternative.questionForm === "حسابي" && !fixedVisualContainsCalculationData(fixedVisual)) {
     throw retryableError("الرسم الحسابي لا يحتوي جميع القيم والوحدات اللازمة للحل.");
   }
+  validateVisualSemanticBinding(alternative, markScheme, fixedVisual);
   validateAssessmentQuality(alternative, scenarioTarget, stimulusTarget, skillTarget, diversityKey);
   if (questionType === "اختيار من متعدد") {
     const options = alternative.options.map((option) => typeof option === "string" ? option.trim() : "");

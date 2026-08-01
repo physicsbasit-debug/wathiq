@@ -16,6 +16,7 @@ import {
   type QuestionGenerationReference,
   type QuestionGenerationResponse,
   shouldRequireCalculationWorking,
+  sanitizeGeneratedQuestionText,
 } from "./question-generation.js";
 import { parseQuestionVisualSpec } from "./question-visual.js";
 
@@ -224,16 +225,16 @@ function safeUrl(value: unknown): string {
 function parseProposal(value: unknown, expected: QuestionGenerationItem): QuestionProposal {
   const record = asRecord(value);
   if (!record) throw new Error("محرك الاختبار الكامل أعاد سؤالًا غير صالح.");
-  const text = typeof record.text === "string" ? record.text.trim() : "";
-  const answer = typeof record.answer === "string" ? record.answer.trim() : "";
-  const rationale = typeof record.rationale === "string" ? record.rationale.trim() : "";
-  const sourceSupport = typeof record.sourceSupport === "string" ? record.sourceSupport.trim() : "";
-  const stimulus = typeof record.stimulus === "string" ? record.stimulus.trim() : "";
+  const text = typeof record.text === "string" ? sanitizeGeneratedQuestionText(record.text) : "";
+  const answer = typeof record.answer === "string" ? sanitizeGeneratedQuestionText(record.answer) : "";
+  const rationale = typeof record.rationale === "string" ? sanitizeGeneratedQuestionText(record.rationale) : "";
+  const sourceSupport = typeof record.sourceSupport === "string" ? sanitizeGeneratedQuestionText(record.sourceSupport) : "";
+  const stimulus = typeof record.stimulus === "string" ? sanitizeGeneratedQuestionText(record.stimulus) : "";
   const options = Array.isArray(record.options)
-    ? record.options.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean)
+    ? record.options.filter((item): item is string => typeof item === "string").map((item) => sanitizeGeneratedQuestionText(item)).filter(Boolean)
     : [];
   const markScheme = Array.isArray(record.markScheme)
-    ? record.markScheme.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean)
+    ? record.markScheme.filter((item): item is string => typeof item === "string").map((item) => sanitizeGeneratedQuestionText(item)).filter(Boolean)
     : [];
   if (!text || !answer || !rationale || !sourceSupport) throw new Error("محرك الاختبار الكامل أعاد سؤالًا ناقصًا.");
   if (markScheme.length !== expected.marks) throw new Error("نموذج التصحيح في الاختبار الكامل لا يطابق درجة السؤال.");
