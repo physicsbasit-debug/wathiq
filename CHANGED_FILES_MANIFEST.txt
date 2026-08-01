@@ -1,20 +1,16 @@
-# Phase 2-A Fix 2 — Changed Files Manifest
+# Phase 2-A Fix 3 — Changed Files Manifest
 
-تُرفع الملفات التالية فوق Phase 2-A Fix 1 (الإصدار التشغيلي `0.0.50`):
+تُرفع الملفات التالية فوق Phase 2-A Fix 2 (الإصدار التشغيلي `0.0.50`):
 
 - CHANGED_FILES_MANIFEST.txt
 - GITHUB_UPLOAD_INSTRUCTIONS.md
-- PHASE_2_A_FIX2_TEST_REPORT.md
+- PHASE_2_A_FIX3_TEST_REPORT.md
 - README.md
-- docs/PHASE_2_A_FIX2_CALCULATION_WORKING_NORMALIZATION.md
-- src/app.ts
-- src/assessment-generation-v2.ts
-- src/question-generation.ts
+- docs/PHASE_2_A_FIX3_VISUAL_REFERENCE_NORMALIZATION.md
 - supabase/functions/generate-source-questions/index.ts
-- tests/assessment-generation-v2.test.mjs
 - tests/gemini-generate-content-edge.test.mjs
-- tests/phase-2-a-fix2-calculation-working.test.mjs
-- tests/question-generation.test.mjs
+- tests/phase-1-c2-fix7-files.test.mjs
+- tests/phase-2-a-fix3-visual-reference-normalization.test.mjs
 
 ## خارج النطاق
 

@@ -45,6 +45,89 @@ type QuestionScenarioTarget = "scientific_abstract" | "door_handle" | "playgroun
 type QuestionStimulusTarget = "concise_text" | "real_life_scene" | "scientific_diagram" | "data_table" | "graph" | "instrument" | "experiment" | "decision_case";
 type QuestionSkillTarget = "recognize" | "apply" | "calculate" | "interpret" | "compare" | "evaluate" | "investigate";
 
+interface VisualReferenceNormalization {
+  stimulus: string;
+  text: string;
+  changed: boolean;
+  hasReference: boolean;
+  prefix: string;
+}
+
+const ARABIC_DIACRITICS = /[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06EDـ]/gu;
+const VISUAL_REFERENCE_PATTERN = /(الشكل|الصوره|الرسم(?: البياني)?|مخطط|المخطط|الدائره|الجدول|التدريج|الجهاز|البيانات الممثله|التمثيل|المشهد)/u;
+
+function normalizeArabic(value: string): string {
+  return value
+    .normalize("NFKC")
+    .replace(ARABIC_DIACRITICS, "")
+    .replace(/[أإآٱ]/gu, "ا")
+    .replace(/ى/gu, "ي")
+    .replace(/ة/gu, "ه")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+function hasExplicitVisualReference(value: string): boolean {
+  return VISUAL_REFERENCE_PATTERN.test(normalizeArabic(value));
+}
+
+function visualReferencePrefix(visualType: string): string {
+  switch (visualType) {
+    case "context_scene":
+      return "بالاستعانة بالمشهد المرفق،";
+    case "line_graph":
+    case "bar_chart":
+      return "بالاستعانة بالرسم البياني المرفق،";
+    case "data_table":
+      return "بالاستعانة بالجدول المرفق،";
+    case "instrument_scale":
+      return "بالاستعانة بتدريج الجهاز المرفق،";
+    case "circuit_diagram":
+      return "بالاستعانة بمخطط الدائرة المرفق،";
+    case "force_diagram":
+      return "بالاستعانة بمخطط القوى المرفق،";
+    case "ray_diagram":
+      return "بالاستعانة بمخطط الأشعة المرفق،";
+    case "flow_diagram":
+      return "بالاستعانة بالمخطط المرفق،";
+    default:
+      return "بالاستعانة بالشكل المرفق،";
+  }
+}
+
+function normalizeVisualQuestionReference(
+  stimulus: string,
+  text: string,
+  visualType: string,
+): VisualReferenceNormalization {
+  const normalizedStimulus = stimulus.trim();
+  const normalizedText = text.trim();
+  const prefix = visualReferencePrefix(visualType);
+  const combined = `${normalizedStimulus} ${normalizedText}`.trim();
+
+  if (visualType === "none" || hasExplicitVisualReference(combined)) {
+    return {
+      stimulus: normalizedStimulus,
+      text: normalizedText,
+      changed: false,
+      hasReference: visualType === "none" || hasExplicitVisualReference(combined),
+      prefix,
+    };
+  }
+
+  const cleanText = normalizedText.replace(/^[\s،,؛;:.!?؟\-–—]+/u, "");
+  const hydratedText = `${prefix} ${cleanText}`.trim();
+
+  return {
+    stimulus: normalizedStimulus,
+    text: hydratedText,
+    changed: true,
+    hasReference: hasExplicitVisualReference(hydratedText),
+    prefix,
+  };
+}
+
+
 interface QuestionVisualPoint {
   x: number;
   y: number;
@@ -2764,7 +2847,7 @@ function hasSufficientQuestionContext(
   if (stimulus.trim().length >= 12) return true;
 
   const normalized = normalizeForEvidence(text);
-  const referencesVisual = /(الشكل|الرسم|المخطط|الدائره|الجدول|البيانات الممثله|التمثيل|التدريج|المشهد)/u.test(normalized);
+  const referencesVisual = /(الشكل|الصوره|الرسم|مخطط|المخطط|الدائره|الجدول|البيانات الممثله|التمثيل|التدريج|المشهد)/u.test(normalized);
   if (visualTarget !== "none" && referencesVisual) return true;
 
   const digitCount = (text.match(/[0-9٠-٩]/g) ?? []).length;
@@ -2892,6 +2975,19 @@ function validateAndHydrateAlternative(
   if (alternative.questionForm !== requestedStyleTarget) {
     throw retryableError("مولد الأسئلة لم يلتزم بنمط السؤال المحدد في الخطة.");
   }
+  const visualReference = normalizeVisualQuestionReference(
+    alternative.stimulus,
+    alternative.text,
+    requestedVisualTarget,
+  );
+  if (requestedVisualTarget !== "none" && !visualReference.hasReference) {
+    throw retryableError("تعذر ربط السؤال تلقائيًا بالرسم المرفق.");
+  }
+  alternative = {
+    ...alternative,
+    stimulus: visualReference.stimulus,
+    text: visualReference.text,
+  };
   const markScheme = normalizeModelMarkScheme(alternative.markScheme, marks);
   if (!hasSufficientQuestionContext(
     alternative.stimulus,
@@ -2906,12 +3002,6 @@ function validateAndHydrateAlternative(
     throw retryableError("الرسم الحسابي لا يحتوي جميع القيم والوحدات اللازمة للحل.");
   }
   validateAssessmentQuality(alternative, scenarioTarget, stimulusTarget, skillTarget, diversityKey);
-  if (requestedVisualTarget !== "none") {
-    const visualReference = normalizeForEvidence(`${alternative.stimulus} ${alternative.text}`);
-    if (!/(الشكل|الرسم|المخطط|الدائره|الجدول|التدريج|الجهاز|البيانات الممثله|التمثيل|المشهد)/u.test(visualReference)) {
-      throw retryableError("السؤال البصري لا يعتمد صراحة على الشكل المرفق.");
-    }
-  }
   if (questionType === "اختيار من متعدد") {
     const options = alternative.options.map((option) => typeof option === "string" ? option.trim() : "");
     if (options.some((option) => !option) || options.length !== 4 || new Set(options).size !== 4) {
@@ -2957,8 +3047,8 @@ function validateAndHydrateAlternative(
   const weakAffinity = !directEvidenceAffinity && fullReferenceAffinity;
   const commandReview = questionType !== "اختيار من متعدد" && !hasAppropriateCommandWord(alternative.text, marks);
   return {
-    stimulus: alternative.stimulus.trim(),
-    text: alternative.text.trim(),
+    stimulus: alternative.stimulus,
+    text: alternative.text,
     options: alternative.options.map((option) => option.trim()),
     answer: alternative.answer.trim(),
     rationale: alternative.rationale.trim(),
