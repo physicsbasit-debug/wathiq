@@ -20,7 +20,7 @@ import {
 } from "./question-generation.js";
 import { parseQuestionVisualSpec } from "./question-visual.js";
 
-export const ASSESSMENT_GENERATION_V2_VERSION = "source-grounded-policy-ai-17-whole-exam-v2";
+export const ASSESSMENT_GENERATION_V2_VERSION = "source-grounded-policy-ai-18-exam-integrity-resume";
 export type AssessmentGenerationMode = "whole_exam_v2" | "legacy_items";
 
 export interface LessonCardV2 {
@@ -162,6 +162,49 @@ export function buildAssessmentBlueprintV2(items: readonly QuestionGenerationIte
   };
 }
 
+
+function fallbackStimulusTarget(item: QuestionGenerationItem): QuestionGenerationItem["stimulusTarget"] {
+  if (item.styleTarget === "سياقي") return "real_life_scene";
+  if (item.styleTarget === "بيانات") return "data_table";
+  if (item.styleTarget === "استقصائي") return "experiment";
+  if (item.styleTarget === "مقارنة") return "decision_case";
+  return "concise_text";
+}
+
+function visualPriority(item: QuestionGenerationItem): number {
+  if (item.visualTarget === "none") return 0;
+  const precisionVisuals: QuestionVisualType[] = [
+    "data_table", "line_graph", "bar_chart", "instrument_scale", "ray_diagram",
+    "force_diagram", "circuit_diagram", "pressure_diagram", "electrostatic_diagram", "flow_diagram",
+  ];
+  let score = precisionVisuals.includes(item.visualTarget) ? 40 : 15;
+  if (item.styleTarget === "بيانات" || item.styleTarget === "حسابي") score += 25;
+  if (item.cognitiveLevel === "استدلال") score += 12;
+  if (item.marks >= 2) score += 8;
+  return score;
+}
+
+export function applyWholeExamVisualBudget(items: readonly QuestionGenerationItem[]): QuestionGenerationItem[] {
+  const maxVisuals = items.length <= 6 ? 4 : items.length <= 10 ? 5 : 6;
+  const selected = new Set(
+    items
+      .map((item, index) => ({ index, score: visualPriority(item) }))
+      .filter((entry) => entry.score > 0)
+      .sort((left, right) => right.score - left.score || left.index - right.index)
+      .slice(0, maxVisuals)
+      .map((entry) => entry.index),
+  );
+  return items.map((item, index) => {
+    if (item.visualTarget === "none" || selected.has(index)) return item;
+    return {
+      ...item,
+      visualTarget: "none",
+      stimulusTarget: fallbackStimulusTarget(item),
+      diversityKey: `${item.styleTarget}|none|${item.scenarioTarget}|${item.skillTarget}|${index + 1}`,
+    };
+  });
+}
+
 export function buildWholeExamGenerationRequestV2(
   assessmentType: AssessmentType,
   topic: string,
@@ -187,6 +230,9 @@ export function buildWholeExamGenerationRequestV2(
     lessonCatalog,
     trustedEnrichmentEnabled,
   );
+  const optimizedOfficialPlanItems = applyWholeExamVisualBudget(base.officialPlanItems);
+  const optimizedById = new Map(optimizedOfficialPlanItems.map((item) => [item.planItemId, item]));
+  const optimizedItems = base.items.map((item) => optimizedById.get(item.planItemId) ?? item);
   const globalAssessmentReferences = references
     .filter((reference) => reference.sourceKind === "اختبار كامبريدج" || reference.sourceKind === "مصدر عالمي")
     .map((reference) => ({
@@ -200,8 +246,10 @@ export function buildWholeExamGenerationRequestV2(
     generationMode: "whole_exam_v2",
     generationVersion: ASSESSMENT_GENERATION_V2_VERSION,
     ...base,
+    officialPlanItems: optimizedOfficialPlanItems,
+    items: optimizedItems,
     lessonCards: buildLessonCardsV2(plan, references),
-    blueprint: buildAssessmentBlueprintV2(base.officialPlanItems),
+    blueprint: buildAssessmentBlueprintV2(optimizedOfficialPlanItems),
     globalAssessmentReferences,
   };
 }

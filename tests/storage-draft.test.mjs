@@ -78,7 +78,7 @@ test("يرحّل مسودة الموضوع الواحد إلى صفين للدر
   assert.equal(draft.generationVersion, "");
 });
 
-test("يحافظ على مسودة حديثة مرتبطة بدرسين ويعيد التوليد القديم إلى الإعداد فقط", () => {
+test("يحافظ على مسودة حديثة مرتبطة بدرسين ويعيدها إلى الإعداد دون حذف المرجع", () => {
   const draft = normalizeExamDraft({
     id: "multi-lessons-old-generation",
     grade: 10,
@@ -90,9 +90,9 @@ test("يحافظ على مسودة حديثة مرتبطة بدرسين ويعي
     plan: [{ id: "legacy-plan" }],
   });
   assert.ok(draft);
-  assert.equal(draft.currentStep, 1);
+  assert.equal(draft.currentStep, 3);
   assert.equal(draft.topic, "1-1 الشحنة الكهربائية، 1-2 التأثيرات الكهربائية");
-  assert.deepEqual(draft.sourceReferences, []);
+  assert.equal(draft.sourceReferences.length, 2);
   assert.deepEqual(draft.plan, []);
 });
 

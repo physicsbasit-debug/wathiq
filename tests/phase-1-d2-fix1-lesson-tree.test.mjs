@@ -8,7 +8,7 @@ const styles = await readFile(new URL("../src/styles.css", import.meta.url), "ut
 const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 
 test("يثبت إصدار إصلاح شجرة الدروس", () => {
-  assert.match(pkg.version, /^0\.0\.(?:49|50)$/);
+  assert.match(pkg.version, /^0\.0\.(?:49|50|51)$/);
 });
 
 test("يوفر أزرار السابق والتالي وقائمة انتقال مباشرة بين الوحدات", () => {

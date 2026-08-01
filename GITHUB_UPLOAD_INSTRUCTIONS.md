@@ -1,38 +1,38 @@
-# تعليمات رفع Phase 2-A Fix 5
+# تعليمات رفع Phase 2-B
 
-## نقطة الأساس
+## الأساس المطلوب
 
-يجب أن تكون **Phase 2-A Fix 4** مدمجة في `main` أولًا.
+يجب أن تكون `main` متضمنة Phase 2-A Fix 5 قبل الرفع.
 
 ## الفرع
 
 ```text
-phase-2a-fix5-draft-checkpoints-calculation-input
+phase-2b-reliable-resume-exam-integrity
 ```
 
 ## رسالة الحفظ
 
 ```text
-fix: preserve drafts and validate combined calculation inputs
+feat: add reliable draft resume and exam integrity gates
 ```
 
-## الرفع
+## خطوات الرفع
 
-1. فك حزمة الملفات المعدلة فقط.
+1. فك حزمة `changed_files_only`.
 2. ارفع محتوياتها إلى جذر المستودع مع الاستبدال.
 3. لا ترفع ملف ZIP نفسه.
 4. انتظر GitHub Actions.
 
-## النتيجة المطلوبة
+النتيجة المطلوبة:
 
 ```text
-380 passed
+386 passed
 0 failed
 ```
 
 ## بعد الدمج
 
-أعد نشر:
+أعد نشر الملف التالي فقط من محرر Supabase:
 
 ```text
 supabase/functions/generate-source-questions/index.ts
@@ -41,12 +41,3 @@ supabase/functions/generate-source-questions/index.ts
 ثم نفذ `Ctrl + F5`.
 
 لا يلزم SQL أو سر جديد أو إعادة فهرسة أو رفع دليل المعلم.
-
-## اختبار القبول
-
-- افتح «اختباراتي» وتأكد من ظهور المسودات كل واحدة على حدة.
-- افتح مسودة، ابدأ توليد V2، ثم اقطع الطلب أو انتظر رسالة فشل وتأكد من إمكان استئناف المسودة.
-- أنشئ اختبارًا جديدًا وتأكد من بقاء المسودة السابقة.
-- أعد تجربة السؤال الحسابي الذي توزعت معطياته بين النص والرسم أو الجدول.
-
-ملاحظة: الحفظ محلي في المتصفح والجهاز نفسه، وليس مزامنة سحابية بعد.
