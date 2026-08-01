@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { normalizeExamDraft } from "../dist/assets/storage.js";
+import { clearDraft, loadDraft, loadDrafts, normalizeExamDraft, saveDraft, setActiveDraftId } from "../dist/assets/storage.js";
 import { SOURCE_RETRIEVAL_VERSION } from "../dist/assets/source-retrieval.js";
 
 function twoLessonReferences() {
@@ -178,4 +178,57 @@ test("يفعل الرسوم الهجينة افتراضيًا ويحافظ عل�
   };
   assert.equal(normalizeExamDraft(base)?.visualEnhancementEnabled, true);
   assert.equal(normalizeExamDraft({ ...base, visualEnhancementEnabled: false })?.visualEnhancementEnabled, false);
+});
+
+function withMemoryStorage(run) {
+  const original = globalThis.localStorage;
+  const values = new Map();
+  globalThis.localStorage = {
+    getItem(key) { return values.has(key) ? values.get(key) : null; },
+    setItem(key, value) { values.set(key, String(value)); },
+    removeItem(key) { values.delete(key); },
+    clear() { values.clear(); },
+  };
+  try {
+    return run(values);
+  } finally {
+    globalThis.localStorage = original;
+  }
+}
+
+test("يحفظ أكثر من مسودة دون أن يستبدل الاختبار الجديد العمل السابق", () => {
+  withMemoryStorage(() => {
+    const first = normalizeExamDraft({ id: "draft-a", updatedAt: "2026-08-01T10:00:00.000Z", title: "الاختبار القصير الأول" });
+    const second = normalizeExamDraft({ id: "draft-b", updatedAt: "2026-08-01T11:00:00.000Z", title: "الاختبار القصير الثاني" });
+    assert.ok(first && second);
+    saveDraft(first);
+    saveDraft(second);
+    assert.deepEqual(loadDrafts().map((draft) => draft.id), ["draft-b", "draft-a"]);
+    assert.equal(loadDraft()?.id, "draft-b");
+    assert.equal(loadDraft("draft-a")?.id, "draft-a");
+  });
+});
+
+test("يحذف مسودة محددة ويبقي بقية المسودات قابلة للاستئناف", () => {
+  withMemoryStorage(() => {
+    const first = normalizeExamDraft({ id: "draft-a", updatedAt: "2026-08-01T10:00:00.000Z" });
+    const second = normalizeExamDraft({ id: "draft-b", updatedAt: "2026-08-01T11:00:00.000Z" });
+    assert.ok(first && second);
+    saveDraft(first);
+    saveDraft(second);
+    setActiveDraftId("draft-a");
+    assert.equal(loadDraft()?.id, "draft-a");
+    clearDraft("draft-a");
+    assert.deepEqual(loadDrafts().map((draft) => draft.id), ["draft-b"]);
+    assert.equal(loadDraft()?.id, "draft-b");
+  });
+});
+
+test("يرحّل المسودة المحلية القديمة إلى مخزن المسودات المتعددة", () => {
+  withMemoryStorage((values) => {
+    values.set("wathiq.phase0b.latestDraft", JSON.stringify({ id: "legacy-draft", updatedAt: "2026-08-01T09:00:00.000Z" }));
+    assert.equal(loadDraft()?.id, "legacy-draft");
+    assert.equal(loadDrafts().length, 1);
+    assert.ok(values.has("wathiq.examDrafts.v1"));
+  });
 });

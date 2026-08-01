@@ -14,7 +14,7 @@ import {
   syncDraftTopicFromLessons,
   validateExamSetup,
 } from "./domain.js";
-import { clearDraft, loadDraft, loadProfile, loadSources, saveDraft, saveProfile, saveSources } from "./storage.js";
+import { clearDraft, loadDraft, loadDrafts, loadProfile, loadSources, saveDraft, saveProfile, saveSources, setActiveDraftId } from "./storage.js";
 import type { ExamDraft, ExamTitleOption, ManagedSource, PlanItem, QuestionCounts, SourceDraft, SourceStatus, SourceExtractionResult, SourceStructureNode, ViewName, WizardStep } from "./types.js";
 import { escapeHtml, formatArabicDate, icon } from "./ui.js";
 import { isAiIllustrationEligible, questionVisualTypeLabel, renderQuestionVisualSvg, stripQuestionVisualIllustration, validateQuestionVisualSpec } from "./question-visual.js";
@@ -177,27 +177,47 @@ const state: AppState = {
 
 let saveTimer: number | undefined;
 
-function scheduleSave(): void {
-  state.saveState = "جارٍ الحفظ";
-  renderTopSaveState();
-  if (saveTimer) window.clearTimeout(saveTimer);
-  saveTimer = window.setTimeout(() => {
+function persistDraftCheckpoint(showFailure = true): boolean {
+  if (saveTimer) {
+    window.clearTimeout(saveTimer);
+    saveTimer = undefined;
+  }
+  try {
     state.draft.updatedAt = new Date().toISOString();
     saveDraft(state.draft);
     saveProfile({ school: state.draft.school, directorate: state.draft.directorate });
     state.saveState = "محفوظ";
     renderTopSaveState();
-  }, 650);
+    return true;
+  } catch (error) {
+    state.saveState = "غير محفوظ";
+    renderTopSaveState();
+    if (showFailure) {
+      const detail = error instanceof Error ? error.message : "تعذر الوصول إلى تخزين المتصفح.";
+      showToast(`تعذر حفظ المسودة: ${detail}`);
+    }
+    return false;
+  }
+}
+
+function scheduleSave(): void {
+  state.saveState = "جارٍ الحفظ";
+  renderTopSaveState();
+  if (saveTimer) window.clearTimeout(saveTimer);
+  saveTimer = window.setTimeout(() => {
+    saveTimer = undefined;
+    persistDraftCheckpoint();
+  }, 350);
 }
 
 function saveNow(): void {
-  if (saveTimer) window.clearTimeout(saveTimer);
-  state.draft.updatedAt = new Date().toISOString();
-  saveDraft(state.draft);
-  saveProfile({ school: state.draft.school, directorate: state.draft.directorate });
-  state.saveState = "محفوظ";
-  showToast("تم حفظ أحدث حالة للمسودة.");
+  if (persistDraftCheckpoint()) showToast("تم حفظ أحدث حالة للمسودة.");
 }
+
+window.addEventListener("pagehide", () => { persistDraftCheckpoint(false); });
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") persistDraftCheckpoint(false);
+});
 
 function showToast(message: string): void {
   state.toast = message;
@@ -1058,18 +1078,17 @@ interface LibraryCardExam {
 }
 
 function renderLibrary(): string {
-  const localDraft = loadDraft();
-  const localExam: LibraryCardExam[] = localDraft ? [{
-    id: localDraft.id,
-    title: localDraft.title || "مسودة اختبار بلا عنوان",
-    subject: SUBJECTS.find((item) => item.id === localDraft.subjectId)?.label ?? "غير محددة",
-    grade: localDraft.grade ?? 0,
-    status: localDraft.status === "معتمد" ? "معتمد" : "مسودة",
-    date: localDraft.updatedAt.slice(0, 10),
-    progress: localDraft.status === "معتمد" ? 100 : localDraft.currentStep * 25,
+  const localExam: LibraryCardExam[] = loadDrafts().map((draft) => ({
+    id: draft.id,
+    title: draft.title || "مسودة اختبار بلا عنوان",
+    subject: SUBJECTS.find((item) => item.id === draft.subjectId)?.label ?? "غير محددة",
+    grade: draft.grade ?? 0,
+    status: draft.status === "معتمد" ? "معتمد" : "مسودة",
+    date: draft.updatedAt.slice(0, 10),
+    progress: draft.status === "معتمد" ? 100 : draft.currentStep * 25,
     isLocal: true,
-    isComplete: localDraft.currentStep >= 4 && isPlanComplete(localDraft),
-  }] : [];
+    isComplete: draft.currentStep >= 4 && isPlanComplete(draft),
+  }));
   const examples: LibraryCardExam[] = MOCK_LIBRARY.map((exam) => ({ ...exam, isLocal: false }));
   const exams = [...localExam, ...examples]
     .filter((exam) => state.libraryFilter === "الكل" || exam.status === state.libraryFilter);
@@ -1086,12 +1105,16 @@ function renderExamCard(exam: LibraryCardExam): string {
          <button class="secondary-btn compact" data-action="library-export-student-pdf">الطالب PDF</button>
          <button class="secondary-btn compact" data-action="library-export-answer-word">الإجابة Word</button>
          <button class="secondary-btn compact" data-action="library-export-answer-pdf">الإجابة PDF</button>`;
+  const draftAttr = exam.isLocal ? ` data-draft-id="${escapeHtml(exam.id)}"` : "";
+  const exportActionsWithDraft = exam.isLocal
+    ? exportActions.replaceAll("data-action=", `${draftAttr} data-action=`)
+    : exportActions;
   const actions = exam.isLocal
     ? exam.status === "مسودة"
       ? exam.isComplete
-        ? `<button class="primary-btn compact" data-action="preview-library-exam">معاينة المسودة</button><button class="secondary-btn compact" data-action="resume-draft">متابعة التعديل</button>${exportActions}<button class="ghost-btn compact" data-action="delete-draft">حذف</button>`
-        : `<button class="primary-btn compact" data-action="resume-draft">متابعة</button><button class="ghost-btn compact" data-action="delete-draft">حذف</button>`
-      : `<button class="primary-btn compact" data-action="preview-library-exam">معاينة الاختبار</button>${exportActions}`
+        ? `<button class="primary-btn compact"${draftAttr} data-action="preview-library-exam">معاينة المسودة</button><button class="secondary-btn compact"${draftAttr} data-action="resume-draft">متابعة التعديل</button>${exportActionsWithDraft}<button class="ghost-btn compact"${draftAttr} data-action="delete-draft">حذف</button>`
+        : `<button class="primary-btn compact"${draftAttr} data-action="resume-draft">متابعة</button><button class="ghost-btn compact"${draftAttr} data-action="delete-draft">حذف</button>`
+      : `<button class="primary-btn compact"${draftAttr} data-action="preview-library-exam">معاينة الاختبار</button>${exportActionsWithDraft}`
     : `<button class="ghost-btn compact" data-action="mock-download">مثال توضيحي</button>`;
   return `<article class="exam-card" data-search-text="${escapeHtml(`${exam.title} ${exam.subject} ${exam.grade}`)}"><div class="exam-card-head"><span class="status-badge ${exam.status === "معتمد" ? "approved" : "draft"}">${exam.status}</span>${exam.hasModelB ? `<span class="model-badge">أ + ب</span>` : ""}</div><h2>${escapeHtml(exam.title)}</h2><p>${escapeHtml(exam.subject)} · الصف ${exam.grade || "غير محدد"}</p><div class="exam-meta"><span>${formatArabicDate(exam.date)}</span>${exam.progress ? `<span>${exam.progress}% مكتمل</span>` : ""}</div>${exam.progress ? `<div class="progress-track"><span style="width:${exam.progress}%"></span></div>` : ""}<div class="exam-actions library-exam-actions">${actions}</div></article>`;
 }
@@ -1422,7 +1445,9 @@ function bindEvents(): void {
 }
 
 function handleAction(action: string, element: HTMLElement): void {
+  const requestedDraftId = element.dataset.draftId ?? "";
   if (action === "new-exam") {
+    persistDraftCheckpoint(false);
     const profile = loadProfile();
     state.draft = createEmptyDraft();
     state.questionGenerationBusy = false;
@@ -1435,13 +1460,17 @@ function handleAction(action: string, element: HTMLElement): void {
       state.draft.school = profile.school;
       state.draft.directorate = profile.directorate;
     }
+    saveDraft(state.draft);
     navigate("wizard");
     scheduleSave();
     return;
   }
   if (action === "resume-draft") {
-    const loaded = loadDraft();
-    if (loaded) state.draft = loaded;
+    const loaded = loadDraft(requestedDraftId || undefined);
+    if (loaded) {
+      state.draft = loaded;
+      setActiveDraftId(loaded.id);
+    }
     state.visualEnhancementBusyIds.clear();
     state.visualEnhancementMessages = {};
     state.visualEnhancementAutoStarted = false;
@@ -1449,9 +1478,10 @@ function handleAction(action: string, element: HTMLElement): void {
     return;
   }
   if (action === "preview-library-exam") {
-    const loaded = loadDraft();
+    const loaded = loadDraft(requestedDraftId || undefined);
     if (!loaded) return showToast("تعذر العثور على الاختبار المحفوظ.");
     state.draft = loaded;
+    setActiveDraftId(loaded.id);
     state.visualEnhancementBusyIds.clear();
     state.visualEnhancementMessages = {};
     state.visualEnhancementAutoStarted = false;
@@ -1460,7 +1490,7 @@ function handleAction(action: string, element: HTMLElement): void {
     return;
   }
   if (["library-export-student-word", "library-export-student-pdf", "library-export-answer-word", "library-export-answer-pdf"].includes(action)) {
-    const loaded = loadDraft();
+    const loaded = loadDraft(requestedDraftId || undefined);
     if (!loaded || loaded.currentStep < 4 || !isPlanComplete(loaded)) return showToast("لا يوجد اختبار مكتمل قابل للتصدير.");
     state.draft = loaded;
     const kind = action.includes("answer") ? "answer" as const : "student" as const;
@@ -1524,8 +1554,10 @@ function handleAction(action: string, element: HTMLElement): void {
   if (action === "next-step") { void nextStep(); return; }
   if (action === "apply-suggestion") return applySuggestedCounts();
   if (action === "delete-draft") {
-    clearDraft();
-    state.draft = createEmptyDraft();
+    const targetDraftId = requestedDraftId || state.draft.id;
+    clearDraft(targetDraftId);
+    const remaining = loadDraft();
+    state.draft = remaining ?? createEmptyDraft();
     state.questionGenerationBusy = false;
     state.questionGenerationMessage = "";
     state.sourceRetrievalMessage = "";
@@ -1765,6 +1797,7 @@ async function nextStep(): Promise<void> {
     state.draft.selectedProposalByPlanItem = Object.fromEntries(
       Object.entries(state.draft.selectedProposalByPlanItem).filter(([planItemId]) => validPlanIds.has(planItemId)),
     );
+    if (!persistDraftCheckpoint()) return;
     const generated = await generateQuestionsForPlan(state.draft.plan);
     if (!generated) return;
     setStep(3);
@@ -1799,6 +1832,10 @@ async function generateQuestionsForPlan(plan: PlanItem[]): Promise<boolean> {
     }
     state.questionGenerationBusy = true;
     state.questionGenerationMessage = "جارٍ تصميم الاختبار كاملًا، ثم مراجعته علميًا وتقويميًا كوحدة واحدة…";
+    if (!persistDraftCheckpoint()) {
+      state.questionGenerationBusy = false;
+      return false;
+    }
     render();
     try {
       const request = buildWholeExamGenerationRequestV2(
@@ -1824,14 +1861,14 @@ async function generateQuestionsForPlan(plan: PlanItem[]): Promise<boolean> {
       state.draft.generatedAt = response.generatedAt;
       state.questionGenerationBusy = false;
       state.questionGenerationMessage = `تم تصميم اختبار كامل من ${state.draft.plan.length} مفردات ومراجعته كوحدة واحدة. راجع الأسئلة ثم اعتمدها أو جدد مفردة محددة.`;
-      scheduleSave();
+      persistDraftCheckpoint(false);
       render();
       return true;
     } catch (error) {
       state.questionGenerationBusy = false;
       const detail = error instanceof Error ? error.message : "تعذر تصميم الاختبار الكامل.";
-      state.questionGenerationMessage = `${detail} بقيت المسودة على محرك تصميم الاختبار كاملًا ولم يغيّر واثق طريقة التوليد؛ أعد المحاولة دون فقد المسودة، ويمكن اختيار المحرك السابق يدويًا عند الحاجة.`;
-      scheduleSave();
+      const saved = persistDraftCheckpoint(false);
+      state.questionGenerationMessage = `${detail} بقيت المسودة على محرك تصميم الاختبار كاملًا ولم يغيّر واثق طريقة التوليد؛ ${saved ? "حُفظت المسودة الحالية ويمكنك إعادة المحاولة من الموضع نفسه." : "تعذر حفظ المسودة في تخزين المتصفح؛ استخدم زر الحفظ قبل مغادرة الصفحة."}`;
       render();
       showToast(detail);
       return false;
@@ -1874,7 +1911,7 @@ async function generateQuestionsForPlan(plan: PlanItem[]): Promise<boolean> {
       state.draft.generationModel = response.model;
       state.draft.generatedAt = response.generatedAt;
       completedCount += batch.length;
-      scheduleSave();
+      persistDraftCheckpoint(false);
     };
 
     for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
@@ -1896,15 +1933,15 @@ async function generateQuestionsForPlan(plan: PlanItem[]): Promise<boolean> {
     state.draft.selectedProposalByPlanItem = {};
     state.questionGenerationBusy = false;
     state.questionGenerationMessage = `تم إنشاء ${state.draft.plan.length} مفردات موثقة على دفعات؛ اختر البديل الأنسب لكل مفردة.`;
-    scheduleSave();
+    persistDraftCheckpoint(false);
     render();
     return true;
   } catch (error) {
     state.questionGenerationBusy = false;
     const completed = state.draft.plan.filter((item) => item.proposals.length === 3).length;
     const detail = error instanceof Error ? error.message : "تعذر إنشاء الأسئلة من المصدر.";
-    state.questionGenerationMessage = `${detail} تم الاحتفاظ بـ ${completed} من ${state.draft.plan.length} مفردات مكتملة؛ اضغط التالي لإكمال الباقي فقط.`;
-    scheduleSave();
+    const saved = persistDraftCheckpoint(false);
+    state.questionGenerationMessage = `${detail} تم الاحتفاظ بـ ${completed} من ${state.draft.plan.length} مفردات مكتملة${saved ? " وحفظها" : ""}؛ اضغط التالي لإكمال الباقي فقط.`;
     render();
     showToast(detail);
     return false;
