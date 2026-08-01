@@ -8,6 +8,9 @@ import { diversifyQuestionVisualSpec } from "./question-visual.js";
 import { SOURCE_RETRIEVAL_VERSION } from "./source-retrieval.js";
 
 const DRAFT_KEY = "wathiq.phase0b.latestDraft";
+const DRAFTS_KEY = "wathiq.examDrafts.v1";
+const ACTIVE_DRAFT_ID_KEY = "wathiq.activeDraftId.v1";
+const MAX_STORED_DRAFTS = 12;
 const PROFILE_KEY = "wathiq.phase0b.profile";
 const SOURCES_KEY = "wathiq.phase0d.sourceRegistry";
 const LEGACY_SOURCES_KEY = "wathiq.phase0c.sources";
@@ -22,10 +25,6 @@ const COMPATIBLE_GENERATION_VERSIONS = new Set([
 export interface SavedProfile {
   school: string;
   directorate: string;
-}
-
-export function saveDraft(draft: ExamDraft): void {
-  localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
 }
 
 function normalizeSourceReferences(value: unknown): ExamSourceReference[] {
@@ -172,21 +171,127 @@ export function normalizeExamDraft(value: unknown): ExamDraft | null {
   return draft;
 }
 
-export function loadDraft(): ExamDraft | null {
+interface StoredDraftCollection {
+  schemaVersion: 1;
+  activeDraftId: string;
+  drafts: ExamDraft[];
+}
+
+function draftTimestamp(draft: ExamDraft): number {
+  const value = Date.parse(draft.updatedAt || "");
+  return Number.isFinite(value) ? value : 0;
+}
+
+function sortDraftsByRecency(drafts: ExamDraft[]): ExamDraft[] {
+  return [...drafts].sort((left, right) => draftTimestamp(right) - draftTimestamp(left));
+}
+
+function readLegacyDraft(): ExamDraft | null {
   const raw = localStorage.getItem(DRAFT_KEY);
   if (!raw) return null;
   try {
-    const normalized = normalizeExamDraft(JSON.parse(raw));
-    if (!normalized) throw new Error("invalid draft");
-    return normalized;
+    return normalizeExamDraft(JSON.parse(raw));
   } catch {
     localStorage.removeItem(DRAFT_KEY);
     return null;
   }
 }
 
-export function clearDraft(): void {
-  localStorage.removeItem(DRAFT_KEY);
+function readDraftCollection(): StoredDraftCollection {
+  const raw = localStorage.getItem(DRAFTS_KEY);
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as Partial<StoredDraftCollection>;
+      const normalized = Array.isArray(parsed.drafts)
+        ? parsed.drafts.map(normalizeExamDraft).filter((draft): draft is ExamDraft => Boolean(draft))
+        : [];
+      const drafts = sortDraftsByRecency(normalized).slice(0, MAX_STORED_DRAFTS);
+      const requestedActive = typeof parsed.activeDraftId === "string" ? parsed.activeDraftId : "";
+      const activeDraftId = drafts.some((draft) => draft.id === requestedActive)
+        ? requestedActive
+        : drafts[0]?.id ?? "";
+      return { schemaVersion: 1, activeDraftId, drafts };
+    } catch {
+      localStorage.removeItem(DRAFTS_KEY);
+      localStorage.removeItem(ACTIVE_DRAFT_ID_KEY);
+    }
+  }
+  const legacy = readLegacyDraft();
+  if (!legacy) return { schemaVersion: 1, activeDraftId: "", drafts: [] };
+  const migrated: StoredDraftCollection = { schemaVersion: 1, activeDraftId: legacy.id, drafts: [legacy] };
+  localStorage.setItem(DRAFTS_KEY, JSON.stringify(migrated));
+  localStorage.setItem(ACTIVE_DRAFT_ID_KEY, legacy.id);
+  return migrated;
+}
+
+function writeDraftCollection(collection: StoredDraftCollection): void {
+  let drafts = sortDraftsByRecency(collection.drafts).slice(0, MAX_STORED_DRAFTS);
+  let activeDraftId = drafts.some((draft) => draft.id === collection.activeDraftId)
+    ? collection.activeDraftId
+    : drafts[0]?.id ?? "";
+
+  while (true) {
+    const payload: StoredDraftCollection = { schemaVersion: 1, activeDraftId, drafts };
+    try {
+      localStorage.setItem(DRAFTS_KEY, JSON.stringify(payload));
+      if (activeDraftId) localStorage.setItem(ACTIVE_DRAFT_ID_KEY, activeDraftId);
+      else localStorage.removeItem(ACTIVE_DRAFT_ID_KEY);
+      break;
+    } catch (error) {
+      let removableIndex = -1;
+      for (let index = drafts.length - 1; index >= 0; index -= 1) {
+        if (drafts[index]?.id !== activeDraftId) {
+          removableIndex = index;
+          break;
+        }
+      }
+      if (removableIndex < 0) throw error;
+      drafts = drafts.filter((_, index) => index !== removableIndex);
+      activeDraftId = drafts.some((draft) => draft.id === activeDraftId)
+        ? activeDraftId
+        : drafts[0]?.id ?? "";
+    }
+  }
+
+  const activeDraft = drafts.find((draft) => draft.id === activeDraftId) ?? drafts[0];
+  try {
+    if (activeDraft) localStorage.setItem(DRAFT_KEY, JSON.stringify(activeDraft));
+    else localStorage.removeItem(DRAFT_KEY);
+  } catch {
+    // المفتاح القديم للتوافق فقط؛ نجاح مخزن المسودات المتعددة هو الحفظ المعتمد.
+    localStorage.removeItem(DRAFT_KEY);
+  }
+}
+
+export function saveDraft(draft: ExamDraft): void {
+  const collection = readDraftCollection();
+  const drafts = collection.drafts.filter((item) => item.id !== draft.id);
+  drafts.push(draft);
+  writeDraftCollection({ schemaVersion: 1, activeDraftId: draft.id, drafts });
+}
+
+export function loadDraft(draftId?: string): ExamDraft | null {
+  const collection = readDraftCollection();
+  const activeId = draftId || localStorage.getItem(ACTIVE_DRAFT_ID_KEY) || collection.activeDraftId;
+  const draft = collection.drafts.find((item) => item.id === activeId) ?? collection.drafts[0];
+  return draft ? normalizeExamDraft(draft) : null;
+}
+
+export function loadDrafts(): ExamDraft[] {
+  return readDraftCollection().drafts.map((draft) => normalizeExamDraft(draft)).filter((draft): draft is ExamDraft => Boolean(draft));
+}
+
+export function setActiveDraftId(draftId: string): void {
+  const collection = readDraftCollection();
+  if (!collection.drafts.some((draft) => draft.id === draftId)) return;
+  writeDraftCollection({ ...collection, activeDraftId: draftId });
+}
+
+export function clearDraft(draftId?: string): void {
+  const collection = readDraftCollection();
+  const targetId = draftId || localStorage.getItem(ACTIVE_DRAFT_ID_KEY) || collection.activeDraftId;
+  const drafts = collection.drafts.filter((draft) => draft.id !== targetId);
+  writeDraftCollection({ schemaVersion: 1, activeDraftId: drafts[0]?.id ?? "", drafts });
 }
 
 export function saveProfile(profile: SavedProfile): void {

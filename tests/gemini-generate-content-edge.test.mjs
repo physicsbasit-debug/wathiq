@@ -54,6 +54,7 @@ async function loadEdgeHelpers() {
     buildControlledIllustrationPrompt,
     findGeneratedImagePart,
     fixedVisualContainsCalculationData,
+    calculationPromptContainsRequiredData,
     normalizeVisualQuestionReference,
     sanitizeGeneratedDisplayText,
     validateVisualSemanticBinding,
@@ -959,6 +960,40 @@ test("يفرض القيم العددية على الرسوم الحسابية ق
   assert.equal(helpers.fixedVisualContainsCalculationData({ type: "force_diagram", role: "calculate", vectors: [] }), false);
   assert.equal(helpers.fixedVisualContainsCalculationData({ type: "pressure_diagram", variant: "force_area", role: "calculate", values: [80, 0.02] }), true);
   assert.equal(helpers.fixedVisualContainsCalculationData({ type: "pressure_diagram", variant: "force_area", role: "calculate", values: [80, 0] }), false);
+});
+
+test("يقبل القيم والوحدات الموزعة بين نص السؤال والرسم الحسابي", () => {
+  const visual = {
+    ...noVisual(),
+    type: "data_table",
+    role: "calculate",
+    tableColumns: ["الحالة", "العدد"],
+    tableRows: ["1", "2"],
+    tableCells: [["1", "20"], ["2", "30"]],
+    hiddenCells: [],
+    vectors: [],
+    values: [],
+  };
+  assert.equal(helpers.calculationPromptContainsRequiredData({
+    stimulus: "شحنة جسم تساوي 3.2 × 10^-18 C وشحنة الإلكترون 1.6 × 10^-19 C.",
+    text: "احسب عدد الإلكترونات.",
+  }, visual), true);
+});
+
+test("يشترط مسافة الدوران في سؤال العزم حتى لو ظهرت القوتان في الرسم", () => {
+  const visual = {
+    ...noVisual(),
+    type: "force_diagram",
+    variant: "moments",
+    role: "calculate",
+    tableColumns: [], tableRows: [], tableCells: [], hiddenCells: [], values: [],
+    vectors: [
+      { label: "قوة 1", magnitude: 12, dx: 0, dy: -1 },
+      { label: "قوة 2", magnitude: 9, dx: 0, dy: -1 },
+    ],
+  };
+  assert.equal(helpers.calculationPromptContainsRequiredData({ stimulus: "", text: "احسب العزم حول نقطة الارتكاز." }, visual), false);
+  assert.equal(helpers.calculationPromptContainsRequiredData({ stimulus: "تبعد القوة الأولى 2.0 m عن نقطة الارتكاز.", text: "احسب العزم حول نقطة الارتكاز." }, visual), true);
 });
 
 test("يصحح الخادم workingRequired تلقائيًا للسؤال الحسابي متعدد الدرجات", () => {

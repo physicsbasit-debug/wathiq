@@ -2992,6 +2992,9 @@ function hasSufficientQuestionContext(
     && /(عندما|اثناء|لاحظ|قام|استخدم|وضع|تعرض|في موقف|لدى|يمر|يعمل)/u.test(normalized);
 }
 
+const CALCULATION_NUMBER_PATTERN = /[+-]?[0-9٠-٩]+(?:[.,][0-9٠-٩]+)?(?:\s*[×xX]\s*10\s*(?:\^|⁻|-)??\s*[0-9٠-٩]+)?/gu;
+const CALCULATION_UNIT_PATTERN = /(?:N\s*m|N\s*\/\s*m|kg|g|mg|km|cm|mm|m(?:²|2|³|3)?|s|min|h|V|A|mA|C|Pa|kPa|J|W|Hz|°C|%|نيوتن|كيلوجرام|كجم|جرام|متر|سنتيمتر|مليمتر|ثانيه|دقيقه|ساعه|فولت|امبير|مللي\s*امبير|كولوم|باسكال|جول|واط|هرتز|درجه\s*مئويه)/iu;
+
 function fixedVisualContainsCalculationData(visual: QuestionVisualSpec): boolean {
   if (visual.type === "force_diagram" && visual.role === "calculate") {
     return visual.vectors.length >= 2 && visual.vectors.every((vector) => vector.magnitude > 0);
@@ -3003,9 +3006,61 @@ function fixedVisualContainsCalculationData(visual: QuestionVisualSpec): boolean
     const visibleCells = visual.tableCells.flatMap((row, rowIndex) => row.map((_, columnIndex) => visibleTableCell(visual, rowIndex, columnIndex)));
     const numericValues = visibleCells.flatMap((cell) => cell.match(/[0-9٠-٩]+(?:[.,][0-9٠-٩]+)?/gu) ?? []);
     const unitMaterial = `${visual.tableColumns.join(" ")} ${visibleCells.join(" ")}`;
-    return numericValues.length >= 2 && /(N|kg|m|cm|s|V|A|C|Pa|J|W|نيوتن|كجم|متر|ثانيه|فولت|امبير|كولوم|باسكال)/u.test(unitMaterial);
+    return numericValues.length >= 2 && CALCULATION_UNIT_PATTERN.test(unitMaterial);
   }
   return true;
+}
+
+
+function calculationVisualMaterial(visual: QuestionVisualSpec): string {
+  const visibleCells = visual.tableCells.flatMap((row, rowIndex) => row.map((_, columnIndex) => visibleTableCell(visual, rowIndex, columnIndex)));
+  return [
+    visual.title,
+    visual.purpose,
+    visual.altText,
+    visual.xAxisLabel,
+    visual.yAxisLabel,
+    ...visual.labels,
+    ...visual.annotations,
+    ...visual.tableColumns,
+    ...visibleCells,
+    ...visual.values.map((value) => String(value)),
+    ...visual.vectors.flatMap((vector) => [vector.label, `${vector.magnitude} N`]),
+  ].join(" ");
+}
+
+function calculationPromptContainsRequiredData(
+  alternative: ModelGeneratedAlternative,
+  visual: QuestionVisualSpec,
+): boolean {
+  const questionMaterial = `${alternative.stimulus} ${alternative.text}`;
+  const visualMaterial = calculationVisualMaterial(visual);
+  const combined = `${questionMaterial} ${visualMaterial}`;
+  const numericValues = combined.match(CALCULATION_NUMBER_PATTERN) ?? [];
+  if (numericValues.length < 2) return false;
+
+  if (visual.type === "force_diagram" && visual.role === "calculate") {
+    const hasForce = /(?:N|نيوتن)/iu.test(combined);
+    if (visual.variant === "moments") {
+      const hasDistance = /(?:km|cm|mm|m|متر|سنتيمتر|مليمتر)/iu.test(questionMaterial);
+      return hasForce && hasDistance && numericValues.length >= 3;
+    }
+    return hasForce && visual.vectors.filter((vector) => vector.magnitude > 0).length >= 2;
+  }
+
+  if (visual.type === "pressure_diagram" && visual.variant === "force_area" && visual.role === "calculate") {
+    const hasForce = /(?:N|نيوتن)/iu.test(combined);
+    const hasArea = /(?:m(?:²|2)|cm(?:²|2)|متر\s*مربع|سنتيمتر\s*مربع)/iu.test(combined);
+    return hasForce && hasArea;
+  }
+
+  if (visual.type === "data_table" && visual.role === "calculate") {
+    const dimensionlessCount = /(عدد\s*(?:الالكترونات|الإلكترونات|الجسيمات)|نسبه|نسبة|معدل)/u.test(combined);
+    return CALCULATION_UNIT_PATTERN.test(combined) || dimensionlessCount;
+  }
+
+  return CALCULATION_UNIT_PATTERN.test(combined)
+    || /(عدد\s*(?:الالكترونات|الإلكترونات|الجسيمات)|نسبه|نسبة|معدل)/u.test(combined);
 }
 
 const VISUAL_SEMANTIC_STOP_WORDS = new Set([
@@ -3260,8 +3315,8 @@ function validateAndHydrateAlternative(
     throw retryableError("أحد الأسئلة السياقية لا يحتوي متنًا أو بيانات كافية.");
   }
   const workingRequired = shouldRequireCalculationWorking(alternative.questionForm, marks);
-  if (alternative.questionForm === "حسابي" && !fixedVisualContainsCalculationData(fixedVisual)) {
-    throw retryableError("الرسم الحسابي لا يحتوي جميع القيم والوحدات اللازمة للحل.");
+  if (alternative.questionForm === "حسابي" && !calculationPromptContainsRequiredData(alternative, fixedVisual)) {
+    throw retryableError("السؤال الحسابي ومثيره لا يحتويان جميع القيم والوحدات اللازمة للحل.");
   }
   validateVisualSemanticBinding(alternative, markScheme, fixedVisual);
   validateAssessmentQuality(alternative, scenarioTarget, stimulusTarget, skillTarget, diversityKey);

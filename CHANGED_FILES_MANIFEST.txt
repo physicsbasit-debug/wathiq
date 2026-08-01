@@ -1,35 +1,32 @@
-# Phase 2-A Fix 4 — Changed Files Manifest
+# Phase 2-A Fix 5 — Changed Files Manifest
 
-تُرفع الملفات التالية فوق Phase 2-A Fix 3 بالإصدار التشغيلي `0.0.50`:
+تُرفع الملفات التالية فوق Phase 2-A Fix 4:
 
 - CHANGED_FILES_MANIFEST.txt
 - GITHUB_UPLOAD_INSTRUCTIONS.md
-- PHASE_2_A_FIX4_TEST_REPORT.md
+- PHASE_2_A_FIX5_TEST_REPORT.md
 - README.md
-- docs/PHASE_2_A_FIX4_QUESTION_VISUAL_SEMANTIC_BINDING.md
-- src/assessment-generation-v2.ts
-- src/question-generation.ts
-- src/question-visual.ts
-- src/types.ts
+- docs/PHASE_2_A_FIX5_DRAFT_CHECKPOINT_CALCULATION_INPUT.md
+- src/app.ts
+- src/storage.ts
 - supabase/functions/generate-source-questions/index.ts
 - tests/gemini-generate-content-edge.test.mjs
-- tests/phase-2-a-fix4-question-visual-semantic-binding.test.mjs
+- tests/storage-draft.test.mjs
+- tests/phase-2-a-fix5-draft-checkpoint-calculation-input.test.mjs
 
 ## ما يعالجه الإصلاح
 
-- تنظيف معرفات التخطيط الداخلية مثل `visual-plan-*` من ورقة الطالب.
-- ربط السؤال دلاليًا بالرسم أو الجدول والبيانات اللازمة للحل.
-- بناء جداول متخصصة حسب هدف التعلم بدل إعادة تدوير جدول عام.
-- رفض الإشارة إلى صفوف أو قياسات غير موجودة.
-- إضافة رمز المحرك إلى مخططات الدوائر عند ورود محرك في السياق.
-- منح محرك V2 محاولة إصلاح ثالثة قبل إظهار الفشل.
+- حفظ عدة مسودات مستقلة بدل استبدال آخر مسودة.
+- حفظ فوري قبل طلب Gemini وبعد النجاح أو الفشل.
+- استئناف المسودة من الموضع نفسه داخل المتصفح والجهاز نفسه.
+- فحص القيم والوحدات من السؤال والرسم معًا.
+- منع مسائل العزم والضغط الناقصة.
 
 ## خارج النطاق
 
 - لا SQL.
 - لا GitHub workflow.
-- لا أسرار أو `.env`.
 - لا إعادة فهرسة.
-- لا تغيير في Word أو PDF أو تخزين الصور.
-- لا تغيير للإصدار `0.0.50` أو عقد التوليد `source-grounded-policy-ai-17-whole-exam-v2`.
+- لا مزامنة سحابية للمسودات.
+- لا تغيير للإصدار `0.0.50` أو عقد V2.
 - `dist/` يُبنى تلقائيًا ولا يدخل حزمة الملفات المعدلة فقط.
