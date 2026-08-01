@@ -8,6 +8,7 @@ const GEMINI_IMAGE_MODEL = Deno.env.get("GEMINI_IMAGE_MODEL")?.trim() || "gemini
 const WATHIQ_APP_URL = requiredEnv("WATHIQ_APP_URL");
 const appOrigin = new URL(WATHIQ_APP_URL).origin;
 const MAX_BATCH_ITEMS = 2;
+const MAX_WHOLE_EXAM_ITEMS = 12;
 const MAX_OFFICIAL_ITEMS = 40;
 const MAX_REFERENCES = 6;
 const MAX_REFERENCE_CHARACTERS = 4_200;
@@ -134,7 +135,49 @@ interface GenerationItem {
   regenerationAnchor?: RegenerationAnchor;
 }
 
+interface LessonCardV2 {
+  lessonLabel: string;
+  learningOutcomes: string[];
+  concepts: string[];
+  sourceReferenceIds: string[];
+  sourceSummary: string;
+}
+
+interface AssessmentBlueprintItemV2 {
+  order: number;
+  planItemId: string;
+  lessonLabel: string;
+  learningOutcome: string;
+  questionType: string;
+  cognitiveLevel: string;
+  marks: number;
+  styleTarget: QuestionDesignPattern;
+  visualTarget: QuestionVisualType;
+  scenarioTarget: QuestionScenarioTarget;
+  stimulusTarget: QuestionStimulusTarget;
+  skillTarget: QuestionSkillTarget;
+  diversityKey: string;
+}
+
+interface AssessmentBlueprintV2 {
+  version: "whole-exam-blueprint-v1";
+  totalMarks: number;
+  itemCount: number;
+  lessons: string[];
+  items: AssessmentBlueprintItemV2[];
+  globalReviewRules: string[];
+}
+
+interface GlobalAssessmentReferenceV2 {
+  id: string;
+  sourceTitle: string;
+  sourceKind: string;
+  excerpt: string;
+}
+
 interface GenerationRequest {
+  generationMode: "legacy_items" | "whole_exam_v2";
+  generationVersion: string;
   assessmentType: AssessmentType;
   assessmentPolicyId: "oman-science-assessment-2025-2026";
   topic: string;
@@ -146,6 +189,9 @@ interface GenerationRequest {
   references: GenerationReference[];
   officialPlanItems: GenerationItem[];
   items: GenerationItem[];
+  lessonCards: LessonCardV2[];
+  blueprint: AssessmentBlueprintV2 | null;
+  globalAssessmentReferences: GlobalAssessmentReferenceV2[];
 }
 
 interface VisualIllustrationRequest {
@@ -875,11 +921,14 @@ async function callGemini(
   repairFeedback = "",
 ): Promise<ModelGeneratedPayload> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), request.generationMode === "whole_exam_v2" ? Math.max(GEMINI_TIMEOUT_MS, 60_000) : GEMINI_TIMEOUT_MS);
   const startedAt = Date.now();
+  const legacyThinkingConfig = {
+    thinkingBudget: generationThinkingBudget(request.items),
+  };
   const requestBody = JSON.stringify({
     systemInstruction: {
-      parts: [{ text: buildSystemInstructions() }],
+      parts: [{ text: buildSystemInstructions(request) }],
     },
     contents: [{
       role: "user",
@@ -888,13 +937,16 @@ async function callGemini(
     store: false,
     generationConfig: {
       candidateCount: 1,
-      maxOutputTokens: generationOutputTokenLimit(request.items),
-      thinkingConfig: { thinkingBudget: generationThinkingBudget(request.items) },
+      maxOutputTokens: generationOutputTokenLimit(request.items, request.generationMode === "whole_exam_v2"),
+      thinkingConfig: request.generationMode === "whole_exam_v2"
+        ? { thinkingBudget: 1_024 }
+        : legacyThinkingConfig,
       responseMimeType: "application/json",
       responseJsonSchema: generationSchema(
         request.items,
         evidenceCatalog.fragments.map((fragment) => fragment.id),
         enrichment.segments.map((segment) => segment.id),
+        request.generationMode === "whole_exam_v2" ? 1 : 3,
       ),
     },
   });
@@ -951,7 +1003,7 @@ async function callGemini(
       totalTokens: completion.totalTokens,
       thoughtsTokens: completion.thoughtsTokens,
       cachedTokens: completion.cachedTokens,
-      thinkingBudget: generationThinkingBudget(request.items),
+      thinkingBudget: request.generationMode === "whole_exam_v2" ? 1_024 : generationThinkingBudget(request.items),
       visualOwner: "server",
       durationMs: Date.now() - startedAt,
     });
@@ -1349,7 +1401,8 @@ function assessmentDiversityBlueprint(request: GenerationRequest): Array<Record<
   }));
 }
 
-function buildSystemInstructions(): string {
+function buildSystemInstructions(request: GenerationRequest): string {
+  const wholeExam = request.generationMode === "whole_exam_v2";
   return [
     "أنت محرر اختبارات علوم مدرسية باللغة العربية لسلطنة عُمان.",
     "التزم أولًا بوثيقة تقويم تعلم الطلبة في مواد العلوم للصفوف 5-10، إصدار 2025/2026؛ فهي المرجع الحاكم للدرجات والأنواع والأهداف والصعوبة.",
@@ -1357,10 +1410,14 @@ function buildSystemInstructions(): string {
     "الكتاب المدرسي والمقاطع المرجعية المرفقة هي المصدر الحاكم للمفهوم والإجابة ونطاق المعرفة المطلوبة من الطالب.",
     "قد يرفق الخادم trustedEnrichment من بحث موثق في مصادر علمية رسمية. استخدمه فقط لإثراء السياق أو البيانات أو المثال أو التجربة، ولا تجعله يضيف معرفة مطلوبة خارج ما يثبته المرجع المدرسي.",
     "إذا استخدمت trustedEnrichment في بديل، أعد enrichmentEvidenceId المطابق. إذا لم تستخدمه فأعد سلسلة فارغة. لا تعتبر ذاكرة النموذج مصدرًا ولا تخترع روابط أو حقائق.",
-    "أنشئ ثلاثة بدائل مختلفة لكل مفردة مرسلة في هذه الدفعة فقط، مع الحفاظ حرفيًا على الدرس ونوع السؤال وهدف التقويم ومستوى الصعوبة والدرجة ونمط styleTarget.",
+    wholeExam
+      ? "صمم الاختبار كاملًا في ذهنك أولًا، ثم أعد سؤالًا نهائيًا واحدًا عالي الجودة لكل مفردة. راجع الأسئلة معًا قبل الإخراج بوصفها اختبارًا واحدًا لا قطعًا منفصلة."
+      : "أنشئ ثلاثة بدائل مختلفة لكل مفردة مرسلة في هذه الدفعة فقط، مع الحفاظ حرفيًا على الدرس ونوع السؤال وهدف التقويم ومستوى الصعوبة والدرجة ونمط styleTarget.",
     "تتضمن كل مفردة learningOutcome وscenarioTarget وstimulusTarget وskillTarget وdiversityKey. اجعل المطلوب والإجابة يقيسان learningOutcome فعليًا؛ فهذه خطة جودة وتنوع للاختبار كله وليست اقتراحات شكلية.",
     "لا تكرر الأسرة السياقية نفسها بين مفردات الاختبار ما دام لكل مفردة diversityKey مختلف. إذا كانت المفردة عن العزم مثلًا، نوّع بين الباب والأرجوحة ومفتاح الربط والدراجة وعربة التسوق بدل إعادة عارضة مجردة.",
-    "اجعل البدائل الثلاثة للمفردة الواحدة مختلفة في تفاصيل الموقف والقيم وطريقة التفكير، لا مجرد تبديل كلمات في السؤال نفسه.",
+    wholeExam
+      ? "اجعل كل سؤال في الاختبار مختلفًا فعليًا عن بقية الأسئلة في الفكرة والمثير والسياق وبنية البيانات، ولا تعيد مجموعة الأرقام نفسها أو القالب نفسه تحت قصة جديدة."
+      : "اجعل البدائل الثلاثة للمفردة الواحدة مختلفة في تفاصيل الموقف والقيم وطريقة التفكير، لا مجرد تبديل كلمات في السؤال نفسه.",
     "في الاختبار القصير لا تجعل أكثر من مفردة واحدة تعريفًا أو سؤال وحدة مباشرًا، واجعل بقية المفردات تطبيقًا أو تفسيرًا أو بيانات أو قرارًا أو استقصاءً وفق الخطة.",
     "السياق الحياتي يجب أن يكون ضروريًا للإجابة، قصيرًا، واقعيًا، مناسبًا لعمر الطالب، ومتصلًا مباشرة بالمفهوم العلمي؛ لا تضع قصة زخرفية يمكن حذفها دون أن يتغير السؤال.",
     "لا تخلط بين الدروس؛ كل مفردة مرتبطة باسم درس ومرجع صفحة محددين في الخطة.",
@@ -1372,7 +1429,9 @@ function buildSystemInstructions(): string {
     "عند styleTarget=بيانات: قدّم جدولًا نصيًا صغيرًا أو نتائج قياس أو وصف رسم بياني في stimulus، ثم اطلب قراءة نمط أو حسابًا أو استنتاجًا من البيانات.",
     "عند styleTarget=استقصائي: قدّم تجربة أو إجراءً مختصرًا، ثم اسأل عن متغير أو ضبط أو موثوقية أو تفسير نتائج أو تحسين طريقة.",
     "عند styleTarget=مقارنة: حدّد بوضوح الجانبين المطلوبين، واجعل كل فرق أو تشابه نقطة تصحيح مستقلة.",
-    "لكل مفردة قد يرفق الخادم fixedVisual جاهزًا وحتميًا. لا تنشئ visual ولا تعدله ولا تعيده في JSON؛ ابنِ البدائل الثلاثة بالاعتماد على fixedVisual نفسه.",
+    wholeExam
+      ? "لكل مفردة قد يرفق الخادم fixedVisual جاهزًا وحتميًا. لا تنشئ visual ولا تعدله ولا تعيده في JSON؛ ابنِ السؤال النهائي بالاعتماد عليه عند وجوده."
+      : "لكل مفردة قد يرفق الخادم fixedVisual جاهزًا وحتميًا. لا تنشئ visual ولا تعدله ولا تعيده في JSON؛ ابنِ البدائل الثلاثة بالاعتماد على fixedVisual نفسه.",
     "إذا كان fixedVisual.type لا يساوي none، فيجب أن يشير متن السؤال أو المطلوب بوضوح إلى الشكل أو الرسم أو البيانات، وأن تكون الإجابة متسقة حرفيًا مع القيم والعناصر الواردة في fixedVisual.",
     "التزم بدور fixedVisual.role: read للقراءة، calculate للحساب، interpret للتفسير، compare للمقارنة، complete لإكمال جدول أو تسلسل، draw لإضافة جزء إلى الشكل، وevaluate لتقييم طريقة أو بيانات.",
     "في context_scene اجعل المشهد الحياتي المحدد في scenarioTarget مدخلًا حقيقيًا لتطبيق المفهوم، ولا تطلب منه حسابًا يحتاج أرقامًا غير موجودة. في data_table استخدم عناوين الأعمدة والوحدات والخلايا المخفية كما هي. في instrument_scale اطلب قراءة التدريج مع الوحدة. في ray_diagram وforce_diagram وflow_diagram اجعل السؤال غير قابل للحل دون الرجوع إلى الشكل.",
@@ -1391,7 +1450,9 @@ function buildSystemInstructions(): string {
     "لا تسأل عن أرقام صفحات أو حقوق نشر أو مقدمة الكتاب إلا إذا كان الموضوع المطلوب عنها صراحة.",
     "إذا كان النص المرجعي ضعيفًا لمفردة معينة، أنشئ سؤالًا أبسط على حقيقة صريحة واضبط needsReview=true. لا تخترع.",
     "لا تستخدم عبارات مثل: بالرجوع إلى النص أو وفقًا للمصدر داخل نص السؤال.",
-    "إذا كان fixedVisual.type لا يساوي none، فيجب أن تعتمد صياغة كل بديل على الشكل اعتمادًا حقيقيًا وتذكر بوضوح: بالشكل المرفق أو الرسم المرفق أو الجدول المرفق أو التدريج أو البيانات الممثلة. لا تكتب سؤالًا يمكن حله دون النظر إلى الشكل.",
+    wholeExam
+      ? "إذا كان fixedVisual.type لا يساوي none، فيجب أن يعتمد السؤال عليه اعتمادًا حقيقيًا ويذكر بوضوح الشكل أو الرسم أو الجدول أو التدريج أو البيانات الممثلة."
+      : "إذا كان fixedVisual.type لا يساوي none، فيجب أن تعتمد صياغة كل بديل على الشكل اعتمادًا حقيقيًا وتذكر بوضوح: بالشكل المرفق أو الرسم المرفق أو الجدول المرفق أو التدريج أو البيانات الممثلة. لا تكتب سؤالًا يمكن حله دون النظر إلى الشكل.",
     "لا تجعل الشكل يكشف الإجابة مباشرة؛ استخدمه لتقديم التجهيز أو العلاقة أو البيانات التي يحتاج الطالب إلى تحليلها.",
     "لا تضع شروحًا خارج مخطط JSON المطلوب.",
   ].join("\n");
@@ -1415,8 +1476,12 @@ function buildUserPrompt(request: GenerationRequest, evidenceCatalog: EvidenceCa
   }));
   return JSON.stringify({
     task: repairAttempt
-      ? "أعد التوليد بدقة أكبر، وصحح سبب رفض المحاولة السابقة تحديدًا مع إبقاء الخطة والدرس والدرجة كما هي."
-      : "أنشئ بدائل الأسئلة الموثقة من مقاطع الأدلة المحددة.",
+      ? (request.generationMode === "whole_exam_v2"
+          ? "أعد تصميم الاختبار الكامل وصحح سبب الرفض السابق، ثم راجعه علميًا وتقويميًا بوصفه وحدة واحدة."
+          : "أعد التوليد بدقة أكبر، وصحح سبب رفض المحاولة السابقة تحديدًا مع إبقاء الخطة والدرس والدرجة كما هي.")
+      : (request.generationMode === "whole_exam_v2"
+          ? "صمم اختبارًا كاملًا قابلًا للاستخدام الفعلي من بطاقات الدروس والمخطط والمراجع، ثم أعد سؤالًا نهائيًا واحدًا لكل مفردة."
+          : "أنشئ بدائل الأسئلة الموثقة من مقاطع الأدلة المحددة."),
     previousValidationError: repairAttempt ? repairFeedback : "",
     exam: {
       assessmentType: request.assessmentType,
@@ -1429,6 +1494,12 @@ function buildUserPrompt(request: GenerationRequest, evidenceCatalog: EvidenceCa
     },
     references,
     trustedEnrichment,
+    lessonCards: request.lessonCards ?? [],
+    wholeExamBlueprint: request.blueprint ?? null,
+    globalAssessmentReferences: request.globalAssessmentReferences ?? [],
+    globalAssessmentUseRule: (request.globalAssessmentReferences?.length ?? 0)
+      ? "استفد من هندسة القياس والمثيرات والرسوم والأسئلة المتوافقة مع أهداف الدروس، مع إعادة الصياغة بمصطلحات المنهج وعدم إدخال معرفة خارج بطاقة الدرس."
+      : "لا توجد مراجع اختبارات عالمية مرسلة في هذا الطلب.",
     assessmentDiversityBlueprint: assessmentDiversityBlueprint(request),
     officialPlanSummary: request.officialPlanItems.map((item) => ({
       planItemId: item.planItemId,
@@ -1458,16 +1529,18 @@ function buildUserPrompt(request: GenerationRequest, evidenceCatalog: EvidenceCa
       topLevelType: "object",
       requiredTopLevelKey: "items",
       itemCount: request.items.length,
-      alternativesPerItem: 3,
+      alternativesPerItem: request.generationMode === "whole_exam_v2" ? 1 : 3,
       exactPlanItemIds: request.items.map((item) => item.planItemId),
       evidenceRule: "أعد sourceEvidenceId من allowedEvidenceIds الخاصة بالمفردة فقط. أعد enrichmentEvidenceId من allowedEnrichmentIds عند استخدام إثراء خارجي، وإلا فأعد سلسلة فارغة.",
       styleRule: "اجعل questionForm مطابقًا حرفيًا لـ styleTarget، ونفذ scenarioTarget وstimulusTarget وskillTarget. أعد markScheme كمصفوفة طولها يساوي marks تمامًا، وكل عنصر فيها معيار مستقل غير فارغ لدرجة واحدة. في الأسئلة غير المفهومية اجعل stimulus غير فارغ، إلا إذا كان fixedVisual يحمل السياق أو البيانات ويشير text إليه صراحة، أو كان text نفسه يتضمن السياق كاملًا.",
-      visualRule: "لا تعد visual في JSON. إذا كان fixedVisual.type لا يساوي none، يجب أن تعتمد جميع البدائل الثلاثة على الشكل نفسه اعتمادًا جوهريًا وتذكر الشكل أو الرسم أو الجدول أو التدريج في نص السؤال؛ وإلا فستُرفض المفردة.",
+      visualRule: request.generationMode === "whole_exam_v2"
+        ? "لا تعد visual في JSON. إذا كان fixedVisual.type لا يساوي none، يجب أن يعتمد السؤال النهائي عليه اعتمادًا جوهريًا ويذكره صراحة."
+        : "لا تعد visual في JSON. إذا كان fixedVisual.type لا يساوي none، يجب أن تعتمد جميع البدائل الثلاثة على الشكل نفسه اعتمادًا جوهريًا وتذكر الشكل أو الرسم أو الجدول أو التدريج في نص السؤال؛ وإلا فستُرفض المفردة.",
     },
   });
 }
 
-function generationSchema(requestedItems: GenerationItem[], evidenceIds: string[], enrichmentIds: string[] = []): Record<string, unknown> {
+function generationSchema(requestedItems: GenerationItem[], evidenceIds: string[], enrichmentIds: string[] = [], alternativesPerItem = 3): Record<string, unknown> {
   return {
     type: "object",
     description: "النتيجة النهائية لتوليد مفردات الاختبار، ويجب أن تحتوي المفتاح items فقط.",
@@ -1491,9 +1564,9 @@ function generationSchema(requestedItems: GenerationItem[], evidenceIds: string[
               },
               alternatives: {
                 type: "array",
-                description: "ثلاث صيغ بديلة مختلفة للمفردة نفسها.",
-                minItems: 3,
-                maxItems: 3,
+                description: alternativesPerItem === 1 ? "سؤال نهائي واحد للمفردة ضمن الاختبار الكامل." : "ثلاث صيغ بديلة مختلفة للمفردة نفسها.",
+                minItems: alternativesPerItem,
+                maxItems: alternativesPerItem,
                 items: {
                   type: "object",
                   properties: {
@@ -1562,6 +1635,11 @@ function generationSchema(requestedItems: GenerationItem[], evidenceIds: string[
 
 function parseGenerationRequest(value: unknown): GenerationRequest {
   const record = requireRecord(value, "طلب إنشاء الأسئلة غير صالح.");
+  const generationMode = record.action === "generate_exam_v2" ? "whole_exam_v2" : "legacy_items";
+  const generationVersion = typeof record.generationVersion === "string" ? record.generationVersion.trim().slice(0, 160) : "";
+  if (generationMode === "whole_exam_v2" && generationVersion !== "source-grounded-policy-ai-17-whole-exam-v2") {
+    throw httpError("إصدار محرك الاختبار الكامل غير متوافق.", 400);
+  }
   const assessmentType = requireEnum(record.assessmentType, ["اختبار قصير رسمي", "امتحان نهاية الفصل الدراسي"] as const, "نوع التقويم غير صالح.");
   const assessmentPolicyId = requireEnum(record.assessmentPolicyId, ["oman-science-assessment-2025-2026"] as const, "مرجع التقويم غير صالح.");
   const topic = requireText(record.topic, "موضوع الاختبار غير موجود.", 500);
@@ -1579,8 +1657,11 @@ function parseGenerationRequest(value: unknown): GenerationRequest {
   if (!Array.isArray(record.references) || record.references.length < 1 || record.references.length > MAX_REFERENCES) {
     throw httpError(`يجب إرسال مرجع واحد إلى ${MAX_REFERENCES} مراجع للدفعة.`, 400);
   }
-  if (!Array.isArray(record.items) || record.items.length < 1 || record.items.length > MAX_BATCH_ITEMS) {
-    throw httpError(`يجب إرسال مفردة واحدة إلى ${MAX_BATCH_ITEMS} مفردتين في الدفعة.`, 400);
+  const maximumRequestedItems = generationMode === "whole_exam_v2" ? MAX_WHOLE_EXAM_ITEMS : MAX_BATCH_ITEMS;
+  if (!Array.isArray(record.items) || record.items.length < 1 || record.items.length > maximumRequestedItems) {
+    throw httpError(generationMode === "whole_exam_v2"
+      ? `محرك الاختبار الكامل يدعم من مفردة واحدة إلى ${MAX_WHOLE_EXAM_ITEMS} مفردة في هذه المرحلة.`
+      : `يجب إرسال مفردة واحدة إلى ${MAX_BATCH_ITEMS} مفردتين في الدفعة.`, 400);
   }
   if (!Array.isArray(record.officialPlanItems) || record.officialPlanItems.length < 1 || record.officialPlanItems.length > MAX_OFFICIAL_ITEMS) {
     throw httpError(`خطة الاختبار الرسمية يجب أن تحتوي من مفردة واحدة إلى ${MAX_OFFICIAL_ITEMS} مفردة.`, 400);
@@ -1718,7 +1799,94 @@ function parseGenerationRequest(value: unknown): GenerationRequest {
       throw httpError("دفعة التوليد لا تطابق خطة الاختبار الرسمية.", 400);
     }
   }
-  return { assessmentType, assessmentPolicyId, topic, lessons, grade, subject, difficulty, trustedEnrichmentEnabled, references, officialPlanItems, items };
+  const lessonCards: LessonCardV2[] = generationMode === "whole_exam_v2" && Array.isArray(record.lessonCards)
+    ? record.lessonCards.map((entry) => {
+        const card = requireRecord(entry, "إحدى بطاقات الدروس غير صالحة.");
+        return {
+          lessonLabel: requireText(card.lessonLabel, "عنوان بطاقة الدرس غير موجود.", 180),
+          learningOutcomes: Array.isArray(card.learningOutcomes)
+            ? card.learningOutcomes.map((outcome) => requireText(outcome, "أحد أهداف بطاقة الدرس غير صالح.", 240)).slice(0, 12)
+            : [],
+          concepts: Array.isArray(card.concepts)
+            ? card.concepts.map((concept) => requireText(concept, "أحد مفاهيم بطاقة الدرس غير صالح.", 100)).slice(0, 16)
+            : [],
+          sourceReferenceIds: Array.isArray(card.sourceReferenceIds)
+            ? card.sourceReferenceIds.map((id) => requireText(id, "معرف مرجع بطاقة الدرس غير صالح.", 220)).slice(0, 8)
+            : [],
+          sourceSummary: typeof card.sourceSummary === "string" ? card.sourceSummary.trim().slice(0, 2_400) : "",
+        };
+      })
+    : [];
+  if (generationMode === "whole_exam_v2" && lessonCards.length !== lessons.length) {
+    throw httpError("محرك الاختبار الكامل يحتاج بطاقة واحدة لكل درس محدد.", 400);
+  }
+
+  const blueprintRecord = generationMode === "whole_exam_v2" ? requireRecord(record.blueprint, "مخطط الاختبار الكامل غير صالح.") : null;
+  const blueprint: AssessmentBlueprintV2 | null = blueprintRecord ? {
+    version: requireEnum(blueprintRecord.version, ["whole-exam-blueprint-v1"] as const, "إصدار مخطط الاختبار غير صالح."),
+    totalMarks: requireInteger(blueprintRecord.totalMarks, "مجموع درجات المخطط غير صالح.", 1, 100),
+    itemCount: requireInteger(blueprintRecord.itemCount, "عدد مفردات المخطط غير صالح.", 1, MAX_WHOLE_EXAM_ITEMS),
+    lessons: Array.isArray(blueprintRecord.lessons)
+      ? blueprintRecord.lessons.map((lesson) => requireText(lesson, "أحد دروس المخطط غير صالح.", 180))
+      : [],
+    items: Array.isArray(blueprintRecord.items)
+      ? blueprintRecord.items.map((entry) => {
+          const blueprintItem = requireRecord(entry, "إحدى مفردات مخطط الاختبار غير صالحة.");
+          return {
+            order: requireInteger(blueprintItem.order, "ترتيب مفردة المخطط غير صالح.", 1, MAX_WHOLE_EXAM_ITEMS),
+            planItemId: requireText(blueprintItem.planItemId, "معرف مفردة المخطط غير صالح.", 120),
+            lessonLabel: requireText(blueprintItem.lessonLabel, "درس مفردة المخطط غير صالح.", 180),
+            learningOutcome: requireText(blueprintItem.learningOutcome, "هدف مفردة المخطط غير صالح.", 240),
+            questionType: requireText(blueprintItem.questionType, "نوع مفردة المخطط غير صالح.", 80),
+            cognitiveLevel: requireText(blueprintItem.cognitiveLevel, "مستوى مفردة المخطط غير صالح.", 80),
+            marks: requireInteger(blueprintItem.marks, "درجة مفردة المخطط غير صالحة.", 1, 20),
+            styleTarget: requireEnum(blueprintItem.styleTarget, ["مفهومي", "سياقي", "حسابي", "بيانات", "استقصائي", "مقارنة"] as const, "نمط مفردة المخطط غير صالح."),
+            visualTarget: requireEnum(blueprintItem.visualTarget, ["none", "context_scene", "line_graph", "bar_chart", "pressure_diagram", "circuit_diagram", "electrostatic_diagram", "data_table", "instrument_scale", "ray_diagram", "force_diagram", "flow_diagram"] as const, "رسم مفردة المخطط غير صالح."),
+            scenarioTarget: requireEnum(blueprintItem.scenarioTarget, ["scientific_abstract", "door_handle", "playground_seesaw", "wrench_tool", "bicycle_brake", "shopping_trolley", "school_bag", "water_tank", "solar_panel", "laboratory_setup", "road_safety"] as const, "سياق مفردة المخطط غير صالح."),
+            stimulusTarget: requireEnum(blueprintItem.stimulusTarget, ["concise_text", "real_life_scene", "scientific_diagram", "data_table", "graph", "instrument", "experiment", "decision_case"] as const, "مثير مفردة المخطط غير صالح."),
+            skillTarget: requireEnum(blueprintItem.skillTarget, ["recognize", "apply", "calculate", "interpret", "compare", "evaluate", "investigate"] as const, "مهارة مفردة المخطط غير صالحة."),
+            diversityKey: requireText(blueprintItem.diversityKey, "بصمة مفردة المخطط غير صالحة.", 240),
+          };
+        })
+      : [],
+    globalReviewRules: Array.isArray(blueprintRecord.globalReviewRules)
+      ? blueprintRecord.globalReviewRules.map((rule) => requireText(rule, "إحدى قواعد المراجعة غير صالحة.", 300)).slice(0, 12)
+      : [],
+  } : null;
+  if (blueprint && (blueprint.itemCount !== items.length || blueprint.items.length !== items.length || blueprint.totalMarks !== items.reduce((sum, item) => sum + item.marks, 0))) {
+    throw httpError("مخطط الاختبار الكامل لا يطابق الخطة الرسمية.", 400);
+  }
+
+  const globalAssessmentReferences: GlobalAssessmentReferenceV2[] = generationMode === "whole_exam_v2" && Array.isArray(record.globalAssessmentReferences)
+    ? record.globalAssessmentReferences.map((entry) => {
+        const globalReference = requireRecord(entry, "أحد مراجع الاختبارات العالمية غير صالح.");
+        return {
+          id: requireText(globalReference.id, "معرف المرجع العالمي غير صالح.", 220),
+          sourceTitle: requireText(globalReference.sourceTitle, "عنوان المرجع العالمي غير صالح.", 220),
+          sourceKind: requireText(globalReference.sourceKind, "نوع المرجع العالمي غير صالح.", 100),
+          excerpt: requireText(globalReference.excerpt, "محتوى المرجع العالمي فارغ.", 2_000),
+        };
+      }).slice(0, 6)
+    : [];
+
+  return {
+    generationMode,
+    generationVersion,
+    assessmentType,
+    assessmentPolicyId,
+    topic,
+    lessons,
+    grade,
+    subject,
+    difficulty,
+    trustedEnrichmentEnabled,
+    references,
+    officialPlanItems,
+    items,
+    lessonCards,
+    blueprint,
+    globalAssessmentReferences,
+  };
 }
 
 function validateOfficialAssessmentDiversity(assessmentType: AssessmentType, items: GenerationItem[]): void {
@@ -1932,8 +2100,11 @@ function validateAndHydrateGeneratedPayload(
       throw retryableError("مولد الأسئلة أعاد مفردة مجهولة أو مكررة.");
     }
     const requested = requestedById.get(generatedItem.planItemId);
-    if (!requested || !Array.isArray(generatedItem.alternatives) || generatedItem.alternatives.length !== 3) {
-      throw retryableError("مولد الأسئلة لم يلتزم بثلاثة بدائل لكل مفردة.");
+    const expectedAlternativeCount = request.generationMode === "whole_exam_v2" ? 1 : 3;
+    if (!requested || !Array.isArray(generatedItem.alternatives) || generatedItem.alternatives.length !== expectedAlternativeCount) {
+      throw retryableError(request.generationMode === "whole_exam_v2"
+        ? "محرك الاختبار الكامل لم يلتزم بسؤال نهائي واحد لكل مفردة."
+        : "مولد الأسئلة لم يلتزم بثلاثة بدائل لكل مفردة.");
     }
     seen.add(generatedItem.planItemId);
     const visual = buildServerOwnedVisualSpec(requested, request);
@@ -1956,7 +2127,7 @@ function validateAndHydrateGeneratedPayload(
         requested.diversityKey,
       )
     );
-    validateAlternativeDiversity(alternatives, requested.diversityKey);
+    if (alternatives.length > 1) validateAlternativeDiversity(alternatives, requested.diversityKey);
     hydratedItems.push({
       planItemId: generatedItem.planItemId,
       visual,
@@ -1964,7 +2135,47 @@ function validateAndHydrateGeneratedPayload(
     });
   }
   if (seen.size !== requestedById.size) throw retryableError("مولد الأسئلة لم يُعد جميع مفردات الخطة.");
+  if (request.generationMode === "whole_exam_v2") validateWholeExamGeneratedDiversity(hydratedItems);
   return { items: hydratedItems };
+}
+
+function wholeExamQuestionMaterial(item: GeneratedItem): string {
+  const alternative = item.alternatives[0];
+  return normalizeForEvidence(`${alternative?.stimulus ?? ""} ${alternative?.text ?? ""}`);
+}
+
+function validateWholeExamGeneratedDiversity(items: GeneratedItem[]): void {
+  const signatures = new Set<string>();
+  const numericFingerprints = new Set<string>();
+  let directRecallCount = 0;
+  for (const item of items) {
+    const alternative = item.alternatives[0];
+    if (!alternative) throw retryableError("الاختبار الكامل يحتوي مفردة بلا سؤال.");
+    const material = wholeExamQuestionMaterial(item);
+    const signature = material.split(/\s+/u).filter((token) => token.length >= 3).slice(0, 18).join(" ");
+    if (signature && signatures.has(signature)) {
+      throw retryableError("الاختبار الكامل يحتوي سؤالين متطابقين أو شبه متطابقين.");
+    }
+    signatures.add(signature);
+    const numbers = `${alternative.stimulus} ${alternative.text}`.match(/[0-9٠-٩]+(?:[.,][0-9٠-٩]+)?/g) ?? [];
+    if (numbers.length >= 3) {
+      const fingerprint = numbers.join("|");
+      if (numericFingerprints.has(fingerprint)) {
+        throw retryableError("الاختبار الكامل يعيد مجموعة البيانات العددية نفسها في أكثر من سؤال.");
+      }
+      numericFingerprints.add(fingerprint);
+    }
+    if (/(ما المقصود|عرف|اكتب تعريف|اذكر وحده|ما وحده قياس|حدد المصطلح)/u.test(material)) directRecallCount += 1;
+  }
+  if (items.length >= 5 && directRecallCount > 1) {
+    throw retryableError("الاختبار الكامل يعتمد على الاستدعاء المباشر أكثر من اللازم.");
+  }
+  const visualSignatures = items
+    .filter((item) => item.visual.type !== "none")
+    .map((item) => `${item.visual.type}|${item.visual.variant}|${item.visual.role}`);
+  if (visualSignatures.length >= 4 && new Set(visualSignatures).size < Math.ceil(visualSignatures.length / 2)) {
+    throw retryableError("الاختبار الكامل يكرر بنية الرسم نفسها أكثر من اللازم.");
+  }
 }
 
 const VISUAL_TYPES: readonly QuestionVisualType[] = ["none", "context_scene", "line_graph", "bar_chart", "pressure_diagram", "circuit_diagram", "electrostatic_diagram", "data_table", "instrument_scale", "ray_diagram", "force_diagram", "flow_diagram"];
@@ -2510,8 +2721,9 @@ function generationThinkingBudget(items: GenerationItem[]): number {
   return heavy ? 768 : 0;
 }
 
-function generationOutputTokenLimit(items: GenerationItem[]): number {
+function generationOutputTokenLimit(items: GenerationItem[], wholeExam = false): number {
   const markTotal = items.reduce((sum, item) => sum + item.marks, 0);
+  if (wholeExam) return Math.min(8_192, Math.max(4_200, 2_400 + (items.length * 620) + (markTotal * 260)));
   return Math.min(5_200, Math.max(2_400, 1_900 + (items.length * 450) + (markTotal * 350)));
 }
 

@@ -39,6 +39,12 @@ import {
   splitQuestionGenerationBatches,
 } from "./question-generation.js";
 import {
+  ASSESSMENT_GENERATION_V2_VERSION,
+  applyWholeExamQuestionsV2,
+  buildWholeExamGenerationRequestV2,
+  parseWholeExamGenerationResponseV2,
+} from "./assessment-generation-v2.js";
+import {
   ASSESSMENT_ITEM_WRITING_RULES,
   INTERNATIONAL_SCIENCE_QUESTION_STYLE_PRINCIPLES,
   SCIENCE_ASSESSMENT_POLICY_DOCUMENT_PATH,
@@ -630,6 +636,20 @@ function renderSetupStep(): string {
         : `${inputField("duration-input", "الزمن بالدقائق", state.draft.durationMinutes, "number", "", "10")}${inputField("marks-input", "الدرجة الكلية", state.draft.totalMarks, "number", "", "5")}`}
     </div>
 
+    <section class="generation-mode-panel">
+      <div class="generation-mode-heading"><div><span class="eyebrow">طريقة إنشاء الاختبار</span><h3>محرك التوليد</h3></div><span class="generation-mode-badge">V2 تجريبي آمن</span></div>
+      <div class="generation-mode-options">
+        <label class="generation-mode-option ${state.draft.generationMode === "whole_exam_v2" ? "selected" : ""}">
+          <input type="radio" name="generation-mode" value="whole_exam_v2" ${state.draft.generationMode === "whole_exam_v2" ? "checked" : ""}/>
+          <span><strong>تصميم الاختبار كاملًا</strong><small>يبني واثق مخطط الاختبار والأسئلة والبيانات كوحدة واحدة، ثم يراجع التنوع وقابلية الحل قبل العرض. هذا هو الخيار الموصى به.</small></span>
+        </label>
+        <label class="generation-mode-option ${state.draft.generationMode === "legacy_items" ? "selected" : ""}">
+          <input type="radio" name="generation-mode" value="legacy_items" ${state.draft.generationMode === "legacy_items" ? "checked" : ""}/>
+          <span><strong>المحرك السابق</strong><small>يولد المفردات على دفعات صغيرة. يبقى متاحًا كخطة رجوع ولا يُحذف من التطبيق.</small></span>
+        </label>
+      </div>
+    </section>
+
     <label class="trusted-enrichment-card ${state.draft.trustedEnrichmentEnabled ? "enabled" : ""}">
       <input id="trusted-enrichment-toggle" type="checkbox" ${state.draft.trustedEnrichmentEnabled ? "checked" : ""}/>
       <span class="trusted-enrichment-check">${state.draft.trustedEnrichmentEnabled ? icon("check") : ""}</span>
@@ -677,8 +697,9 @@ function renderPlanStep(): string {
   const generationLabel = state.draft.generationModel
     ? `تم التوليد عبر ${state.draft.generationModel} في ${formatArabicDate(state.draft.generatedAt.slice(0, 10))}.`
     : "تم إنشاء الأسئلة من المقاطع المرتبطة بالدروس.";
+  const wholeExamMode = state.draft.generationMode === "whole_exam_v2";
   return `
-    <div class="section-intro inline"><div><h2>اختر سؤالًا واحدًا لكل مفردة</h2><p>${escapeHtml(state.questionGenerationMessage || generationLabel)} راجع الصياغة والإجابة ودليل المصدر قبل الاختيار.</p></div><span class="progress-pill">${selectedCount} من ${state.draft.plan.length}</span></div>
+    <div class="section-intro inline"><div><h2>${wholeExamMode ? "راجع الاختبار المصمم كاملًا" : "اختر سؤالًا واحدًا لكل مفردة"}</h2><p>${escapeHtml(state.questionGenerationMessage || generationLabel)} ${wholeExamMode ? "راجع الأسئلة كوحدة واحدة؛ يمكنك إعادة توليد مفردة منفردة بعد ذلك عند الحاجة." : "راجع الصياغة والإجابة ودليل المصدر قبل الاختيار."}</p></div><span class="progress-pill">${selectedCount} من ${state.draft.plan.length}</span></div>
     <div class="plan-stack">${state.draft.plan.map((item, index) => renderPlanItem(item, index)).join("")}</div>
     ${renderWizardFooter(3, isPlanComplete(state.draft))}
   `;
@@ -1770,6 +1791,58 @@ async function generateQuestionsForPlan(plan: PlanItem[]): Promise<boolean> {
     return false;
   }
   const subject = SUBJECTS.find((item) => item.id === state.draft.subjectId)?.label ?? state.draft.subjectId;
+  if (state.draft.generationMode === "whole_exam_v2" && plan.length <= 12) {
+    const completeV2 = plan.length > 0 && plan.every((item) => item.proposals.length === 1);
+    if (completeV2) {
+      state.questionGenerationMessage = `اكتمل تصميم الاختبار الكامل وحُفظت ${plan.length} مفردات؛ راجعها قبل الاعتماد.`;
+      return true;
+    }
+    state.questionGenerationBusy = true;
+    state.questionGenerationMessage = "جارٍ تصميم الاختبار كاملًا، ثم مراجعته علميًا وتقويميًا كوحدة واحدة…";
+    render();
+    try {
+      const request = buildWholeExamGenerationRequestV2(
+        state.draft.assessmentType,
+        state.draft.topic,
+        state.draft.lessonTopics,
+        state.draft.grade,
+        subject,
+        state.draft.difficulty,
+        state.draft.sourceReferences,
+        state.draft.plan,
+        state.lessonCatalog,
+        state.draft.trustedEnrichmentEnabled,
+      );
+      const rawResponse = await questionGenerationService.generateWholeExam(request);
+      const response = parseWholeExamGenerationResponseV2(rawResponse, request.items);
+      state.draft.plan = applyWholeExamQuestionsV2(state.draft.plan, response);
+      state.draft.selectedProposalByPlanItem = Object.fromEntries(
+        state.draft.plan.map((item) => [item.id, item.proposals[0]?.id ?? ""]).filter((entry) => Boolean(entry[1])),
+      );
+      state.draft.generationVersion = ASSESSMENT_GENERATION_V2_VERSION;
+      state.draft.generationModel = response.model;
+      state.draft.generatedAt = response.generatedAt;
+      state.questionGenerationBusy = false;
+      state.questionGenerationMessage = `تم تصميم اختبار كامل من ${state.draft.plan.length} مفردات ومراجعته كوحدة واحدة. راجع الأسئلة ثم اعتمدها أو جدد مفردة محددة.`;
+      scheduleSave();
+      render();
+      return true;
+    } catch (error) {
+      state.questionGenerationBusy = false;
+      const detail = error instanceof Error ? error.message : "تعذر تصميم الاختبار الكامل.";
+      state.questionGenerationMessage = `${detail} بقي المحرك السابق متاحًا من إعداد الاختبار دون فقد المسودة.`;
+      scheduleSave();
+      render();
+      showToast(detail);
+      return false;
+    }
+  }
+  if (state.draft.generationMode === "whole_exam_v2" && plan.length > 12) {
+    state.draft.generationMode = "legacy_items";
+    state.questionGenerationMessage = "محرك الاختبار الكامل V2 يدعم الاختبارات القصيرة حتى 12 مفردة في هذه المرحلة؛ حوّل واثق هذه المسودة إلى المحرك السابق للاختبار النهائي مع بقاء الخطة كاملة.";
+    scheduleSave();
+    render();
+  }
   const pendingItems = plan.filter((item) => item.proposals.length !== 3);
   if (!pendingItems.length) {
     state.questionGenerationMessage = `اكتملت ${plan.length} مفردات وحُفظت؛ يمكنك الانتقال إلى الاختيار.`;
@@ -1872,15 +1945,25 @@ async function regeneratePlanItem(item: PlanItem): Promise<void> {
       };
     }
     const response = await questionGenerationService.generate(request);
-    const [replacement] = applyGeneratedQuestions([item], response);
-    if (!replacement) throw new Error("تعذر ربط البدائل الجديدة بمفردة الخطة.");
+    const [generatedReplacement] = applyGeneratedQuestions([item], response);
+    if (!generatedReplacement) throw new Error("تعذر ربط البدائل الجديدة بمفردة الخطة.");
+    const replacement = state.draft.generationMode === "whole_exam_v2"
+      ? { ...generatedReplacement, proposals: generatedReplacement.proposals.slice(0, 1).map((proposal) => ({ ...proposal, id: `${item.id}-v2-primary` })) }
+      : generatedReplacement;
     state.draft.plan = state.draft.plan.map((entry) => entry.id === item.id ? replacement : entry);
-    delete state.draft.selectedProposalByPlanItem[item.id];
-    state.draft.generationVersion = SOURCE_GENERATION_VERSION;
+    if (state.draft.generationMode === "whole_exam_v2" && replacement.proposals[0]) {
+      state.draft.selectedProposalByPlanItem[item.id] = replacement.proposals[0].id;
+      state.draft.generationVersion = ASSESSMENT_GENERATION_V2_VERSION;
+    } else {
+      delete state.draft.selectedProposalByPlanItem[item.id];
+      state.draft.generationVersion = SOURCE_GENERATION_VERSION;
+    }
     state.draft.generationModel = response.model;
     state.draft.generatedAt = response.generatedAt;
     state.questionGenerationBusy = false;
-    state.questionGenerationMessage = "تم توليد ثلاثة بدائل مشابهة لهذه المفردة.";
+    state.questionGenerationMessage = state.draft.generationMode === "whole_exam_v2"
+      ? "تم تجديد السؤال المحدد مع الحفاظ على وضع تصميم الاختبار الكامل."
+      : "تم توليد ثلاثة بدائل مشابهة لهذه المفردة.";
     scheduleSave();
     render();
     showToast(state.questionGenerationMessage);
@@ -2174,6 +2257,18 @@ function bindSetupStep(): void {
   document.querySelector<HTMLSelectElement>("#semester-select")?.addEventListener("change", (event) => {
     state.draft.semester = (event.target as HTMLSelectElement).value;
     scheduleSave();
+  });
+
+  document.querySelectorAll<HTMLInputElement>('input[name="generation-mode"]').forEach((input) => {
+    input.addEventListener("change", () => {
+      state.draft.generationMode = input.value === "legacy_items" ? "legacy_items" : "whole_exam_v2";
+      invalidateGeneratedQuestions();
+      state.questionGenerationMessage = state.draft.generationMode === "whole_exam_v2"
+        ? "سيصمم واثق الاختبار كاملًا في طلب واحد، ثم يراجعه بوصفه وحدة متكاملة قبل عرضه."
+        : "تم اختيار المحرك السابق الذي يولد المفردات على دفعات صغيرة.";
+      scheduleSave();
+      render();
+    });
   });
 
   document.querySelector<HTMLInputElement>("#trusted-enrichment-toggle")?.addEventListener("change", (event) => {

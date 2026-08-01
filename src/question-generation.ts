@@ -702,6 +702,14 @@ export class QuestionGenerationService {
     return parseQuestionGenerationResponse(payload, request.items);
   }
 
+  async generateWholeExam(request: unknown): Promise<unknown> {
+    return this.postJson(
+      request,
+      145_000,
+      "تأخر تصميم الاختبار الكامل. احتفظ واثق بالمسودة الحالية؛ أعد المحاولة دون فقد المحتوى المختار.",
+    );
+  }
+
   async generateIllustration(request: VisualIllustrationRequest): Promise<VisualIllustrationResponse> {
     const payload = await this.postJson(
       request,

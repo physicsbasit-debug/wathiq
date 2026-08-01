@@ -1,17 +1,23 @@
-# Phase 1-D2 Fix 1 — Changed Files Manifest
+# Phase 2-A — Changed Files Manifest
 
-تُرفع الملفات التالية فوق Phase 1-D2 (`0.0.48`):
+تُرفع الملفات التالية فوق Phase 1-D2 Fix 1 (`0.0.49`):
 
 - CHANGED_FILES_MANIFEST.txt
 - GITHUB_UPLOAD_INSTRUCTIONS.md
 - README.md
-- docs/PHASE_1_D2_FIX1_LESSON_TREE_NAVIGATION_COMPLETENESS.md
-- docs/PHASE_1_D2_FIX1_TEST_REPORT.md
+- docs/PHASE_2_A_TEST_REPORT.md
+- docs/PHASE_2_A_WHOLE_EXAM_GENERATION_V2.md
 - package.json
 - src/app.ts
-- src/lesson-catalog.ts
+- src/assessment-generation-v2.ts
+- src/domain.ts
+- src/question-generation.ts
+- src/storage.ts
 - src/styles.css
-- tests/lesson-catalog.test.mjs
+- src/types.ts
+- supabase/functions/generate-source-questions/index.ts
+- tests/assessment-generation-v2.test.mjs
+- tests/phase-2-a-whole-exam-v2-files.test.mjs
 - tests/phase-1-a-simple-source-brief.test.mjs
 - tests/phase-1-b-files.test.mjs
 - tests/phase-1-b3-files.test.mjs
@@ -36,17 +42,16 @@
 
 ## خارج النطاق
 
-- لا Supabase Edge Function.
 - لا SQL.
 - لا GitHub workflow.
 - لا أسرار أو `.env`.
 - لا إعادة فهرسة.
-- لا Word أو PDF أو محرك صور.
+- لا تعديل على Word أو PDF أو تخزين الصور.
 - `dist/` يُبنى تلقائيًا ولا يدخل حزمة الملفات المعدلة فقط.
 
 ## نتيجة الفحص
 
 ```text
-336 passed
+345 passed
 0 failed
 ```

@@ -68,6 +68,7 @@ export function createEmptyDraft(now = new Date()): ExamDraft {
     difficulty: "متوسط",
     trustedEnrichmentEnabled: true,
     visualEnhancementEnabled: true,
+    generationMode: "whole_exam_v2",
     counts: { mcq: 2, short: 3, long: 1 },
     plan: [],
     selectedProposalByPlanItem: {},
