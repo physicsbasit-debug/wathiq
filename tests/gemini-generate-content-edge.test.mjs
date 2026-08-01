@@ -54,6 +54,7 @@ async function loadEdgeHelpers() {
     buildControlledIllustrationPrompt,
     findGeneratedImagePart,
     fixedVisualContainsCalculationData,
+    normalizeVisualQuestionReference,
   };\n`;
 
   const javascript = ts.transpileModule(source, {
@@ -1013,4 +1014,61 @@ test("لا يفرض الخادم خطوات الحل على السؤال الح�
   }] };
   const hydrated = helpers.validateAndHydrateGeneratedPayload(payload, request, catalog);
   assert.equal(hydrated.items[0].alternatives[0].workingRequired, false);
+});
+
+test("يطبّع إحالة الشكل داخل مسار التحقق الفعلي بدل رفض السؤال البصري", () => {
+  const references = [{
+    id: "R-VISUAL-REF", sourceId: "student-book", sourceTitle: "كتاب الطالب", sourceKind: "كتاب الطالب",
+    pageFrom: 30, pageTo: 30, content: "تؤثر القوى في حركة الجسم، وتحدد المحصلة من اتجاهات القوى ومقاديرها.",
+    lessonTopic: "القوى والمحصلة", lessonScopeMode: "page-range", lessonPageFrom: 30, lessonPageTo: 30,
+  }];
+  const catalog = helpers.buildEvidenceCatalog(references);
+  const request = {
+    generationMode: "whole_exam_v2", subject: "الفيزياء", topic: "القوى والمحصلة", references,
+    items: [{
+      planItemId: "P-VISUAL-REF", questionType: "إجابة قصيرة", marks: 2, sourceReferenceId: "R-VISUAL-REF",
+      lessonLabel: "القوى والمحصلة", styleTarget: "حسابي", visualTarget: "force_diagram",
+      scenarioTarget: "scientific_abstract", stimulusTarget: "scientific_diagram", skillTarget: "calculate",
+      diversityKey: "legacy:visual-reference",
+    }],
+  };
+  const payload = { items: [{
+    planItemId: "P-VISUAL-REF", alternatives: [{
+      stimulus: "", text: "احسب محصلة القوتين واتجاهها.", options: [],
+      answer: "2 N في اتجاه القوة الأكبر.", rationale: "تطرح القوتان المتعاكستان.",
+      markScheme: ["طرح مقدار القوتين.", "تحديد اتجاه القوة الأكبر."],
+      questionForm: "حسابي", workingRequired: false, sourceEvidenceId: catalog.fragments[0].id,
+      enrichmentEvidenceId: "", needsReview: false,
+    }],
+  }] };
+  const hydrated = helpers.validateAndHydrateGeneratedPayload(payload, request, catalog);
+  assert.equal(
+    hydrated.items[0].alternatives[0].text,
+    "بالاستعانة بمخطط القوى المرفق، احسب محصلة القوتين واتجاهها.",
+  );
+  assert.equal(hydrated.items[0].alternatives[0].workingRequired, true);
+});
+
+test("يختار مطبع الإحالة عبارة مناسبة لكل نوع رسم ولا يكررها", () => {
+  const force = helpers.normalizeVisualQuestionReference("", "احسب محصلة القوتين.", "force_diagram");
+  assert.equal(force.text, "بالاستعانة بمخطط القوى المرفق، احسب محصلة القوتين.");
+  assert.equal(force.changed, true);
+
+  const table = helpers.normalizeVisualQuestionReference("", "قارن بين القيمتين.", "data_table");
+  assert.equal(table.text, "بالاستعانة بالجدول المرفق، قارن بين القيمتين.");
+
+  const graph = helpers.normalizeVisualQuestionReference("", "استنتج اتجاه العلاقة.", "line_graph");
+  assert.equal(graph.text, "بالاستعانة بالرسم البياني المرفق، استنتج اتجاه العلاقة.");
+
+  const existing = helpers.normalizeVisualQuestionReference(
+    "يعرض الرَّسم البياني المرفق نتائج التجربة.",
+    "استنتج العلاقة.",
+    "line_graph",
+  );
+  assert.equal(existing.changed, false);
+  assert.equal(existing.text, "استنتج العلاقة.");
+
+  const plain = helpers.normalizeVisualQuestionReference("", "عرّف القوة.", "none");
+  assert.equal(plain.changed, false);
+  assert.equal(plain.text, "عرّف القوة.");
 });
