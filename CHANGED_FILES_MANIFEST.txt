@@ -1,44 +1,20 @@
-# Phase 2-A — Changed Files Manifest
+# Phase 2-A Fix 2 — Changed Files Manifest
 
-تُرفع الملفات التالية فوق Phase 1-D2 Fix 1 (`0.0.49`):
+تُرفع الملفات التالية فوق Phase 2-A Fix 1 (الإصدار التشغيلي `0.0.50`):
 
 - CHANGED_FILES_MANIFEST.txt
 - GITHUB_UPLOAD_INSTRUCTIONS.md
+- PHASE_2_A_FIX2_TEST_REPORT.md
 - README.md
-- docs/PHASE_2_A_TEST_REPORT.md
-- docs/PHASE_2_A_WHOLE_EXAM_GENERATION_V2.md
-- package.json
+- docs/PHASE_2_A_FIX2_CALCULATION_WORKING_NORMALIZATION.md
 - src/app.ts
 - src/assessment-generation-v2.ts
-- src/domain.ts
 - src/question-generation.ts
-- src/storage.ts
-- src/styles.css
-- src/types.ts
 - supabase/functions/generate-source-questions/index.ts
 - tests/assessment-generation-v2.test.mjs
-- tests/phase-2-a-whole-exam-v2-files.test.mjs
-- tests/phase-1-a-simple-source-brief.test.mjs
-- tests/phase-1-b-files.test.mjs
-- tests/phase-1-b3-files.test.mjs
-- tests/phase-1-b4-files.test.mjs
-- tests/phase-1-b5-files.test.mjs
-- tests/phase-1-b6-files.test.mjs
-- tests/phase-1-b7-files.test.mjs
-- tests/phase-1-b8-files.test.mjs
-- tests/phase-1-c1-files.test.mjs
-- tests/phase-1-c1-fix2-files.test.mjs
-- tests/phase-1-c2-files.test.mjs
-- tests/phase-1-c2-fix1-files.test.mjs
-- tests/phase-1-c2-fix2-files.test.mjs
-- tests/phase-1-c2-fix3-files.test.mjs
-- tests/phase-1-c2-fix4-files.test.mjs
-- tests/phase-1-c2-fix5-files.test.mjs
-- tests/phase-1-c2-fix6-files.test.mjs
-- tests/phase-1-c2-fix7-files.test.mjs
-- tests/phase-1-c3-files.test.mjs
-- tests/phase-1-d2-files.test.mjs
-- tests/phase-1-d2-fix1-lesson-tree.test.mjs
+- tests/gemini-generate-content-edge.test.mjs
+- tests/phase-2-a-fix2-calculation-working.test.mjs
+- tests/question-generation.test.mjs
 
 ## خارج النطاق
 
@@ -47,11 +23,5 @@
 - لا أسرار أو `.env`.
 - لا إعادة فهرسة.
 - لا تعديل على Word أو PDF أو تخزين الصور.
+- لا تغيير لعقد التوليد `source-grounded-policy-ai-17-whole-exam-v2`.
 - `dist/` يُبنى تلقائيًا ولا يدخل حزمة الملفات المعدلة فقط.
-
-## نتيجة الفحص
-
-```text
-345 passed
-0 failed
-```

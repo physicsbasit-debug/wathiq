@@ -632,3 +632,49 @@ test("يخصص مشهدًا يوميًا مختلفًا لمفردات التط�
   assert.ok(contexts.includes("wrench_tool"));
   assert.ok(contexts.includes("bicycle_brake"));
 });
+
+test("يثبت إظهار خطوات الحل تلقائيًا للسؤال الحسابي ذي درجتين أو أكثر", () => {
+  const expected = [{
+    planItemId: "plan-calc-2", questionType: "إجابة قصيرة", cognitiveLevel: "تطبيق",
+    marks: 2, sourceReferenceId: "ref-calc", lessonLabel: "القوة والتسارع",
+    styleTarget: "حسابي", visualTarget: "none",
+  }];
+  const payload = {
+    items: [{
+      planItemId: "plan-calc-2", visual: noVisual(),
+      alternatives: [1, 2, 3].map((index) => ({
+        stimulus: `تؤثر قوة مقدارها ${8 + index} N في جسم كتلته 2 kg.`,
+        text: "احسب تسارع الجسم.", options: [], answer: `${(8 + index) / 2} m/s²`,
+        rationale: "يحسب التسارع بقسمة القوة على الكتلة.",
+        markScheme: ["استخدام العلاقة F = ma.", "التعويض والحصول على التسارع بوحدته."],
+        questionForm: "حسابي", workingRequired: false,
+        sourceSupport: "يرتبط التسارع بالقوة والكتلة وفق العلاقة F = ma.", needsReview: false,
+      })),
+    }], model: "gemini-test", generatedAt: "2026-08-01T10:00:00.000Z", requestId: "WQ-CALC-2",
+  };
+  const parsed = parseQuestionGenerationResponse(payload, expected);
+  assert.equal(parsed.items[0].alternatives[0].workingRequired, true);
+});
+
+test("لا يفرض خطوات الحل على السؤال الحسابي ذي الدرجة الواحدة", () => {
+  const expected = [{
+    planItemId: "plan-calc-1", questionType: "إجابة قصيرة", cognitiveLevel: "تطبيق",
+    marks: 1, sourceReferenceId: "ref-calc", lessonLabel: "عزم القوة",
+    styleTarget: "حسابي", visualTarget: "none",
+  }];
+  const payload = {
+    items: [{
+      planItemId: "plan-calc-1", visual: noVisual(),
+      alternatives: [1, 2, 3].map((index) => ({
+        stimulus: `تؤثر قوة مقدارها ${index + 2} N على بعد 1 m من محور الدوران.`,
+        text: "احسب عزم القوة.", options: [], answer: `${index + 2} N m`,
+        rationale: "العزم يساوي القوة مضروبة في المسافة العمودية.",
+        markScheme: ["حساب العزم الصحيح بوحدته."],
+        questionForm: "حسابي", workingRequired: true,
+        sourceSupport: "عزم القوة يساوي القوة في البعد العمودي.", needsReview: false,
+      })),
+    }], model: "gemini-test", generatedAt: "2026-08-01T10:00:00.000Z", requestId: "WQ-CALC-1",
+  };
+  const parsed = parseQuestionGenerationResponse(payload, expected);
+  assert.equal(parsed.items[0].alternatives[0].workingRequired, false);
+});

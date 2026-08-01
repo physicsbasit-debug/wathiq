@@ -15,6 +15,7 @@ import {
   type QuestionGenerationItem,
   type QuestionGenerationReference,
   type QuestionGenerationResponse,
+  shouldRequireCalculationWorking,
 } from "./question-generation.js";
 import { parseQuestionVisualSpec } from "./question-visual.js";
 
@@ -252,7 +253,7 @@ function parseProposal(value: unknown, expected: QuestionGenerationItem): Questi
     rationale,
     markScheme,
     questionForm: expected.styleTarget,
-    workingRequired: record.workingRequired === true,
+    workingRequired: shouldRequireCalculationWorking(expected.styleTarget, expected.marks),
     sourceSupport,
     enrichmentSupport: typeof record.enrichmentSupport === "string" ? record.enrichmentSupport.trim() : "",
     enrichmentSourceTitle: typeof record.enrichmentSourceTitle === "string" ? record.enrichmentSourceTitle.trim() : "",

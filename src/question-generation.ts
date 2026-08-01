@@ -161,6 +161,13 @@ function isQuestionDesignPattern(value: unknown): value is QuestionDesignPattern
   return typeof value === "string" && (QUESTION_DESIGN_PATTERNS as readonly string[]).includes(value);
 }
 
+export function shouldRequireCalculationWorking(
+  questionForm: QuestionDesignPattern,
+  marks: number,
+): boolean {
+  return questionForm === "حسابي" && Number.isFinite(marks) && marks >= 2;
+}
+
 
 function safeExternalUrl(value: string): string {
   if (!value) return "";
@@ -186,7 +193,7 @@ function parseAlternative(value: unknown, expected: QuestionGenerationItem): Gen
     ? record.markScheme.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean)
     : [];
   const questionForm = isQuestionDesignPattern(record.questionForm) ? record.questionForm : null;
-  const workingRequired = record.workingRequired === true;
+  const workingRequired = shouldRequireCalculationWorking(questionForm ?? expected.styleTarget, expected.marks);
   const sourceSupport = typeof record.sourceSupport === "string" ? record.sourceSupport.trim() : "";
   const enrichmentSupport = typeof record.enrichmentSupport === "string" ? record.enrichmentSupport.trim() : "";
   const enrichmentSourceTitle = typeof record.enrichmentSourceTitle === "string" ? record.enrichmentSourceTitle.trim() : "";
@@ -204,9 +211,6 @@ function parseAlternative(value: unknown, expected: QuestionGenerationItem): Gen
   }
   if (!hasSufficientQuestionContext(stimulus, text, questionForm, expected.visualTarget)) {
     throw new Error("أحد الأسئلة السياقية لا يحتوي متنًا أو بيانات كافية.");
-  }
-  if (questionForm === "حسابي" && !workingRequired) {
-    throw new Error("السؤال الحسابي لا يطلب إظهار خطوات الحل.");
   }
   if (expected.visualTarget !== "none") {
     const visualReference = normalizeVisualText(`${stimulus} ${text}`);
