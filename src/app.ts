@@ -14,7 +14,7 @@ import {
   syncDraftTopicFromLessons,
   validateExamSetup,
 } from "./domain.js";
-import { clearDraft, loadDraft, loadDrafts, loadProfile, loadSources, saveDraft, saveProfile, saveSources, setActiveDraftId } from "./storage.js";
+import { clearDraft, loadDraft, loadDraftResumeContext, loadDrafts, loadProfile, loadSources, saveDraft, saveDraftResumeContext, saveProfile, saveSources, setActiveDraftId } from "./storage.js";
 import type { ExamDraft, ExamTitleOption, ManagedSource, PlanItem, QuestionCounts, SourceDraft, SourceStatus, SourceExtractionResult, SourceStructureNode, ViewName, WizardStep } from "./types.js";
 import { escapeHtml, formatArabicDate, icon } from "./ui.js";
 import { isAiIllustrationEligible, questionVisualTypeLabel, renderQuestionVisualSvg, stripQuestionVisualIllustration, validateQuestionVisualSpec } from "./question-visual.js";
@@ -175,6 +175,8 @@ const state: AppState = {
   visualEnhancementAutoStarted: false,
 };
 
+if (savedDraft) restoreDraftRuntimeContext(savedDraft);
+
 let saveTimer: number | undefined;
 
 function persistDraftCheckpoint(showFailure = true): boolean {
@@ -185,6 +187,14 @@ function persistDraftCheckpoint(showFailure = true): boolean {
   try {
     state.draft.updatedAt = new Date().toISOString();
     saveDraft(state.draft);
+    saveDraftResumeContext({
+      schemaVersion: 1,
+      draftId: state.draft.id,
+      selectionKey: lessonCatalogSelectionKey(),
+      activeUnitKey: state.lessonCatalogActiveUnitKey,
+      lessonCatalog: state.lessonCatalog,
+      savedAt: state.draft.updatedAt,
+    });
     saveProfile({ school: state.draft.school, directorate: state.draft.directorate });
     state.saveState = "محفوظ";
     renderTopSaveState();
@@ -464,6 +474,64 @@ interface LessonUnitGroup {
 
 function lessonUnitKey(sourceId: string, unitLabel: string): string {
   return `${sourceId}::${unitLabel}`;
+}
+
+function splitLessonLabel(label: string): { code: string; title: string } {
+  const normalized = label.trim();
+  const match = /^([0-9٠-٩۰-۹]{1,2}\s*[-.]\s*[0-9٠-٩۰-۹]{1,2})\s*[:：\-]?\s*(.+)$/u.exec(normalized);
+  if (!match) return { code: "درس", title: normalized || "درس محفوظ" };
+  return { code: match[1]!.replace(/\s+/g, "").replace(".", "-"), title: match[2]!.trim() };
+}
+
+function fallbackLessonCatalogFromDraft(draft: ExamDraft): LessonCatalogOption[] {
+  const byLabel = new Map<string, LessonCatalogOption>();
+  for (const reference of draft.sourceReferences) {
+    const label = reference.lessonTopic?.trim();
+    if (!label || byLabel.has(label)) continue;
+    const parsed = splitLessonLabel(label);
+    byLabel.set(label, {
+      id: `draft-snapshot:${draft.id}:${reference.id}`,
+      sourceId: reference.sourceId,
+      sourceTitle: reference.sourceTitle,
+      label,
+      code: parsed.code,
+      title: parsed.title,
+      pageStart: reference.pageFrom,
+      pageEnd: reference.pageTo,
+      unitLabel: "الدروس المحفوظة في المسودة",
+      origin: "detected-heading",
+    });
+  }
+  for (const label of normalizeLessonTopics(draft.lessonTopics)) {
+    if (byLabel.has(label)) continue;
+    const parsed = splitLessonLabel(label);
+    byLabel.set(label, {
+      id: `draft-topic:${draft.id}:${byLabel.size + 1}`,
+      sourceId: draft.sourceReferences[0]?.sourceId ?? `draft-source:${draft.id}`,
+      sourceTitle: draft.sourceReferences[0]?.sourceTitle ?? "مرجع المسودة المحفوظ",
+      label,
+      code: parsed.code,
+      title: parsed.title,
+      unitLabel: "الدروس المحفوظة في المسودة",
+      origin: "detected-heading",
+    });
+  }
+  return [...byLabel.values()];
+}
+
+function restoreDraftRuntimeContext(draft: ExamDraft): void {
+  const context = loadDraftResumeContext(draft.id);
+  const snapshot = context?.lessonCatalog?.length ? context.lessonCatalog : fallbackLessonCatalogFromDraft(draft);
+  state.lessonCatalog = snapshot;
+  state.lessonCatalogActiveUnitKey = context?.activeUnitKey ?? "";
+  state.lessonCatalogKey = context?.selectionKey || lessonCatalogSelectionKey();
+  state.lessonCatalogBusy = false;
+  state.lessonCatalogMessage = snapshot.length
+    ? "تمت استعادة شجرة الدروس المحفوظة مع المسودة."
+    : "لم تتضمن المسودة شجرة محفوظة؛ يمكنك متابعة الأسئلة الموجودة أو إعادة ربط المصدر عند تعديل الدروس.";
+  state.sourceRetrievalMessage = draft.sourceReferences.length
+    ? `تمت استعادة ${draft.sourceReferences.length} مقاطع مرجعية محفوظة مع المسودة.`
+    : "لا توجد مقاطع مرجعية محفوظة في هذه المسودة.";
 }
 
 function buildLessonUnitGroups(catalog: LessonCatalogOption[]): LessonUnitGroup[] {
@@ -1450,6 +1518,11 @@ function handleAction(action: string, element: HTMLElement): void {
     persistDraftCheckpoint(false);
     const profile = loadProfile();
     state.draft = createEmptyDraft();
+    state.lessonCatalog = [];
+    state.lessonCatalogKey = "";
+    state.lessonCatalogBusy = false;
+    state.lessonCatalogMessage = "";
+    state.lessonCatalogActiveUnitKey = "";
     state.questionGenerationBusy = false;
     state.questionGenerationMessage = "";
     state.sourceRetrievalMessage = "";
@@ -1470,6 +1543,7 @@ function handleAction(action: string, element: HTMLElement): void {
     if (loaded) {
       state.draft = loaded;
       setActiveDraftId(loaded.id);
+      restoreDraftRuntimeContext(loaded);
     }
     state.visualEnhancementBusyIds.clear();
     state.visualEnhancementMessages = {};
@@ -1482,6 +1556,7 @@ function handleAction(action: string, element: HTMLElement): void {
     if (!loaded) return showToast("تعذر العثور على الاختبار المحفوظ.");
     state.draft = loaded;
     setActiveDraftId(loaded.id);
+    restoreDraftRuntimeContext(loaded);
     state.visualEnhancementBusyIds.clear();
     state.visualEnhancementMessages = {};
     state.visualEnhancementAutoStarted = false;
@@ -1558,6 +1633,12 @@ function handleAction(action: string, element: HTMLElement): void {
     clearDraft(targetDraftId);
     const remaining = loadDraft();
     state.draft = remaining ?? createEmptyDraft();
+    if (remaining) restoreDraftRuntimeContext(remaining);
+    else {
+      state.lessonCatalog = [];
+      state.lessonCatalogKey = "";
+      state.lessonCatalogActiveUnitKey = "";
+    }
     state.questionGenerationBusy = false;
     state.questionGenerationMessage = "";
     state.sourceRetrievalMessage = "";
@@ -2115,8 +2196,8 @@ async function prepareSourceContext(): Promise<boolean> {
 async function loadLessonCatalogForCurrentSelection(force = false): Promise<void> {
   const key = lessonCatalogSelectionKey();
   if (!force && (state.lessonCatalogBusy || state.lessonCatalogKey === key)) return;
+  const savedSnapshot = [...state.lessonCatalog];
   state.lessonCatalogKey = key;
-  state.lessonCatalog = [];
   state.lessonCatalogMessage = "";
   if (state.draft.grade === null || !state.draft.subjectId) return;
   const eligible = eligibleSourcesForDraft();
@@ -2150,7 +2231,8 @@ async function loadLessonCatalogForCurrentSelection(force = false): Promise<void
       }));
       loaded.forEach(([sourceId, nodes]) => structures.set(sourceId, nodes));
     }
-    state.lessonCatalog = buildLessonCatalog(eligible, structures);
+    const liveCatalog = buildLessonCatalog(eligible, structures);
+    state.lessonCatalog = liveCatalog.length ? liveCatalog : savedSnapshot;
     const unitGroups = buildLessonUnitGroups(state.lessonCatalog);
     state.lessonCatalogActiveUnitKey = resolveActiveLessonUnitKey(
       unitGroups,
@@ -2167,9 +2249,11 @@ async function loadLessonCatalogForCurrentSelection(force = false): Promise<void
     const curatedCount = state.lessonCatalog.filter((lesson) => lesson.origin === "curated-book-tree").length;
     const detectedCount = state.lessonCatalog.filter((lesson) => lesson.origin === "detected-heading").length;
     const unitCount = buildLessonUnitGroups(state.lessonCatalog).length;
-    state.lessonCatalogMessage = state.lessonCatalog.length
+    state.lessonCatalogMessage = liveCatalog.length
       ? `${curatedCount ? "تم تجهيز شجرة الكتاب المعتمدة" : "تم تجهيز شجرة المصدر"}: ${unitCount} وحدات و${state.lessonCatalog.length} درسًا${detectedCount ? `، منها ${detectedCount} دروس مكتملة من عناوين المصدر` : ""}.`
-      : "لا توجد شجرة محتوى موثوقة لهذا الكتاب بعد.";
+      : state.lessonCatalog.length
+        ? "تعذر تحديث الشجرة الآن؛ احتفظ واثق بنسخة الدروس المحفوظة داخل المسودة."
+        : "لا توجد شجرة محتوى موثوقة لهذا الكتاب بعد.";
   } finally {
     state.lessonCatalogBusy = false;
     render();

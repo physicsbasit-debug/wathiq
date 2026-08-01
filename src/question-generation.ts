@@ -412,8 +412,11 @@ const DEFAULT_SCENARIO_CYCLE: readonly QuestionScenarioTarget[] = [
 ];
 
 function scenarioCycleForEvidence(evidence: string): readonly QuestionScenarioTarget[] {
-  if (/(عزم|ارتكاز|قوه|قوى|اتزان|احتكاك|حركه)/u.test(evidence)) {
+  if (/(عزم|ارتكاز|ذراع القوه|محور دوران)/u.test(evidence)) {
     return ["door_handle", "playground_seesaw", "wrench_tool", "bicycle_brake", "shopping_trolley", "school_bag"];
+  }
+  if (/(قوه|قوى|اتزان|احتكاك|حركه)/u.test(evidence)) {
+    return ["shopping_trolley", "school_bag", "road_safety", "bicycle_brake", "laboratory_setup"];
   }
   if (/(ضغط|سائل|عمق|طفو|كثافه)/u.test(evidence)) {
     return ["water_tank", "school_bag", "laboratory_setup", "shopping_trolley"];
@@ -447,7 +450,8 @@ function deriveQuestionVisualTarget(
   pattern: QuestionDesignPattern,
 ): QuestionVisualType {
   const normalizedSubject = normalizeVisualText(subject);
-  const evidence = normalizeVisualText(`${item.lessonLabel} ${referenceContent}`);
+  const focusedEvidence = normalizeVisualText(`${item.lessonLabel} ${item.outcomeLabel}`);
+  const evidence = normalizeVisualText(`${item.lessonLabel} ${item.outcomeLabel} ${referenceContent}`);
   const simpleKnowledge = item.cognitiveLevel === "معرفة" && item.marks === 1 && pattern === "مفهومي";
   if (normalizedSubject.includes("فيزياء")) {
     if (/(ترمومتر|ميزان حراره|مخبار|سحاحه|تدريج|قراءه جهاز|اميتر|فولتميتر|مسطره مدرجه)/u.test(evidence)) {
@@ -457,12 +461,20 @@ function deriveQuestionVisualTarget(
       if (simpleKnowledge) return "none";
       return "ray_diagram";
     }
-    if (/(قوه|قوى|احتكاك|وزن|شد|رد فعل|اتزان|عزم|نقطه ارتكاز|مخطط جسم حر)/u.test(evidence)) {
+    if (/(عزم|ارتكاز|ذراع القوه|محور دوران|اتزان دوراني)/u.test(focusedEvidence) || /(عزم|ارتكاز|ذراع القوه)/u.test(evidence)) {
       if (simpleKnowledge) return "none";
       if (pattern === "سياقي" || pattern === "استقصائي") return "context_scene";
       if (pattern === "بيانات") return "data_table";
       if (pattern === "مقارنة") return officialIndex % 2 === 0 ? "context_scene" : "data_table";
-      if (pattern === "حسابي") return officialIndex % 2 === 0 ? "force_diagram" : "data_table";
+      if (pattern === "حسابي") return "force_diagram";
+      return "force_diagram";
+    }
+    if (/(قوه|قوى|احتكاك|وزن|شد|رد فعل|اتزان|مخطط جسم حر)/u.test(evidence)) {
+      if (simpleKnowledge) return "none";
+      if (pattern === "سياقي" || pattern === "استقصائي") return "context_scene";
+      if (pattern === "بيانات") return "data_table";
+      if (pattern === "مقارنة") return officialIndex % 2 === 0 ? "context_scene" : "force_diagram";
+      if (pattern === "حسابي") return "force_diagram";
       return "force_diagram";
     }
     if (/(خطوات|مراحل|تسلسل|تحول|دوره|عمليه|مسار)/u.test(evidence) && item.cognitiveLevel !== "معرفة") {

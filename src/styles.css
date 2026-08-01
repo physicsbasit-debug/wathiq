@@ -1773,7 +1773,7 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
 .qv-answer-line { stroke: #182536; stroke-width: 1.2; }
 .qv-instrument-body, .qv-meter-arc, .qv-meniscus, .qv-mirror, .qv-boundary, .qv-normal, .qv-principal-axis, .qv-lens, .qv-prism, .qv-beam, .qv-pivot { fill: #fff; stroke: #182536; stroke-width: 2; }
 .qv-instrument-liquid, .qv-instrument-fill { fill: #dbe4ef; stroke: none; }
-.qv-scale-tick, .qv-meter-needle, .qv-ray, .qv-force-arrow, .qv-flow-arrow { fill: none; stroke: #172b45; stroke-width: 2; }
+.qv-scale-tick, .qv-meter-needle, .qv-ray, .qv-force-arrow, .qv-flow-arrow, .qv-dimension { fill: none; stroke: #172b45; stroke-width: 2; }
 .qv-normal { stroke-dasharray: 5 4; }
 .qv-ray { stroke-width: 2.4; }
 .qv-mirror { stroke-width: 4; }
@@ -1947,3 +1947,5 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
   .generation-mode-options { grid-template-columns: 1fr; }
   .generation-mode-heading { align-items: flex-start; }
 }
+
+.qv-dimension { stroke-width: 1.5; stroke-dasharray: 5 4; }

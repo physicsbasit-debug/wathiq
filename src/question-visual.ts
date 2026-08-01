@@ -811,8 +811,10 @@ function renderForceDiagram(spec: QuestionVisualSpec): string {
       : vector.label;
     return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" class="qv-force-arrow qv-vector-${index}" marker-end="url(#${marker})"/><text x="${x2 + (vector.dx >= 0 ? 8 : -8)}" y="${y2 - 7}" class="qv-annotation" text-anchor="${vector.dx >= 0 ? "start" : "end"}">${escapeXml(vectorLabel)}</text>`;
   }).join("");
+  const momentDistance1 = numberLabel(spec.values[0] ?? 1.25);
+  const momentDistance2 = numberLabel(spec.values[1] ?? 1.75);
   const support = spec.variant === "moments"
-    ? `<line x1="130" y1="230" x2="510" y2="230" class="qv-beam"/><path d="M 300 230 L 340 230 L 320 275 Z" class="qv-pivot"/><text x="320" y="302" class="qv-annotation" text-anchor="middle">نقطة الارتكاز</text>`
+    ? `<line x1="130" y1="230" x2="510" y2="230" class="qv-beam"/><path d="M 300 230 L 340 230 L 320 275 Z" class="qv-pivot"/><text x="320" y="302" class="qv-annotation" text-anchor="middle">نقطة الارتكاز</text><line x1="190" y1="252" x2="320" y2="252" class="qv-dimension"/><line x1="190" y1="244" x2="190" y2="260" class="qv-dimension"/><line x1="320" y1="244" x2="320" y2="260" class="qv-dimension"/><text x="255" y="278" class="qv-annotation" text-anchor="middle">${escapeXml(momentDistance1)} m</text><line x1="320" y1="252" x2="450" y2="252" class="qv-dimension"/><line x1="450" y1="244" x2="450" y2="260" class="qv-dimension"/><text x="385" y="278" class="qv-annotation" text-anchor="middle">${escapeXml(momentDistance2)} m</text>`
     : `<rect x="265" y="150" width="110" height="80" class="qv-object"/><text x="320" y="195" class="qv-object-label" text-anchor="middle">${escapeXml(spec.labels[0] ?? "الجسم")}</text><line x1="150" y1="230" x2="490" y2="230" class="qv-surface"/>`;
   return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}"><defs><marker id="${marker}" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" class="qv-arrow-fill"/></marker></defs><text x="${width / 2}" y="28" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text>${support}${vectors}</svg>`;
 }

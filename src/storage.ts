@@ -1,4 +1,5 @@
 import type { ExamDraft, ExamSourceReference, ExamTitleOption, ManagedSource, PlanItem } from "./types.js";
+import type { LessonCatalogOption } from "./lesson-catalog.js";
 import { applyOfficialAssessmentTemplate, createEmptyDraft, toDateInputValue } from "./domain.js";
 import { SCIENCE_ASSESSMENT_POLICY_ID, assessmentTypeForTitle, getOfficialAssessmentSpec, isExamTitleOption } from "./assessment-policy.js";
 import { normalizeManagedSource } from "./source-registry.js";
@@ -10,6 +11,7 @@ import { SOURCE_RETRIEVAL_VERSION } from "./source-retrieval.js";
 const DRAFT_KEY = "wathiq.phase0b.latestDraft";
 const DRAFTS_KEY = "wathiq.examDrafts.v1";
 const ACTIVE_DRAFT_ID_KEY = "wathiq.activeDraftId.v1";
+const DRAFT_CONTEXTS_KEY = "wathiq.examDraftContexts.v1";
 const MAX_STORED_DRAFTS = 12;
 const PROFILE_KEY = "wathiq.phase0b.profile";
 const SOURCES_KEY = "wathiq.phase0d.sourceRegistry";
@@ -21,6 +23,99 @@ const COMPATIBLE_GENERATION_VERSIONS = new Set([
   "source-grounded-policy-ai-13-trusted-enrichment",
   "source-grounded-policy-ai-12-advanced-visuals",
 ]);
+
+
+export interface DraftResumeContext {
+  schemaVersion: 1;
+  draftId: string;
+  selectionKey: string;
+  activeUnitKey: string;
+  lessonCatalog: LessonCatalogOption[];
+  savedAt: string;
+}
+
+interface StoredDraftContextCollection {
+  schemaVersion: 1;
+  contexts: DraftResumeContext[];
+}
+
+function normalizeLessonCatalogSnapshot(value: unknown): LessonCatalogOption[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (typeof entry !== "object" || entry === null) return [];
+    const item = entry as Partial<LessonCatalogOption>;
+    if (typeof item.id !== "string" || typeof item.sourceId !== "string" || typeof item.sourceTitle !== "string"
+      || typeof item.label !== "string" || typeof item.code !== "string" || typeof item.title !== "string") return [];
+    const origin = item.origin === "approved-structure" || item.origin === "validated-structure"
+      || item.origin === "curated-book-tree" || item.origin === "detected-heading"
+      ? item.origin
+      : "detected-heading";
+    return [{
+      id: item.id,
+      sourceId: item.sourceId,
+      sourceTitle: item.sourceTitle,
+      label: item.label,
+      code: item.code,
+      title: item.title,
+      ...(typeof item.pageStart === "number" ? { pageStart: item.pageStart } : {}),
+      ...(typeof item.pageEnd === "number" ? { pageEnd: item.pageEnd } : {}),
+      ...(typeof item.unitLabel === "string" && item.unitLabel.trim() ? { unitLabel: item.unitLabel.trim() } : {}),
+      origin,
+    }];
+  });
+}
+
+function readDraftContextCollection(): StoredDraftContextCollection {
+  const raw = localStorage.getItem(DRAFT_CONTEXTS_KEY);
+  if (!raw) return { schemaVersion: 1, contexts: [] };
+  try {
+    const parsed = JSON.parse(raw) as Partial<StoredDraftContextCollection>;
+    const contexts = Array.isArray(parsed.contexts)
+      ? parsed.contexts.flatMap((entry) => {
+          if (typeof entry !== "object" || entry === null) return [];
+          const item = entry as Partial<DraftResumeContext>;
+          if (typeof item.draftId !== "string" || !item.draftId) return [];
+          return [{
+            schemaVersion: 1 as const,
+            draftId: item.draftId,
+            selectionKey: typeof item.selectionKey === "string" ? item.selectionKey : "",
+            activeUnitKey: typeof item.activeUnitKey === "string" ? item.activeUnitKey : "",
+            lessonCatalog: normalizeLessonCatalogSnapshot(item.lessonCatalog),
+            savedAt: typeof item.savedAt === "string" ? item.savedAt : "",
+          }];
+        })
+      : [];
+    return { schemaVersion: 1, contexts };
+  } catch {
+    localStorage.removeItem(DRAFT_CONTEXTS_KEY);
+    return { schemaVersion: 1, contexts: [] };
+  }
+}
+
+function writeDraftContextCollection(collection: StoredDraftContextCollection): void {
+  const contexts = collection.contexts
+    .sort((left, right) => Date.parse(right.savedAt || "") - Date.parse(left.savedAt || ""))
+    .slice(0, MAX_STORED_DRAFTS);
+  localStorage.setItem(DRAFT_CONTEXTS_KEY, JSON.stringify({ schemaVersion: 1, contexts }));
+}
+
+export function saveDraftResumeContext(context: DraftResumeContext): void {
+  const collection = readDraftContextCollection();
+  const contexts = collection.contexts.filter((item) => item.draftId !== context.draftId);
+  contexts.push({ ...context, schemaVersion: 1, lessonCatalog: normalizeLessonCatalogSnapshot(context.lessonCatalog) });
+  writeDraftContextCollection({ schemaVersion: 1, contexts });
+}
+
+export function loadDraftResumeContext(draftId: string): DraftResumeContext | null {
+  if (!draftId) return null;
+  return readDraftContextCollection().contexts.find((item) => item.draftId === draftId) ?? null;
+}
+
+export function clearDraftResumeContext(draftId: string): void {
+  if (!draftId) return;
+  const collection = readDraftContextCollection();
+  writeDraftContextCollection({ schemaVersion: 1, contexts: collection.contexts.filter((item) => item.draftId !== draftId) });
+}
 
 export interface SavedProfile {
   school: string;
@@ -135,11 +230,26 @@ export function normalizeExamDraft(value: unknown): ExamDraft | null {
   const requiresPolicyMigration = Boolean(officialSpec && candidatePolicyId !== SCIENCE_ASSESSMENT_POLICY_ID);
   if (requiresPolicyMigration) applyOfficialAssessmentTemplate(draft);
 
+  const generatedPlanItems = draft.plan.filter((item) => item.proposals.some((proposal) =>
+    typeof proposal?.text === "string" && proposal.text.trim().length > 0
+      && typeof proposal?.answer === "string" && proposal.answer.trim().length > 0,
+  ));
+  const hasGeneratedContent = generatedPlanItems.length > 0;
+  const hasPlanProgress = draft.plan.length > 0;
+  const requestedStep = Number(candidate.currentStep) || 1;
+  if (draft.lessonTopics.filter((item) => item.trim()).length < 2 && draft.plan.length) {
+    const recoveredLessons = [...new Set(draft.plan.map((item) => item.lessonLabel?.trim()).filter(Boolean))].slice(0, 5);
+    if (recoveredLessons.length >= 2) draft.lessonTopics = recoveredLessons;
+  }
   if (draft.lessonTopics.length < 2) draft.lessonTopics = [...draft.lessonTopics, ...Array.from({ length: 2 - draft.lessonTopics.length }, () => "")];
   draft.topic = draft.lessonTopics.map((item) => item.trim()).filter(Boolean).join("، ");
 
-  if (draft.lessonTopics.filter((item) => item.trim()).length < 2 || draft.sourceReferences.length === 0) {
+  const resetToContent = (clearReferences: boolean): void => {
     draft.currentStep = 1;
+    if (clearReferences) {
+      draft.sourceReferences = [];
+      draft.sourceRetrievalVersion = "";
+    }
     draft.plan = [];
     draft.selectedProposalByPlanItem = {};
     draft.generationVersion = "";
@@ -147,26 +257,49 @@ export function normalizeExamDraft(value: unknown): ExamDraft | null {
     draft.generatedAt = "";
     draft.approvedAt = "";
     draft.status = "مسودة";
+  };
+
+  const lessonCount = draft.lessonTopics.filter((item) => item.trim()).length;
+  if (lessonCount < 2 || draft.sourceReferences.length === 0) {
+    if (hasGeneratedContent) {
+      // لا نمحو اختبارًا مولدًا عند تعذر استعادة مصدره محليًا؛ يبقى قابلًا للمراجعة والتصدير.
+      draft.currentStep = Math.max(3, requestedStep) as ExamDraft["currentStep"];
+    } else if (hasPlanProgress || lessonCount >= 2) {
+      // المسودة الجزئية عمل حقيقي أيضًا: نعيدها إلى الإعداد بدل إيهام المستخدم بأنه بدأ اختبارًا جديدًا.
+      draft.currentStep = Math.max(2, Math.min(3, requestedStep)) as ExamDraft["currentStep"];
+    } else {
+      resetToContent(false);
+    }
   } else if (draft.sourceRetrievalVersion !== SOURCE_RETRIEVAL_VERSION) {
-    draft.currentStep = 1;
-    draft.sourceReferences = [];
-    draft.sourceRetrievalVersion = "";
-    draft.plan = [];
-    draft.selectedProposalByPlanItem = {};
-    draft.generationVersion = "";
-    draft.generationModel = "";
-    draft.generatedAt = "";
-    draft.approvedAt = "";
-    draft.status = "مسودة";
+    if (hasGeneratedContent) {
+      // تحديث خوارزمية الاسترجاع لا يبرر حذف عمل المستخدم المكتمل؛ يُعاد الاسترجاع فقط عند تغيير الدروس.
+      draft.currentStep = Math.max(3, requestedStep) as ExamDraft["currentStep"];
+    } else {
+      // نحافظ على اختيارات المستخدم والخطة، ونعود إلى الإعداد لإعادة ربط المقاطع عند المتابعة.
+      draft.currentStep = Math.max(2, Math.min(3, requestedStep)) as ExamDraft["currentStep"];
+      draft.sourceRetrievalVersion = "";
+    }
   } else if (draft.currentStep >= 3 && draft.generationVersion !== (draft.generationMode === "whole_exam_v2" ? ASSESSMENT_GENERATION_V2_VERSION : SOURCE_GENERATION_VERSION)) {
-    draft.currentStep = 2;
-    draft.plan = [];
-    draft.selectedProposalByPlanItem = {};
-    draft.generationVersion = "";
-    draft.generationModel = "";
-    draft.generatedAt = "";
-    draft.approvedAt = "";
-    draft.status = "مسودة";
+    if (hasGeneratedContent) {
+      // نحافظ على الأسئلة القديمة للمراجعة بدل إتلافها عند ترقية عقد التوليد.
+      draft.currentStep = Math.max(3, requestedStep) as ExamDraft["currentStep"];
+      draft.status = draft.status === "معتمد" ? "معتمد" : "جاهز للمراجعة";
+    } else if (hasPlanProgress) {
+      // الخطة الرسمية لا تعتمد على صياغة نموذج بعينه؛ يمكن إعادة المحاولة بعقد التوليد الحالي دون هدمها.
+      draft.currentStep = 3;
+      draft.generationVersion = "";
+      draft.generationModel = "";
+      draft.generatedAt = "";
+      draft.status = "مسودة";
+    } else {
+      draft.currentStep = 2;
+      draft.selectedProposalByPlanItem = {};
+      draft.generationVersion = "";
+      draft.generationModel = "";
+      draft.generatedAt = "";
+      draft.approvedAt = "";
+      draft.status = "مسودة";
+    }
   }
   return draft;
 }
@@ -292,6 +425,7 @@ export function clearDraft(draftId?: string): void {
   const targetId = draftId || localStorage.getItem(ACTIVE_DRAFT_ID_KEY) || collection.activeDraftId;
   const drafts = collection.drafts.filter((draft) => draft.id !== targetId);
   writeDraftCollection({ schemaVersion: 1, activeDraftId: drafts[0]?.id ?? "", drafts });
+  clearDraftResumeContext(targetId);
 }
 
 export function saveProfile(profile: SavedProfile): void {

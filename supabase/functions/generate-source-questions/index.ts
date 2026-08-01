@@ -1750,7 +1750,11 @@ function parseGenerationRequest(value: unknown): GenerationRequest {
   const record = requireRecord(value, "طلب إنشاء الأسئلة غير صالح.");
   const generationMode = record.action === "generate_exam_v2" ? "whole_exam_v2" : "legacy_items";
   const generationVersion = typeof record.generationVersion === "string" ? record.generationVersion.trim().slice(0, 160) : "";
-  if (generationMode === "whole_exam_v2" && generationVersion !== "source-grounded-policy-ai-17-whole-exam-v2") {
+  const compatibleWholeExamVersions = new Set([
+    "source-grounded-policy-ai-17-whole-exam-v2",
+    "source-grounded-policy-ai-18-exam-integrity-resume",
+  ]);
+  if (generationMode === "whole_exam_v2" && !compatibleWholeExamVersions.has(generationVersion)) {
     throw httpError("إصدار محرك الاختبار الكامل غير متوافق.", 400);
   }
   const assessmentType = requireEnum(record.assessmentType, ["اختبار قصير رسمي", "امتحان نهاية الفصل الدراسي"] as const, "نوع التقويم غير صالح.");
@@ -2478,6 +2482,19 @@ function scientificTableProfile(context: string, seed: number): ScientificTableP
       allowHiddenCell: true,
     };
   }
+  if (/(عزم|ارتكاز|ذراع القوه)/u.test(context)) {
+    const offset = seed % 4;
+    return {
+      columns: ["الموقف", "القوة (N)", "المسافة العمودية عن الارتكاز (m)"],
+      rows: ["أ", "ب", "ج", "د"],
+      cells: [["فتح باب", String(18 + offset), "0.75"], ["مفتاح ربط", String(30 + offset * 2), "0.25"], ["أرجوحة", String(220 + offset * 10), "1.2"], ["ذراع مكبح", String(12 + offset), "0.08"]],
+      title: "القوة والمسافة عن محور الدوران",
+      purpose: "مقارنة عزوم قوى في مواقف حياتية مختلفة",
+      altText: "جدول يعرض القوة والمسافة العمودية عن محور الدوران لأربعة مواقف",
+      annotations: ["العزم = القوة × المسافة العمودية"],
+      allowHiddenCell: false,
+    };
+  }
   if (/(تسارع|قوه دفع|كتله.*قوه|قوه.*كتله)/u.test(context)) {
     const mass = [4, 5, 8][seed % 3]!;
     const forces = [8, 12, 16, 20, 24];
@@ -2489,19 +2506,6 @@ function scientificTableProfile(context: string, seed: number): ScientificTableP
       purpose: "حساب التسارع من القوة المحصلة والكتلة باستخدام قانون نيوتن الثاني",
       altText: "جدول يعرض خمس قيم للقوة المحصلة مع كتلة جسم ثابتة",
       annotations: ["التسارع = القوة المحصلة ÷ الكتلة"],
-      allowHiddenCell: false,
-    };
-  }
-  if (/(عزم|ارتكاز|ذراع القوه)/u.test(context)) {
-    const offset = seed % 4;
-    return {
-      columns: ["الموقف", "القوة (N)", "المسافة العمودية عن الارتكاز (m)"],
-      rows: ["أ", "ب", "ج", "د"],
-      cells: [["فتح باب", String(18 + offset), "0.75"], ["مفتاح ربط", String(30 + offset * 2), "0.25"], ["أرجوحة", String(220 + offset * 10), "1.2"], ["ذراع مكبح", String(12 + offset), "0.08"]],
-      title: "القوة والمسافة عن محور الدوران",
-      purpose: "مقارنة عزوم قوى في مواقف حياتية مختلفة",
-      altText: "جدول يعرض القوة والمسافة العمودية عن محور الدوران لأربعة مواقف",
-      annotations: ["العزم = القوة × المسافة العمودية"],
       allowHiddenCell: false,
     };
   }
@@ -2620,7 +2624,7 @@ function buildServerOwnedVisualSpec(item: GenerationItem, request: GenerationReq
   }
 
   if (item.visualTarget === "data_table") {
-    const profile = scientificTableProfile(context, seed);
+    const profile = scientificTableProfile(focusedContext, seed);
     const hiddenCells = profile.allowHiddenCell && (item.styleTarget === "بيانات" || item.cognitiveLevel === "استدلال")
       ? [`r${1 + (seed % Math.max(1, Math.min(3, profile.rows.length - 1)))}c${Math.max(0, profile.columns.length - 1)}`]
       : [];
@@ -2642,7 +2646,7 @@ function buildServerOwnedVisualSpec(item: GenerationItem, request: GenerationReq
   }
 
   if (item.visualTarget === "instrument_scale") {
-    const profile = instrumentProfile(context, seed);
+    const profile = instrumentProfile(focusedContext, seed);
     return {
       ...emptyVisualSpec(),
       type: "instrument_scale",
@@ -2659,11 +2663,11 @@ function buildServerOwnedVisualSpec(item: GenerationItem, request: GenerationReq
   }
 
   if (item.visualTarget === "ray_diagram") {
-    const variant: QuestionVisualVariant = /منشور/u.test(context)
+    const variant: QuestionVisualVariant = /منشور/u.test(focusedContext)
       ? "prism"
-      : /عدسه/u.test(context)
+      : /عدسه/u.test(focusedContext)
         ? "converging_lens"
-        : /انكسار/u.test(context)
+        : /انكسار/u.test(focusedContext)
           ? "refraction"
           : "reflection";
     return {
@@ -2682,15 +2686,19 @@ function buildServerOwnedVisualSpec(item: GenerationItem, request: GenerationReq
   }
 
   if (item.visualTarget === "force_diagram") {
-    const variant: QuestionVisualVariant = /عزم|ارتكاز/u.test(context)
+    const variant: QuestionVisualVariant = /عزم|ارتكاز/u.test(focusedContext)
       ? "moments"
       : item.styleTarget === "مقارنة"
         ? "balanced_forces"
         : "free_body";
+    const momentDistance1 = Number((1.0 + (seed % 3) * 0.25).toFixed(2));
+    const momentDistance2 = Number((1.5 + (seed % 3) * 0.25).toFixed(2));
+    const momentForce1 = 120 + (seed % 4) * 20;
+    const momentForce2 = 80 + (seed % 3) * 20;
     const vectors: QuestionVisualVector[] = variant === "moments"
       ? [
-        { label: "قوة 1", x: -130, y: 40, dx: 0, dy: -85, magnitude: 12 },
-        { label: "قوة 2", x: 130, y: 40, dx: 0, dy: -65, magnitude: 9 },
+        { label: "قوة 1", x: -130, y: 40, dx: 0, dy: -85, magnitude: momentForce1 },
+        { label: "قوة 2", x: 130, y: 40, dx: 0, dy: -65, magnitude: momentForce2 },
       ]
       : [
         { label: "الوزن", x: 0, y: 10, dx: 0, dy: 90, magnitude: 10 },
@@ -2704,18 +2712,23 @@ function buildServerOwnedVisualSpec(item: GenerationItem, request: GenerationReq
       visualId,
       variant,
       role: variant === "moments" ? "calculate" : role,
-      purpose: "تحليل اتجاهات القوى ومقاديرها على جسم أو عارضة",
-      title: `مخطط قوى${titleSuffix}`,
-      altText: "جسم أو عارضة تظهر عليها أسهم قوى مسماة في اتجاهات مختلفة",
+      purpose: variant === "moments" ? "حساب ومقارنة عزوم قوتين حول نقطة ارتكاز" : "تحليل اتجاهات القوى ومقاديرها على جسم",
+      title: variant === "moments" ? `قوتان حول نقطة ارتكاز${titleSuffix}` : `مخطط قوى${titleSuffix}`,
+      altText: variant === "moments"
+        ? "عارضة حول نقطة ارتكاز تظهر عليها قوتان مع مقدار كل قوة والمسافة العمودية عن محور الدوران"
+        : "جسم تظهر عليه أسهم قوى مسماة في اتجاهات مختلفة",
       labels: ["الجسم"],
       vectors,
-      annotations: ["اتجاه السهم يبين اتجاه القوة"],
+      values: variant === "moments" ? [momentDistance1, momentDistance2] : [],
+      annotations: variant === "moments"
+        ? [`بعد القوة 1 عن الارتكاز = ${momentDistance1} m`, `بعد القوة 2 عن الارتكاز = ${momentDistance2} m`]
+        : ["اتجاه السهم يبين اتجاه القوة"],
     };
   }
 
   if (item.visualTarget === "flow_diagram") {
-    const stateChange = /(انصهار|تجمد|تبخر|تكثف|حالات الماده|تحول حاله)/u.test(context);
-    const energy = /(طاقه|تحول الطاقه)/u.test(context);
+    const stateChange = /(انصهار|تجمد|تبخر|تكثف|حالات الماده|تحول حاله)/u.test(focusedContext);
+    const energy = /(طاقه|تحول الطاقه)/u.test(focusedContext);
     const labels = stateChange
       ? ["صلب", "سائل", "غاز"]
       : energy
@@ -2794,7 +2807,7 @@ function buildServerOwnedVisualSpec(item: GenerationItem, request: GenerationReq
   if (item.visualTarget === "circuit_diagram") {
     const measurement = item.styleTarget === "بيانات" || item.styleTarget === "استقصائي" || item.cognitiveLevel === "استدلال";
     const components: CircuitComponent[] = ["battery", seed % 2 === 0 ? "switch_closed" : "switch_open"];
-    components.push(/محرك|عربه كهربائي|دراجه كهربائي/u.test(context) ? "motor" : /مقاوم/u.test(context) ? "resistor" : "lamp");
+    components.push(/محرك|عربه كهربائي|دراجه كهربائي/u.test(focusedContext) ? "motor" : /مقاوم/u.test(focusedContext) ? "resistor" : "lamp");
     if (measurement) components.push("ammeter");
     return {
       ...emptyVisualSpec(),
@@ -3127,6 +3140,33 @@ function validateTableRowReferences(material: string, visual: QuestionVisualSpec
   }
 }
 
+function validateNoTableDataDump(alternative: ModelGeneratedAlternative, visual: QuestionVisualSpec): void {
+  const questionText = `${alternative.stimulus} ${alternative.text}`;
+  const visibleValues = new Set(
+    visual.tableCells.flatMap((row, rowIndex) => row.flatMap((cell, columnIndex) => {
+      const value = visibleTableCell(visual, rowIndex, columnIndex);
+      return value.match(/[0-9٠-٩]+(?:[.,][0-9٠-٩]+)?/gu) ?? [];
+    })).filter((value) => !["0", "1", "2", "3", "4", "5"].includes(value)),
+  );
+  const repeated = [...visibleValues].filter((value) => questionText.includes(value));
+  if (repeated.length >= 4) {
+    throw retryableError("نص السؤال يكرر سلسلة طويلة من قيم الجدول؛ اذكر الجدول فقط واترك البيانات داخله دون نسخها إلى السؤال.");
+  }
+}
+
+function validateTableScientificContract(material: string, visual: QuestionVisualSpec): void {
+  const question = normalizeForEvidence(material);
+  const table = normalizeForEvidence(`${visual.title} ${visual.purpose} ${visual.tableColumns.join(" ")} ${visual.annotations.join(" ")}`);
+  const requires = (pattern: RegExp, tablePattern: RegExp, message: string) => {
+    if (pattern.test(question) && !tablePattern.test(table)) throw retryableError(message);
+  };
+  requires(/عزم|ارتكاز|دوران/u, /عزم|مسافه|ارتكاز|ذراع/u, "سؤال العزم يحتاج جدولًا يتضمن القوة والمسافة عن محور الدوران.");
+  requires(/تسارع|قانون نيوتن الثاني/u, /قوه.*كتله|كتله.*قوه|تسارع/u, "سؤال التسارع يحتاج بيانات القوة المحصلة والكتلة.");
+  requires(/موصل|عازل|مرور التيار/u, /ماده|موصل|عازل|مرور التيار/u, "سؤال الموصلات يحتاج جدولًا يعرض موادًا ونتيجة اختبار التوصيل.");
+  requires(/عدد الالكترون|عدد الإلكترون|اكتسب.*الكترون|فقد.*الكترون/u, /شحنه.*الكترون|الكترون.*شحنه/u, "سؤال عدد الإلكترونات يحتاج بيانات شحنة الجسم وشحنة الإلكترون.");
+  requires(/قانون هوك|استطاله|زنبرك|نابض/u, /قوه.*استطاله|استطاله.*قوه/u, "سؤال قانون هوك يحتاج جدول القوة والاستطالة بوحداتهما.");
+}
+
 function validateDataTableSemanticBinding(
   alternative: ModelGeneratedAlternative,
   markScheme: string[],
@@ -3134,6 +3174,8 @@ function validateDataTableSemanticBinding(
 ): void {
   const material = `${alternative.stimulus} ${alternative.text} ${alternative.answer} ${alternative.rationale} ${markScheme.join(" ")}`;
   validateTableRowReferences(material, visual);
+  validateNoTableDataDump(alternative, visual);
+  validateTableScientificContract(material, visual);
   const materialTokens = semanticTokens(material);
   const tableCore = [visual.title, visual.purpose, ...visual.tableColumns, ...visual.tableCells.flat()].join(" ");
   const tableTokens = semanticTokens(tableCore);

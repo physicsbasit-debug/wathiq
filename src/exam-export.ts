@@ -101,6 +101,21 @@ const EXPORT_STYLES = `
   .qv-series-1, .qv-vector-1 { stroke-dasharray: 9 5; }
   .qv-series-2, .qv-vector-2 { stroke-dasharray: 3 4; }
   .qv-series-3, .qv-vector-3 { stroke-dasharray: 12 4 2 4; }
+  .qv-context-object, .qv-context-panel, .qv-context-instrument, .qv-context-flask, .qv-context-hole, .qv-context-wheel, .qv-context-person, .qv-context-sun { fill: #fff; stroke: #182536; stroke-width: 3; }
+  .qv-context-hole { fill: none; }
+  .qv-context-wheel { fill: #f8fafc; }
+  .qv-context-person { fill: #eef3f8; }
+  .qv-context-sun { fill: #f4e6b5; }
+  .qv-context-panel { fill: #e8eef7; }
+  .qv-context-instrument { fill: #eef3f8; }
+  .qv-context-flask { fill: #e8f4f3; }
+  .qv-context-line, .qv-context-grid, .qv-context-emphasis, .qv-context-motion, .qv-context-road-line, .qv-dimension { fill: none; stroke: #182536; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+  .qv-context-emphasis { stroke-width: 6; }
+  .qv-context-motion { stroke-dasharray: 8 7; }
+  .qv-context-grid, .qv-dimension { stroke-width: 1.5; }
+  .qv-dimension { stroke-dasharray: 5 4; }
+  .qv-context-road { fill: #f2f4f7; stroke: #182536; stroke-width: 3; }
+  .qv-context-road-line { stroke-dasharray: 12 10; }
   .paper-footer { text-align: center; margin-top: 8mm; }
   .teacher-key { margin-top: 10mm; break-before: page; page-break-before: always; }
   .teacher-key h2 { text-align: center; border-bottom: 2px solid #173b6d; padding-bottom: 3mm; }
@@ -151,6 +166,21 @@ const SVG_RASTER_STYLES = `
   .qv-series-1, .qv-vector-1 { stroke-dasharray: 9 5; }
   .qv-series-2, .qv-vector-2 { stroke-dasharray: 3 4; }
   .qv-series-3, .qv-vector-3 { stroke-dasharray: 12 4 2 4; }
+  .qv-context-object, .qv-context-panel, .qv-context-instrument, .qv-context-flask, .qv-context-hole, .qv-context-wheel, .qv-context-person, .qv-context-sun { fill: #fff; stroke: #182536; stroke-width: 3; }
+  .qv-context-hole { fill: none; }
+  .qv-context-wheel { fill: #f8fafc; }
+  .qv-context-person { fill: #eef3f8; }
+  .qv-context-sun { fill: #f4e6b5; }
+  .qv-context-panel { fill: #e8eef7; }
+  .qv-context-instrument { fill: #eef3f8; }
+  .qv-context-flask { fill: #e8f4f3; }
+  .qv-context-line, .qv-context-grid, .qv-context-emphasis, .qv-context-motion, .qv-context-road-line, .qv-dimension { fill: none; stroke: #182536; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+  .qv-context-emphasis { stroke-width: 6; }
+  .qv-context-motion { stroke-dasharray: 8 7; }
+  .qv-context-grid, .qv-dimension { stroke-width: 1.5; }
+  .qv-dimension { stroke-dasharray: 5 4; }
+  .qv-context-road { fill: #f2f4f7; stroke: #182536; stroke-width: 3; }
+  .qv-context-road-line { stroke-dasharray: 12 10; }
 `;
 
 async function svgElementToPngDataUrl(svg: SVGSVGElement): Promise<string> {
