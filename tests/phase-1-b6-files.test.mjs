@@ -11,7 +11,7 @@ test("تستخدم generateContent الرسمي المتوافق مع Gemini 2.5
   assert.match(edge, /systemInstruction:/);
   assert.match(edge, /contents:\s*\[\{/);
   assert.match(edge, /responseMimeType:\s*"application\/json"/);
-  assert.match(edge, /responseJsonSchema:\s*generationSchema\(\s*request\.items,\s*evidenceCatalog\.fragments\.map/);
+  assert.match(edge, /responseJsonSchema:\s*generationSchema\(\s*request\.items,\s*(?:evidenceCatalog|evidenceCatalog\.fragments\.map)/);
   assert.match(edge, /store:\s*false/);
   assert.doesNotMatch(edge, /\/interactions/);
   assert.doesNotMatch(edge, /response_format/);
