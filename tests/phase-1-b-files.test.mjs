@@ -23,7 +23,7 @@ test("Edge Function تستخدم Gemini generateContent ومخطط JSON ومفت
   assert.match(edge, /x-goog-api-key/);
   assert.match(edge, /systemInstruction/);
   assert.match(edge, /responseMimeType:\s*"application\/json"/);
-  assert.match(edge, /responseJsonSchema:\s*generationSchema\(\s*request\.items,\s*evidenceCatalog\.fragments\.map/);
+  assert.match(edge, /responseJsonSchema:\s*generationSchema\(\s*request\.items,\s*(?:evidenceCatalog|evidenceCatalog\.fragments\.map)/);
   assert.match(edge, /sourceSupport/);
   assert.match(edge, /admin\.auth\.getUser/);
   assert.doesNotMatch(edge, /OPENAI_API_KEY|api\.openai\.com/);

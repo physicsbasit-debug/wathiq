@@ -944,7 +944,7 @@ async function callGemini(
       responseMimeType: "application/json",
       responseJsonSchema: generationSchema(
         request.items,
-        evidenceCatalog.fragments.map((fragment) => fragment.id),
+        evidenceCatalog,
         enrichment.segments.map((segment) => segment.id),
         request.generationMode === "whole_exam_v2" ? 1 : 3,
       ),
@@ -1540,7 +1540,7 @@ function buildUserPrompt(request: GenerationRequest, evidenceCatalog: EvidenceCa
   });
 }
 
-function generationSchema(requestedItems: GenerationItem[], evidenceIds: string[], enrichmentIds: string[] = [], alternativesPerItem = 3): Record<string, unknown> {
+function generationSchema(requestedItems: GenerationItem[], evidenceSource: EvidenceCatalog | string[], enrichmentIds: string[] = [], alternativesPerItem = 3): Record<string, unknown> {
   return {
     type: "object",
     description: "النتيجة النهائية لتوليد مفردات الاختبار، ويجب أن تحتوي المفتاح items فقط.",
@@ -1554,6 +1554,12 @@ function generationSchema(requestedItems: GenerationItem[], evidenceIds: string[
           const markCount = Number.isInteger(requestedItem.marks) && requestedItem.marks > 0
             ? requestedItem.marks
             : 1;
+          const allowedEvidenceIds = Array.isArray(evidenceSource)
+            ? evidenceSource
+            : (evidenceSource.byReferenceId.get(requestedItem.sourceReferenceId) ?? []).map((fragment) => fragment.id);
+          if (!allowedEvidenceIds.length) {
+            throw httpError("لا توجد مقاطع دليل مرتبطة بمرجع إحدى مفردات الاختبار.", 400);
+          }
           return ({
             type: "object",
             properties: {
@@ -1607,8 +1613,8 @@ function generationSchema(requestedItems: GenerationItem[], evidenceIds: string[
                     },
                     sourceEvidenceId: {
                       type: "string",
-                      enum: evidenceIds,
-                      description: "معرف مقطع الدليل المختار من allowedEvidenceIds الخاصة بالمفردة.",
+                      enum: allowedEvidenceIds,
+                      description: "معرف مقطع الدليل المختار من allowedEvidenceIds الخاصة بهذه المفردة فقط.",
                     },
                     enrichmentEvidenceId: {
                       type: "string",
