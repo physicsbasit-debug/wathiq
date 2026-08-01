@@ -3,6 +3,7 @@ import { applyOfficialAssessmentTemplate, createEmptyDraft, toDateInputValue } f
 import { SCIENCE_ASSESSMENT_POLICY_ID, assessmentTypeForTitle, getOfficialAssessmentSpec, isExamTitleOption } from "./assessment-policy.js";
 import { normalizeManagedSource } from "./source-registry.js";
 import { SOURCE_GENERATION_VERSION } from "./question-generation.js";
+import { ASSESSMENT_GENERATION_V2_VERSION } from "./assessment-generation-v2.js";
 import { diversifyQuestionVisualSpec } from "./question-visual.js";
 import { SOURCE_RETRIEVAL_VERSION } from "./source-retrieval.js";
 
@@ -101,6 +102,11 @@ export function normalizeExamDraft(value: unknown): ExamDraft | null {
     title: normalizedTitle,
     trustedEnrichmentEnabled: candidate.trustedEnrichmentEnabled !== false,
     visualEnhancementEnabled: candidate.visualEnhancementEnabled !== false,
+    generationMode: candidate.generationMode === "legacy_items"
+      ? "legacy_items"
+      : candidate.generationMode === "whole_exam_v2"
+        ? "whole_exam_v2"
+        : (typeof candidate.generationVersion === "string" && candidate.generationVersion.trim() ? "legacy_items" : "whole_exam_v2"),
     examDate: typeof candidate.examDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(candidate.examDate)
       ? candidate.examDate
       : toDateInputValue(),
@@ -119,8 +125,11 @@ export function normalizeExamDraft(value: unknown): ExamDraft | null {
     approvedAt: typeof candidate.approvedAt === "string" ? candidate.approvedAt : "",
     status: candidate.status === "معتمد" || candidate.status === "جاهز للمراجعة" ? candidate.status : "مسودة",
   };
-  if (COMPATIBLE_GENERATION_VERSIONS.has(draft.generationVersion)) {
+  if (draft.generationVersion === ASSESSMENT_GENERATION_V2_VERSION) {
+    draft.generationMode = "whole_exam_v2";
+  } else if (COMPATIBLE_GENERATION_VERSIONS.has(draft.generationVersion)) {
     draft.generationVersion = SOURCE_GENERATION_VERSION;
+    draft.generationMode = "legacy_items";
   }
 
   const officialSpec = getOfficialAssessmentSpec(draft.grade, draft.title);
@@ -150,7 +159,7 @@ export function normalizeExamDraft(value: unknown): ExamDraft | null {
     draft.generatedAt = "";
     draft.approvedAt = "";
     draft.status = "مسودة";
-  } else if (draft.currentStep >= 3 && draft.generationVersion !== SOURCE_GENERATION_VERSION) {
+  } else if (draft.currentStep >= 3 && draft.generationVersion !== (draft.generationMode === "whole_exam_v2" ? ASSESSMENT_GENERATION_V2_VERSION : SOURCE_GENERATION_VERSION)) {
     draft.currentStep = 2;
     draft.plan = [];
     draft.selectedProposalByPlanItem = {};

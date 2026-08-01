@@ -8,7 +8,7 @@ const css = await readFile(new URL("../src/styles.css", import.meta.url), "utf8"
 const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 
 test("يستبدل الإدخال اليدوي بقائمة واحدة من فهرس المصدر", () => {
-  assert.match(pkg.version, /^0\.0\.(?:38|39|40|41|42|43|44|45|46|47|48|49)$/);
+  assert.match(pkg.version, /^0\.0\.(?:38|39|40|41|42|43|44|45|46|47|48|49|50)$/);
   assert.match(app, /اختر دروس الاختبار/);
   assert.match(app, /data-lesson-option-id/);
   assert.doesNotMatch(app, /data-lesson-topic-index/);
