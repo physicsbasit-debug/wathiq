@@ -1830,7 +1830,7 @@ async function generateQuestionsForPlan(plan: PlanItem[]): Promise<boolean> {
     } catch (error) {
       state.questionGenerationBusy = false;
       const detail = error instanceof Error ? error.message : "تعذر تصميم الاختبار الكامل.";
-      state.questionGenerationMessage = `${detail} بقي المحرك السابق متاحًا من إعداد الاختبار دون فقد المسودة.`;
+      state.questionGenerationMessage = `${detail} بقيت المسودة على محرك تصميم الاختبار كاملًا ولم يغيّر واثق طريقة التوليد؛ أعد المحاولة دون فقد المسودة، ويمكن اختيار المحرك السابق يدويًا عند الحاجة.`;
       scheduleSave();
       render();
       showToast(detail);

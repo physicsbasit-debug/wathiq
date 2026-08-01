@@ -1425,7 +1425,7 @@ function buildSystemInstructions(request: GenerationRequest): string {
     "إذا وُجد regenerationAnchor فأنشئ البدائل الجديدة مشابهة له في المفهوم العلمي ونمط السؤال ومستوى العمق، مع تغيير الصياغة أو القيم فقط عندما يدعم المرجع ذلك. لا تنتقل إلى مفهوم آخر داخل الكتاب.",
     "اجعل السؤال يقيس الفهم العلمي لا حفظ صياغة الكتاب. لا تكثر من أسئلة التعريف المباشر؛ استخدمها فقط عندما يكون styleTarget=مفهومي والمعلومة مصطلحًا أساسيًا.",
     "عند styleTarget=سياقي: قدّم موقفًا واقعيًا قصيرًا ومناسبًا للبيئة العُمانية أو محايدًا ثقافيًا، ثم اسأل عن تطبيق المفهوم.",
-    "عند styleTarget=حسابي: ضع المعطيات والوحدات في stimulus، واطلب إظهار خطوات الحل، واجعل لكل درجة نقطة تصحيح مستقلة تشمل الطريقة والنتيجة والوحدة عند الحاجة.",
+    "عند styleTarget=حسابي: ضع المعطيات والوحدات في stimulus، واجعل لكل درجة نقطة تصحيح مستقلة تشمل الطريقة والنتيجة والوحدة عند الحاجة. إذا كانت marks درجتين أو أكثر فأعد workingRequired=true، وإذا كانت درجة واحدة فأعد workingRequired=false؛ ويقوم الخادم بتثبيت هذه القاعدة تلقائيًا.",
     "عند styleTarget=بيانات: قدّم جدولًا نصيًا صغيرًا أو نتائج قياس أو وصف رسم بياني في stimulus، ثم اطلب قراءة نمط أو حسابًا أو استنتاجًا من البيانات.",
     "عند styleTarget=استقصائي: قدّم تجربة أو إجراءً مختصرًا، ثم اسأل عن متغير أو ضبط أو موثوقية أو تفسير نتائج أو تحسين طريقة.",
     "عند styleTarget=مقارنة: حدّد بوضوح الجانبين المطلوبين، واجعل كل فرق أو تشابه نقطة تصحيح مستقلة.",
@@ -1532,7 +1532,7 @@ function buildUserPrompt(request: GenerationRequest, evidenceCatalog: EvidenceCa
       alternativesPerItem: request.generationMode === "whole_exam_v2" ? 1 : 3,
       exactPlanItemIds: request.items.map((item) => item.planItemId),
       evidenceRule: "أعد sourceEvidenceId من allowedEvidenceIds الخاصة بالمفردة فقط. أعد enrichmentEvidenceId من allowedEnrichmentIds عند استخدام إثراء خارجي، وإلا فأعد سلسلة فارغة.",
-      styleRule: "اجعل questionForm مطابقًا حرفيًا لـ styleTarget، ونفذ scenarioTarget وstimulusTarget وskillTarget. أعد markScheme كمصفوفة طولها يساوي marks تمامًا، وكل عنصر فيها معيار مستقل غير فارغ لدرجة واحدة. في الأسئلة غير المفهومية اجعل stimulus غير فارغ، إلا إذا كان fixedVisual يحمل السياق أو البيانات ويشير text إليه صراحة، أو كان text نفسه يتضمن السياق كاملًا.",
+      styleRule: "اجعل questionForm مطابقًا حرفيًا لـ styleTarget، ونفذ scenarioTarget وstimulusTarget وskillTarget. أعد markScheme كمصفوفة طولها يساوي marks تمامًا، وكل عنصر فيها معيار مستقل غير فارغ لدرجة واحدة. في السؤال الحسابي أعد workingRequired=true فقط عندما تكون marks درجتين أو أكثر، وfalse عندما تكون درجة واحدة. في الأسئلة غير المفهومية اجعل stimulus غير فارغ، إلا إذا كان fixedVisual يحمل السياق أو البيانات ويشير text إليه صراحة، أو كان text نفسه يتضمن السياق كاملًا.",
       visualRule: request.generationMode === "whole_exam_v2"
         ? "لا تعد visual في JSON. إذا كان fixedVisual.type لا يساوي none، يجب أن يعتمد السؤال النهائي عليه اعتمادًا جوهريًا ويذكره صراحة."
         : "لا تعد visual في JSON. إذا كان fixedVisual.type لا يساوي none، يجب أن تعتمد جميع البدائل الثلاثة على الشكل نفسه اعتمادًا جوهريًا وتذكر الشكل أو الرسم أو الجدول أو التدريج في نص السؤال؛ وإلا فستُرفض المفردة.",
@@ -1609,7 +1609,7 @@ function generationSchema(requestedItems: GenerationItem[], evidenceSource: Evid
                     },
                     workingRequired: {
                       type: "boolean",
-                      description: "صحيح للأسئلة الحسابية التي تتطلب إظهار خطوات الحل.",
+                      description: "قيمة مساعدة: true للسؤال الحسابي ذي درجتين أو أكثر، وfalse للسؤال الحسابي ذي الدرجة الواحدة ولغير الحسابي. يثبت الخادم القيمة النهائية تلقائيًا.",
                     },
                     sourceEvidenceId: {
                       type: "string",
@@ -2855,6 +2855,10 @@ function validateAlternativeDiversity(alternatives: GeneratedAlternative[], dive
   }
 }
 
+function shouldRequireCalculationWorking(questionForm: QuestionDesignPattern, marks: number): boolean {
+  return questionForm === "حسابي" && Number.isFinite(marks) && marks >= 2;
+}
+
 function validateAndHydrateAlternative(
   alternative: ModelGeneratedAlternative,
   questionType: QuestionType,
@@ -2897,9 +2901,7 @@ function validateAndHydrateAlternative(
   )) {
     throw retryableError("أحد الأسئلة السياقية لا يحتوي متنًا أو بيانات كافية.");
   }
-  if (alternative.questionForm === "حسابي" && !alternative.workingRequired) {
-    throw retryableError("السؤال الحسابي لا يطلب إظهار خطوات الحل.");
-  }
+  const workingRequired = shouldRequireCalculationWorking(alternative.questionForm, marks);
   if (alternative.questionForm === "حسابي" && !fixedVisualContainsCalculationData(fixedVisual)) {
     throw retryableError("الرسم الحسابي لا يحتوي جميع القيم والوحدات اللازمة للحل.");
   }
@@ -2962,7 +2964,7 @@ function validateAndHydrateAlternative(
     rationale: alternative.rationale.trim(),
     markScheme,
     questionForm: alternative.questionForm,
-    workingRequired: alternative.workingRequired,
+    workingRequired,
     sourceSupport: evidence.text,
     enrichmentSupport: enrichmentSegment?.text ?? "",
     enrichmentSourceTitle: enrichmentSegment?.sourceTitle ?? "",

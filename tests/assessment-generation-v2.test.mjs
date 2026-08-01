@@ -150,3 +150,49 @@ test("يثبت مخطط V2 عدد المفردات والدرجات دون تغ�
   assert.equal(blueprint.totalMarks, 3);
   assert.deepEqual(blueprint.lessons, ["درس 1", "درس 2"]);
 });
+
+test("يطبع محرك V2 تعليمات خطوات الحل تلقائيًا للسؤال الحسابي متعدد الدرجات", () => {
+  const expected = [{
+    planItemId: "v2-calc-2", questionType: "إجابة قصيرة", cognitiveLevel: "تطبيق", marks: 2,
+    sourceReferenceId: "ref-1", lessonLabel: "عزم القوة", outcomeLabel: "يحسب عزم القوة",
+    styleTarget: "حسابي", visualTarget: "none", scenarioTarget: "wrench_tool",
+    stimulusTarget: "real_life_scene", skillTarget: "calculate", diversityKey: "v2-calc-2",
+  }];
+  const payload = {
+    items: [{
+      planItemId: "v2-calc-2", visual: noVisual(), alternatives: [{
+        stimulus: "يستخدم فني مفتاح ربط ويؤثر بقوة 20 N على بعد عمودي 0.30 m من محور الدوران.",
+        text: "احسب عزم القوة.", options: [], answer: "6 N m",
+        rationale: "العزم يساوي القوة مضروبة في البعد العمودي.",
+        markScheme: ["استخدام علاقة العزم.", "التعويض وإيجاد 6 N m."],
+        questionForm: "حسابي", workingRequired: false, sourceSupport: "يعتمد العزم على القوة والبعد العمودي.",
+        enrichmentSupport: "", enrichmentSourceTitle: "", enrichmentSourceUrl: "", needsReview: false,
+      }],
+    }], model: "gemini-test-v2", generatedAt: "2026-08-01T10:00:00.000Z", requestId: "WQ-V2-CALC-2",
+  };
+  const response = parseWholeExamGenerationResponseV2(payload, expected);
+  assert.equal(response.items[0].alternatives[0].workingRequired, true);
+});
+
+test("لا يضيف محرك V2 تعليمات خطوات الحل للسؤال الحسابي ذي الدرجة الواحدة", () => {
+  const expected = [{
+    planItemId: "v2-calc-1", questionType: "إجابة قصيرة", cognitiveLevel: "تطبيق", marks: 1,
+    sourceReferenceId: "ref-1", lessonLabel: "عزم القوة", outcomeLabel: "يحسب عزم القوة",
+    styleTarget: "حسابي", visualTarget: "none", scenarioTarget: "wrench_tool",
+    stimulusTarget: "real_life_scene", skillTarget: "calculate", diversityKey: "v2-calc-1",
+  }];
+  const payload = {
+    items: [{
+      planItemId: "v2-calc-1", visual: noVisual(), alternatives: [{
+        stimulus: "يؤثر طالب بقوة 5 N على بعد عمودي 2 m من محور الدوران.",
+        text: "احسب عزم القوة.", options: [], answer: "10 N m",
+        rationale: "العزم يساوي القوة مضروبة في البعد العمودي.",
+        markScheme: ["حساب 10 N m."], questionForm: "حسابي", workingRequired: true,
+        sourceSupport: "يعتمد العزم على القوة والبعد العمودي.", enrichmentSupport: "",
+        enrichmentSourceTitle: "", enrichmentSourceUrl: "", needsReview: false,
+      }],
+    }], model: "gemini-test-v2", generatedAt: "2026-08-01T10:00:00.000Z", requestId: "WQ-V2-CALC-1",
+  };
+  const response = parseWholeExamGenerationResponseV2(payload, expected);
+  assert.equal(response.items[0].alternatives[0].workingRequired, false);
+});

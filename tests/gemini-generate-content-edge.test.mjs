@@ -957,3 +957,60 @@ test("يفرض القيم العددية على الرسوم الحسابية ق
   assert.equal(helpers.fixedVisualContainsCalculationData({ type: "pressure_diagram", variant: "force_area", role: "calculate", values: [80, 0.02] }), true);
   assert.equal(helpers.fixedVisualContainsCalculationData({ type: "pressure_diagram", variant: "force_area", role: "calculate", values: [80, 0] }), false);
 });
+
+test("يصحح الخادم workingRequired تلقائيًا للسؤال الحسابي متعدد الدرجات", () => {
+  const references = [{
+    id: "R-WORK-2", sourceId: "student-book", sourceTitle: "كتاب الطالب", sourceKind: "كتاب الطالب",
+    pageFrom: 10, pageTo: 10, content: "ينص قانون نيوتن الثاني على أن القوة تساوي الكتلة مضروبة في التسارع.",
+    lessonTopic: "القوة والتسارع", lessonScopeMode: "page-range", lessonPageFrom: 10, lessonPageTo: 10,
+  }];
+  const catalog = helpers.buildEvidenceCatalog(references);
+  const request = {
+    generationMode: "whole_exam_v2", subject: "الفيزياء", topic: "القوة والتسارع", references,
+    items: [{
+      planItemId: "P-WORK-2", questionType: "إجابة قصيرة", marks: 2, sourceReferenceId: "R-WORK-2",
+      lessonLabel: "القوة والتسارع", styleTarget: "حسابي", visualTarget: "none",
+      scenarioTarget: "scientific_abstract", stimulusTarget: "concise_text", skillTarget: "calculate",
+      diversityKey: "legacy:work-2",
+    }],
+  };
+  const payload = { items: [{
+    planItemId: "P-WORK-2", alternatives: [{
+      stimulus: "تؤثر قوة مقدارها 12 N في جسم كتلته 3 kg.", text: "احسب تسارع الجسم.", options: [],
+      answer: "4 m/s²", rationale: "التسارع يساوي القوة مقسومة على الكتلة.",
+      markScheme: ["استخدام العلاقة F = ma.", "التعويض وإيجاد 4 m/s²."],
+      questionForm: "حسابي", workingRequired: false, sourceEvidenceId: catalog.fragments[0].id,
+      enrichmentEvidenceId: "", needsReview: false,
+    }],
+  }] };
+  const hydrated = helpers.validateAndHydrateGeneratedPayload(payload, request, catalog);
+  assert.equal(hydrated.items[0].alternatives[0].workingRequired, true);
+});
+
+test("لا يفرض الخادم خطوات الحل على السؤال الحسابي ذي الدرجة الواحدة", () => {
+  const references = [{
+    id: "R-WORK-1", sourceId: "student-book", sourceTitle: "كتاب الطالب", sourceKind: "كتاب الطالب",
+    pageFrom: 20, pageTo: 20, content: "عزم القوة يساوي القوة مضروبة في البعد العمودي عن محور الدوران.",
+    lessonTopic: "عزم القوة", lessonScopeMode: "page-range", lessonPageFrom: 20, lessonPageTo: 20,
+  }];
+  const catalog = helpers.buildEvidenceCatalog(references);
+  const request = {
+    generationMode: "whole_exam_v2", subject: "الفيزياء", topic: "عزم القوة", references,
+    items: [{
+      planItemId: "P-WORK-1", questionType: "إجابة قصيرة", marks: 1, sourceReferenceId: "R-WORK-1",
+      lessonLabel: "عزم القوة", styleTarget: "حسابي", visualTarget: "none",
+      scenarioTarget: "scientific_abstract", stimulusTarget: "concise_text", skillTarget: "calculate",
+      diversityKey: "legacy:work-1",
+    }],
+  };
+  const payload = { items: [{
+    planItemId: "P-WORK-1", alternatives: [{
+      stimulus: "تؤثر قوة مقدارها 5 N على بعد عمودي 2 m من محور الدوران.", text: "احسب عزم القوة.", options: [],
+      answer: "10 N m", rationale: "العزم يساوي القوة في البعد العمودي.", markScheme: ["حساب 10 N m."],
+      questionForm: "حسابي", workingRequired: true, sourceEvidenceId: catalog.fragments[0].id,
+      enrichmentEvidenceId: "", needsReview: false,
+    }],
+  }] };
+  const hydrated = helpers.validateAndHydrateGeneratedPayload(payload, request, catalog);
+  assert.equal(hydrated.items[0].alternatives[0].workingRequired, false);
+});
