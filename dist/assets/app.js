@@ -1,8 +1,8 @@
 import { MOCK_LIBRARY, MOCK_SOURCES, SUBJECTS } from "./data.js";
 import { applyOfficialAssessmentTemplate, approveExamDraft, buildPlan, createEmptyDraft, MAX_LESSON_TOPICS, MIN_LESSON_TOPICS, normalizeLessonTopics, reopenExamDraft, isPlanComplete, selectedProposal, setExamTitle, syncDraftTopicFromLessons, validateExamSetup, } from "./domain.js";
-import { clearDraft, loadDraft, loadProfile, loadSources, saveDraft, saveProfile, saveSources } from "./storage.js";
+import { clearDraft, loadDraft, loadDraftResumeContext, loadDrafts, loadProfile, loadSources, saveDraft, saveDraftResumeContext, saveProfile, saveSources, setActiveDraftId } from "./storage.js";
 import { escapeHtml, formatArabicDate, icon } from "./ui.js";
-import { questionVisualTypeLabel, renderQuestionVisualSvg, validateQuestionVisualSpec } from "./question-visual.js";
+import { isAiIllustrationEligible, questionVisualTypeLabel, renderQuestionVisualSvg, stripQuestionVisualIllustration, validateQuestionVisualSpec } from "./question-visual.js";
 import { buildStandaloneExamDocument, downloadWordHtml, interleaveAssessmentItems, printHtmlDocument, safeExportFileName } from "./exam-export.js";
 import { buildSourceDrivePath, changeSourceStatus, createEmptySourceDraft, createManagedSource, findDuplicateContentSource, findDuplicateSource, sourceSubjectLabel, SOURCE_KINDS, SOURCE_SEMESTERS, validateSourceDraft } from "./source-domain.js";
 import { createRegistryBackup, mergeSourceRegistry, parseRegistryBackup } from "./source-registry.js";
@@ -17,6 +17,7 @@ import { rankSourceChunks, SOURCE_RETRIEVAL_VERSION } from "./source-retrieval.j
 import { buildLessonCatalog } from "./lesson-catalog.js";
 import { buildCuratedBookStructure } from "./book-content-tree.js";
 import { applyGeneratedQuestions, buildQuestionGenerationRequest, QuestionGenerationService, SOURCE_GENERATION_VERSION, splitQuestionGenerationBatches, } from "./question-generation.js";
+import { ASSESSMENT_GENERATION_V2_VERSION, applyWholeExamQuestionsV2, buildWholeExamGenerationRequestV2, parseWholeExamGenerationResponseV2, } from "./assessment-generation-v2.js";
 import { ASSESSMENT_ITEM_WRITING_RULES, INTERNATIONAL_SCIENCE_QUESTION_STYLE_PRINCIPLES, SCIENCE_ASSESSMENT_POLICY_DOCUMENT_PATH, SCIENCE_ASSESSMENT_POLICY_PUBLISHED, SCIENCE_ASSESSMENT_POLICY_TITLE, SCIENCE_ASSESSMENT_POLICY_VERSION, EXAM_TITLE_OPTIONS, getOfficialAssessmentSpec, getOfficialFinalExamSpec, getOfficialShortTestSpec, } from "./assessment-policy.js";
 const appRoot = document.querySelector("#app");
 if (!appRoot)
@@ -82,30 +83,70 @@ const state = {
     lessonCatalogKey: "",
     lessonCatalogBusy: false,
     lessonCatalogMessage: "",
+    lessonCatalogActiveUnitKey: "",
+    visualEnhancementBusyIds: new Set(),
+    visualEnhancementMessages: {},
+    visualEnhancementAutoStarted: false,
 };
+if (savedDraft)
+    restoreDraftRuntimeContext(savedDraft);
 let saveTimer;
+function persistDraftCheckpoint(showFailure = true) {
+    if (saveTimer) {
+        window.clearTimeout(saveTimer);
+        saveTimer = undefined;
+    }
+    try {
+        state.draft.updatedAt = new Date().toISOString();
+        const existingSnapshot = state.draft.resumeContext;
+        const lessonCatalog = state.lessonCatalog.length ? state.lessonCatalog : (existingSnapshot?.lessonCatalog ?? []);
+        const resumeContext = {
+            schemaVersion: 1,
+            selectionKey: lessonCatalogSelectionKey() || existingSnapshot?.selectionKey || "",
+            activeUnitKey: state.lessonCatalogActiveUnitKey || existingSnapshot?.activeUnitKey || "",
+            lessonCatalog,
+            savedAt: state.draft.updatedAt,
+        };
+        state.draft.resumeContext = resumeContext;
+        saveDraft(state.draft);
+        saveDraftResumeContext({
+            ...resumeContext,
+            draftId: state.draft.id,
+        });
+        saveProfile({ school: state.draft.school, directorate: state.draft.directorate });
+        state.saveState = "محفوظ";
+        renderTopSaveState();
+        return true;
+    }
+    catch (error) {
+        state.saveState = "غير محفوظ";
+        renderTopSaveState();
+        if (showFailure) {
+            const detail = error instanceof Error ? error.message : "تعذر الوصول إلى تخزين المتصفح.";
+            showToast(`تعذر حفظ المسودة: ${detail}`);
+        }
+        return false;
+    }
+}
 function scheduleSave() {
     state.saveState = "جارٍ الحفظ";
     renderTopSaveState();
     if (saveTimer)
         window.clearTimeout(saveTimer);
     saveTimer = window.setTimeout(() => {
-        state.draft.updatedAt = new Date().toISOString();
-        saveDraft(state.draft);
-        saveProfile({ school: state.draft.school, directorate: state.draft.directorate });
-        state.saveState = "محفوظ";
-        renderTopSaveState();
-    }, 650);
+        saveTimer = undefined;
+        persistDraftCheckpoint();
+    }, 350);
 }
 function saveNow() {
-    if (saveTimer)
-        window.clearTimeout(saveTimer);
-    state.draft.updatedAt = new Date().toISOString();
-    saveDraft(state.draft);
-    saveProfile({ school: state.draft.school, directorate: state.draft.directorate });
-    state.saveState = "محفوظ";
-    showToast("تم حفظ أحدث حالة للمسودة.");
+    if (persistDraftCheckpoint())
+        showToast("تم حفظ أحدث حالة للمسودة.");
 }
+window.addEventListener("pagehide", () => { persistDraftCheckpoint(false); });
+document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden")
+        persistDraftCheckpoint(false);
+});
 function showToast(message) {
     state.toast = message;
     render();
@@ -278,9 +319,12 @@ function renderHome() {
   `;
 }
 function renderWizard() {
+    const resumeLabel = state.draft.currentStep > 1 || state.draft.plan.length || state.draft.sourceReferences.length
+        ? "متابعة المسودة المحفوظة"
+        : "إنشاء اختبار جديد";
     return `
     <section class="page-heading">
-      <div><span class="eyebrow">إنشاء اختبار جديد</span><h1>${wizardTitle(state.draft.currentStep)}</h1></div>
+      <div><span class="eyebrow">${resumeLabel}</span><h1>${wizardTitle(state.draft.currentStep)}</h1></div>
       <div class="save-indicator"><span class="dot"></span><span id="save-label-secondary">${state.saveState}</span></div>
     </section>
     ${renderStepper()}
@@ -327,13 +371,99 @@ function eligibleSourcesForDraft() {
 function lessonCatalogSelectionKey() {
     return [state.draft.grade ?? "", state.draft.subjectId, ...eligibleSourcesForDraft().map((source) => `${source.id}:${source.updatedAt}`)].join("|");
 }
-function renderLessonOption(lesson, selectedLabels, selectedCount) {
+function lessonUnitKey(sourceId, unitLabel) {
+    return `${sourceId}::${unitLabel}`;
+}
+function splitLessonLabel(label) {
+    const normalized = label.trim();
+    const match = /^([0-9٠-٩۰-۹]{1,2}\s*[-.]\s*[0-9٠-٩۰-۹]{1,2})\s*[:：\-]?\s*(.+)$/u.exec(normalized);
+    if (!match)
+        return { code: "درس", title: normalized || "درس محفوظ" };
+    return { code: match[1].replace(/\s+/g, "").replace(".", "-"), title: match[2].trim() };
+}
+function fallbackLessonCatalogFromDraft(draft) {
+    const byLabel = new Map();
+    for (const reference of draft.sourceReferences) {
+        const label = reference.lessonTopic?.trim();
+        if (!label || byLabel.has(label))
+            continue;
+        const parsed = splitLessonLabel(label);
+        byLabel.set(label, {
+            id: `draft-snapshot:${draft.id}:${reference.id}`,
+            sourceId: reference.sourceId,
+            sourceTitle: reference.sourceTitle,
+            label,
+            code: parsed.code,
+            title: parsed.title,
+            pageStart: reference.pageFrom,
+            pageEnd: reference.pageTo,
+            unitLabel: "الدروس المحفوظة في المسودة",
+            origin: "detected-heading",
+        });
+    }
+    for (const label of normalizeLessonTopics(draft.lessonTopics)) {
+        if (byLabel.has(label))
+            continue;
+        const parsed = splitLessonLabel(label);
+        byLabel.set(label, {
+            id: `draft-topic:${draft.id}:${byLabel.size + 1}`,
+            sourceId: draft.sourceReferences[0]?.sourceId ?? `draft-source:${draft.id}`,
+            sourceTitle: draft.sourceReferences[0]?.sourceTitle ?? "مرجع المسودة المحفوظ",
+            label,
+            code: parsed.code,
+            title: parsed.title,
+            unitLabel: "الدروس المحفوظة في المسودة",
+            origin: "detected-heading",
+        });
+    }
+    return [...byLabel.values()];
+}
+function restoreDraftRuntimeContext(draft) {
+    const storedContext = loadDraftResumeContext(draft.id);
+    const embeddedContext = draft.resumeContext;
+    const context = embeddedContext?.lessonCatalog?.length ? embeddedContext : storedContext;
+    const snapshot = context?.lessonCatalog?.length ? context.lessonCatalog : fallbackLessonCatalogFromDraft(draft);
+    state.lessonCatalog = snapshot;
+    state.lessonCatalogActiveUnitKey = context?.activeUnitKey ?? "";
+    state.lessonCatalogKey = context?.selectionKey || lessonCatalogSelectionKey();
+    state.lessonCatalogBusy = false;
+    state.lessonCatalogMessage = snapshot.length
+        ? "تمت استعادة شجرة الدروس المحفوظة مع المسودة."
+        : "لم تتضمن المسودة شجرة محفوظة؛ يمكنك متابعة الأسئلة الموجودة أو إعادة ربط المصدر عند تعديل الدروس.";
+    state.sourceRetrievalMessage = draft.sourceReferences.length
+        ? `تمت استعادة ${draft.sourceReferences.length} مقاطع مرجعية محفوظة مع المسودة.`
+        : "لا توجد مقاطع مرجعية محفوظة في هذه المسودة.";
+}
+function buildLessonUnitGroups(catalog) {
+    const groups = new Map();
+    catalog.forEach((lesson) => {
+        const unitLabel = lesson.unitLabel || "دروس الكتاب";
+        const key = lessonUnitKey(lesson.sourceId, unitLabel);
+        const group = groups.get(key) ?? {
+            key,
+            sourceId: lesson.sourceId,
+            sourceTitle: lesson.sourceTitle,
+            unitLabel,
+            lessons: [],
+        };
+        group.lessons.push(lesson);
+        groups.set(key, group);
+    });
+    return [...groups.values()];
+}
+function resolveActiveLessonUnitKey(groups, selectedLabels) {
+    if (groups.some((group) => group.key === state.lessonCatalogActiveUnitKey))
+        return state.lessonCatalogActiveUnitKey;
+    const selectedGroup = groups.find((group) => group.lessons.some((lesson) => selectedLabels.has(lesson.label)));
+    return selectedGroup?.key ?? groups[0]?.key ?? "";
+}
+function renderLessonOption(lesson, selectedLabels, selectedCount, unitKey) {
     const checked = selectedLabels.has(lesson.label);
     const disabled = !checked && selectedCount >= MAX_LESSON_TOPICS;
     const pages = lesson.pageStart
         ? `<small>${lesson.pageStart === lesson.pageEnd || !lesson.pageEnd ? `ص ${lesson.pageStart}` : `ص ${lesson.pageStart}-${lesson.pageEnd}`}</small>`
-        : "";
-    return `<label class="lesson-catalog-option ${checked ? "selected" : ""} ${disabled ? "disabled" : ""}"><input type="checkbox" data-lesson-option-id="${escapeHtml(lesson.id)}" ${checked ? "checked" : ""} ${disabled ? "disabled" : ""}/><span><b>${escapeHtml(lesson.code)}</b><strong>${escapeHtml(lesson.title)}</strong>${pages}</span></label>`;
+        : `<small class="lesson-page-pending">صفحات مستخرجة من عنوان الدرس</small>`;
+    return `<label class="lesson-catalog-option ${checked ? "selected" : ""} ${disabled ? "disabled" : ""}"><input type="checkbox" data-lesson-option-id="${escapeHtml(lesson.id)}" data-lesson-unit-key="${escapeHtml(unitKey)}" ${checked ? "checked" : ""} ${disabled ? "disabled" : ""}/><span><b>${escapeHtml(lesson.code)}</b><strong>${escapeHtml(lesson.title)}</strong>${pages}</span></label>`;
 }
 function renderLessonCatalog() {
     const selectedLabels = new Set(normalizeLessonTopics(state.draft.lessonTopics));
@@ -347,29 +477,40 @@ function renderLessonCatalog() {
     if (!state.lessonCatalog.length) {
         return `<div class="lesson-catalog-empty warning">${escapeHtml(state.lessonCatalogMessage || "لم يجد واثق شجرة دروس موثوقة للمصدر المطابق.")}</div>`;
     }
-    const bySource = new Map();
-    state.lessonCatalog.forEach((lesson) => {
-        const group = bySource.get(lesson.sourceId) ?? [];
-        group.push(lesson);
-        bySource.set(lesson.sourceId, group);
-    });
-    return `<div class="lesson-book-tree">${[...bySource.entries()].map(([sourceId, lessons], sourceIndex) => {
-        const sourceTitle = lessons[0]?.sourceTitle ?? "كتاب المصدر";
-        const selectedInSource = lessons.some((lesson) => selectedLabels.has(lesson.label));
-        const byUnit = new Map();
-        lessons.forEach((lesson) => {
-            const unitLabel = lesson.unitLabel || "دروس الكتاب";
-            const group = byUnit.get(unitLabel) ?? [];
-            group.push(lesson);
-            byUnit.set(unitLabel, group);
-        });
-        const unitMarkup = [...byUnit.entries()].map(([unitLabel, unitLessons], unitIndex) => {
-            const selectedInUnit = unitLessons.some((lesson) => selectedLabels.has(lesson.label));
-            const shouldOpen = selectedInUnit || (sourceIndex === 0 && unitIndex === 0);
-            return `<details class="lesson-unit-tree" ${shouldOpen ? "open" : ""}><summary><span>${icon("book")}</span><strong>${escapeHtml(unitLabel)}</strong><small>${unitLessons.length} ${unitLessons.length === 1 ? "درس" : "دروس"}</small></summary><div class="lesson-unit-items">${unitLessons.map((lesson) => renderLessonOption(lesson, selectedLabels, selectedCount)).join("")}</div></details>`;
-        }).join("");
-        return `<details class="lesson-source-tree" ${selectedInSource || sourceIndex === 0 ? "open" : ""}><summary><span class="lesson-source-icon">${icon("book")}</span><div><strong>${escapeHtml(sourceTitle)}</strong><small>${byUnit.size} وحدات · ${lessons.length} درسًا</small></div></summary><div class="lesson-source-units" data-source-tree-id="${escapeHtml(sourceId)}">${unitMarkup}</div></details>`;
-    }).join("")}</div>`;
+    const unitGroups = buildLessonUnitGroups(state.lessonCatalog);
+    const activeUnitKey = resolveActiveLessonUnitKey(unitGroups, selectedLabels);
+    state.lessonCatalogActiveUnitKey = activeUnitKey;
+    const activeIndex = Math.max(0, unitGroups.findIndex((group) => group.key === activeUnitKey));
+    const activeGroup = unitGroups[activeIndex] ?? unitGroups[0];
+    if (!activeGroup)
+        return `<div class="lesson-catalog-empty warning">لا توجد وحدات قابلة للعرض.</div>`;
+    const previousGroup = unitGroups[activeIndex - 1];
+    const nextGroup = unitGroups[activeIndex + 1];
+    const sourceLessons = state.lessonCatalog.filter((lesson) => lesson.sourceId === activeGroup.sourceId);
+    const sourceUnits = unitGroups.filter((group) => group.sourceId === activeGroup.sourceId);
+    const selectedLessons = state.lessonCatalog.filter((lesson) => selectedLabels.has(lesson.label));
+    const multipleSources = new Set(unitGroups.map((group) => group.sourceId)).size > 1;
+    return `
+    <div class="lesson-unit-navigation" aria-label="التنقل بين وحدات الكتاب">
+      <button type="button" class="lesson-unit-nav-button" data-lesson-unit-target="${escapeHtml(previousGroup?.key ?? "")}" ${previousGroup ? "" : "disabled"}><span aria-hidden="true">→</span><b>الوحدة السابقة</b></button>
+      <label class="lesson-unit-jump"><span>انتقل إلى وحدة</span><select id="lesson-unit-select">${unitGroups.map((group, index) => `<option value="${escapeHtml(group.key)}" ${group.key === activeGroup.key ? "selected" : ""}>${index + 1}. ${escapeHtml(multipleSources ? `${group.sourceTitle} — ${group.unitLabel}` : group.unitLabel)}</option>`).join("")}</select><small>الوحدة ${activeIndex + 1} من ${unitGroups.length}</small></label>
+      <button type="button" class="lesson-unit-nav-button" data-lesson-unit-target="${escapeHtml(nextGroup?.key ?? "")}" ${nextGroup ? "" : "disabled"}><b>الوحدة التالية</b><span aria-hidden="true">←</span></button>
+    </div>
+    <div class="lesson-selected-summary ${selectedLessons.length ? "has-selection" : ""}">
+      <div><strong>الدروس المحددة</strong><small>${selectedLessons.length ? "تبقى اختياراتك محفوظة عند الانتقال بين الوحدات." : "حدد الدروس المطلوبة، ثم تنقل إلى أي وحدة أخرى دون فقدان الاختيار."}</small></div>
+      <div class="lesson-selected-chips">${selectedLessons.length ? selectedLessons.map((lesson) => `<button type="button" data-lesson-unit-target="${escapeHtml(lessonUnitKey(lesson.sourceId, lesson.unitLabel || "دروس الكتاب"))}">${escapeHtml(lesson.label)}</button>`).join("") : `<span>لم تحدد أي درس بعد</span>`}</div>
+    </div>
+    <div class="lesson-book-tree" data-active-unit-key="${escapeHtml(activeGroup.key)}">
+      <details class="lesson-source-tree" open>
+        <summary><span class="lesson-source-icon">${icon("book")}</span><div><strong>${escapeHtml(activeGroup.sourceTitle)}</strong><small>${sourceUnits.length} وحدات · ${sourceLessons.length} درسًا مدرجًا</small></div></summary>
+        <div class="lesson-source-units" data-source-tree-id="${escapeHtml(activeGroup.sourceId)}">
+          <details class="lesson-unit-tree" data-unit-key="${escapeHtml(activeGroup.key)}" open>
+            <summary><span>${icon("book")}</span><strong>${escapeHtml(activeGroup.unitLabel)}</strong><small>${activeGroup.lessons.length} ${activeGroup.lessons.length === 1 ? "درس" : "دروس"}</small></summary>
+            <div class="lesson-unit-items">${activeGroup.lessons.map((lesson) => renderLessonOption(lesson, selectedLabels, selectedCount, activeGroup.key)).join("")}</div>
+          </details>
+        </div>
+      </details>
+    </div>`;
 }
 function renderContentStep() {
     const availableSubjects = SUBJECTS.filter((subject) => state.draft.grade !== null && subject.grades.includes(state.draft.grade));
@@ -472,6 +613,32 @@ function renderSetupStep() {
         : `${inputField("duration-input", "الزمن بالدقائق", state.draft.durationMinutes, "number", "", "10")}${inputField("marks-input", "الدرجة الكلية", state.draft.totalMarks, "number", "", "5")}`}
     </div>
 
+    <section class="generation-mode-panel">
+      <div class="generation-mode-heading"><div><span class="eyebrow">طريقة إنشاء الاختبار</span><h3>محرك التوليد</h3></div><span class="generation-mode-badge">V2 تجريبي آمن</span></div>
+      <div class="generation-mode-options">
+        <label class="generation-mode-option ${state.draft.generationMode === "whole_exam_v2" ? "selected" : ""}">
+          <input type="radio" name="generation-mode" value="whole_exam_v2" ${state.draft.generationMode === "whole_exam_v2" ? "checked" : ""}/>
+          <span><strong>تصميم الاختبار كاملًا</strong><small>يبني واثق مخطط الاختبار والأسئلة والبيانات كوحدة واحدة، ثم يراجع التنوع وقابلية الحل قبل العرض. هذا هو الخيار الموصى به.</small></span>
+        </label>
+        <label class="generation-mode-option ${state.draft.generationMode === "legacy_items" ? "selected" : ""}">
+          <input type="radio" name="generation-mode" value="legacy_items" ${state.draft.generationMode === "legacy_items" ? "checked" : ""}/>
+          <span><strong>المحرك السابق</strong><small>يولد المفردات على دفعات صغيرة. يبقى متاحًا كخطة رجوع ولا يُحذف من التطبيق.</small></span>
+        </label>
+      </div>
+    </section>
+
+    <label class="trusted-enrichment-card ${state.draft.trustedEnrichmentEnabled ? "enabled" : ""}">
+      <input id="trusted-enrichment-toggle" type="checkbox" ${state.draft.trustedEnrichmentEnabled ? "checked" : ""}/>
+      <span class="trusted-enrichment-check">${state.draft.trustedEnrichmentEnabled ? icon("check") : ""}</span>
+      <span><strong>الإثراء من مصادر علمية رسمية وموثوقة</strong><small>يبقى الكتاب المدرسي المرجع الحاكم، ويستخدم واثق البحث الموثق فقط لتنويع السياقات والبيانات والرسوم دون إضافة معرفة مطلوبة خارج المنهج.</small></span>
+    </label>
+
+    <label class="trusted-enrichment-card visual-enhancement-card ${state.draft.visualEnhancementEnabled ? "enabled" : ""}">
+      <input id="visual-enhancement-toggle" type="checkbox" ${state.draft.visualEnhancementEnabled ? "checked" : ""}/>
+      <span class="trusted-enrichment-check">${state.draft.visualEnhancementEnabled ? icon("check") : ""}</span>
+      <span><strong>المرئيات التعليمية ثنائية الأبعاد</strong><small>يولّد واثق تلقائيًا صور 2D واضحة للمشاهد السياقية والكهرباء الساكنة الآمنة، ثم يفحصها علميًا قبل اعتمادها. تبقى القيم والأسهم والمخططات الحسابية حتمية، وعند تعذر الصورة يستخدم رسمًا ثنائي الأبعاد مصقولًا بدل الخطوط البدائية.</small></span>
+    </label>
+
     ${officialSettings}
     ${renderCompliance(validation)}
     ${state.questionGenerationMessage ? `<div class="generation-status ${state.questionGenerationBusy ? "busy" : "notice"}">${state.questionGenerationBusy ? icon("spark") : "!"}<div><strong>${state.questionGenerationBusy ? "مولد الأسئلة يعمل" : "حالة توليد الأسئلة"}</strong><p>${escapeHtml(state.questionGenerationMessage)}</p></div></div>` : ""}
@@ -501,8 +668,9 @@ function renderPlanStep() {
     const generationLabel = state.draft.generationModel
         ? `تم التوليد عبر ${state.draft.generationModel} في ${formatArabicDate(state.draft.generatedAt.slice(0, 10))}.`
         : "تم إنشاء الأسئلة من المقاطع المرتبطة بالدروس.";
+    const wholeExamMode = state.draft.generationMode === "whole_exam_v2";
     return `
-    <div class="section-intro inline"><div><h2>اختر سؤالًا واحدًا لكل مفردة</h2><p>${escapeHtml(state.questionGenerationMessage || generationLabel)} راجع الصياغة والإجابة ودليل المصدر قبل الاختيار.</p></div><span class="progress-pill">${selectedCount} من ${state.draft.plan.length}</span></div>
+    <div class="section-intro inline"><div><h2>${wholeExamMode ? "راجع الاختبار المصمم كاملًا" : "اختر سؤالًا واحدًا لكل مفردة"}</h2><p>${escapeHtml(state.questionGenerationMessage || generationLabel)} ${wholeExamMode ? "راجع الأسئلة كوحدة واحدة؛ يمكنك إعادة توليد مفردة منفردة بعد ذلك عند الحاجة." : "راجع الصياغة والإجابة ودليل المصدر قبل الاختيار."}</p></div><span class="progress-pill">${selectedCount} من ${state.draft.plan.length}</span></div>
     <div class="plan-stack">${state.draft.plan.map((item, index) => renderPlanItem(item, index)).join("")}</div>
     ${renderWizardFooter(3, isPlanComplete(state.draft))}
   `;
@@ -510,8 +678,7 @@ function renderPlanStep() {
 function renderProposalOptions(options) {
     if (!options?.length)
         return "";
-    const labels = ["أ", "ب", "ج", "د"];
-    return `<ol class="proposal-options">${options.map((option, index) => `<li><b>${labels[index] ?? index + 1}</b><span>${escapeHtml(option)}</span></li>`).join("")}</ol>`;
+    return `<ol class="proposal-options">${options.map((option) => `<li><span class="proposal-option-circle" aria-hidden="true"></span><span>${escapeHtml(option)}</span></li>`).join("")}</ol>`;
 }
 function renderMarkScheme(points) {
     if (!points?.length)
@@ -521,7 +688,22 @@ function renderMarkScheme(points) {
 function renderPlanVisual(item, compact = false) {
     if (!item.visual || item.visual.type === "none")
         return "";
-    return `<section class="plan-shared-visual ${compact ? "compact" : ""}"><div class="visual-heading"><strong>${escapeHtml(questionVisualTypeLabel(item.visual.type))}</strong><span>رسم آمن مولّد من مواصفة منظمة، لا صورة حرة.</span></div>${renderQuestionVisualSvg(item.visual)}</section>`;
+    const eligible = isAiIllustrationEligible(item.visual);
+    const hasIllustration = Boolean(item.visual.illustration?.validated && eligible);
+    const busy = state.visualEnhancementBusyIds.has(item.id);
+    const modeLabel = hasIllustration
+        ? "صورة تعليمية 2D مولدة ومدققة علميًا"
+        : eligible
+            ? "رسم 2D مصقول مع محاولة تلقائية لتوليد صورة مدققة"
+            : "مخطط علمي دقيق ومصقول قابل للتحقق";
+    const controls = !compact && eligible && state.draft.visualEnhancementEnabled ? `<div class="visual-action-row">
+    <button class="secondary-btn compact" data-action="${hasIllustration ? "regenerate-visual" : "enhance-visual"}" data-plan-id="${escapeHtml(item.id)}" ${(busy || state.draft.status === "معتمد") ? "disabled" : ""}>${icon("spark")} ${busy ? "جارٍ تحسين الصورة…" : hasIllustration ? "إعادة توليد الصورة" : "تحسين الصورة ثنائية الأبعاد"}</button>
+    ${hasIllustration ? `<button class="text-btn" data-action="restore-deterministic-visual" data-plan-id="${escapeHtml(item.id)}" ${(busy || state.draft.status === "معتمد") ? "disabled" : ""}>استخدام الرسم الحتمي فقط</button>` : ""}
+  </div>` : "";
+    const message = !compact && state.visualEnhancementMessages[item.id]
+        ? `<p class="visual-enhancement-message" aria-live="polite">${escapeHtml(state.visualEnhancementMessages[item.id])}</p>`
+        : "";
+    return `<section class="plan-shared-visual ${compact ? "compact" : ""}"><div class="visual-heading"><strong>${escapeHtml(questionVisualTypeLabel(item.visual.type))}</strong><span>${escapeHtml(modeLabel)}</span></div>${renderQuestionVisualSvg(item.visual)}${controls}${message}</section>`;
 }
 function renderPlanItem(item, index) {
     const chosen = state.draft.selectedProposalByPlanItem[item.id];
@@ -532,15 +714,14 @@ function renderPlanItem(item, index) {
     return `<article class="plan-card">
     <header><div class="question-number">${index + 1}</div><div><h3>${item.questionType}</h3><p>${escapeHtml(item.lessonLabel)} · ${escapeHtml(sourceLabel)}</p></div><div class="plan-tags"><span>${item.cognitiveLevel}</span><span>${item.marks} ${item.marks === 1 ? "درجة" : "درجات"}</span></div></header>
     ${renderPlanVisual(item)}
-    <div class="proposal-grid">${item.proposals.map((proposal, proposalIndex) => `<label class="proposal-card ${chosen === proposal.id ? "selected" : ""}"><input type="radio" name="proposal-${item.id}" data-plan-id="${item.id}" value="${proposal.id}" ${chosen === proposal.id ? "checked" : ""} ${state.draft.status === "معتمد" ? "disabled" : ""}/><div class="proposal-top"><span>البديل ${proposalIndex + 1}</span><div class="proposal-badges">${proposal.questionForm ? `<b class="question-form-badge">${escapeHtml(proposal.questionForm)}</b>` : ""}${proposal.needsReview ? `<b class="review-needed-badge">يحتاج تدقيقًا أدق</b>` : ""}</div></div>${proposal.stimulus ? `<div class="proposal-stimulus">${escapeHtml(proposal.stimulus)}</div>` : ""}<p>${escapeHtml(proposal.text)}</p>${renderProposalOptions(proposal.options)}<details class="proposal-evidence"><summary>الإجابة ونموذج التصحيح ودليل المصدر</summary><p class="proposal-answer"><strong>الإجابة:</strong> ${escapeHtml(proposal.answer)}</p>${renderMarkScheme(proposal.markScheme)}${proposal.rationale ? `<p><strong>سبب الإجابة:</strong> ${escapeHtml(proposal.rationale)}</p>` : ""}${proposal.sourceSupport ? `<blockquote>${escapeHtml(proposal.sourceSupport)}</blockquote>` : ""}</details><span class="choose-label">${chosen === proposal.id ? `${icon("check")} تم الاختيار` : "اختر هذا السؤال"}</span></label>`).join("")}</div>
+    <div class="proposal-grid">${item.proposals.map((proposal, proposalIndex) => `<label class="proposal-card ${chosen === proposal.id ? "selected" : ""}"><input type="radio" name="proposal-${item.id}" data-plan-id="${item.id}" value="${proposal.id}" ${chosen === proposal.id ? "checked" : ""} ${state.draft.status === "معتمد" ? "disabled" : ""}/><div class="proposal-top"><span>البديل ${proposalIndex + 1}</span><div class="proposal-badges">${proposal.questionForm ? `<b class="question-form-badge">${escapeHtml(proposal.questionForm)}</b>` : ""}${proposal.needsReview ? `<b class="review-needed-badge">يحتاج تدقيقًا أدق</b>` : ""}</div></div>${proposal.stimulus ? `<div class="proposal-stimulus">${escapeHtml(proposal.stimulus)}</div>` : ""}<p>${escapeHtml(proposal.text)}</p>${renderProposalOptions(proposal.options)}<details class="proposal-evidence"><summary>الإجابة ونموذج التصحيح ودليل المصدر</summary><p class="proposal-answer"><strong>الإجابة:</strong> ${escapeHtml(proposal.answer)}</p>${renderMarkScheme(proposal.markScheme)}${proposal.rationale ? `<p><strong>سبب الإجابة:</strong> ${escapeHtml(proposal.rationale)}</p>` : ""}${proposal.sourceSupport ? `<blockquote>${escapeHtml(proposal.sourceSupport)}</blockquote>` : ""}${proposal.enrichmentSupport ? `<div class="proposal-enrichment-evidence"><strong>إثراء علمي موثوق:</strong><p>${escapeHtml(proposal.enrichmentSupport)}</p>${proposal.enrichmentSourceUrl ? `<a href="${escapeHtml(proposal.enrichmentSourceUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(proposal.enrichmentSourceTitle || "فتح المصدر الرسمي")}</a>` : ""}</div>` : ""}</details><span class="choose-label">${chosen === proposal.id ? `${icon("check")} تم الاختيار` : "اختر هذا السؤال"}</span></label>`).join("")}</div>
     <footer><button class="text-btn" data-regenerate="${item.id}" ${(state.questionGenerationBusy || state.draft.status === "معتمد") ? "disabled" : ""}>${icon("spark")} توليد ثلاثة بدائل مشابهة لهذه المفردة</button></footer>
   </article>`;
 }
-const ARABIC_OPTION_LABELS = ["أ", "ب", "ج", "د"];
 const ARABIC_SUBPART_LABELS = ["أ", "ب", "ج", "د", "هـ", "و", "ز", "ح", "ط", "ي"];
 function renderPaperResponseArea(item, proposal) {
     if (proposal.options?.length) {
-        return `<ol class="paper-options">${proposal.options.map((option, index) => `<li><span class="paper-option-circle"></span><b class="paper-option-label">${ARABIC_OPTION_LABELS[index] ?? index + 1}</b><em>${escapeHtml(option)}</em></li>`).join("")}</ol>`;
+        return `<ol class="paper-options">${proposal.options.map((option) => `<li><span class="paper-option-circle" aria-hidden="true"></span><em>${escapeHtml(option)}</em></li>`).join("")}</ol>`;
     }
     const lineCount = item.questionType === "إجابة طويلة" ? Math.max(5, item.marks + 2) : Math.max(2, item.marks + 1);
     return `${proposal.workingRequired ? `<p class="working-note">أظهر خطوات الحل بوضوح.</p>` : ""}<div class="answer-lines">${Array.from({ length: lineCount }, () => "<span></span>").join("")}</div>`;
@@ -619,7 +800,7 @@ function selectedPaperItems() {
 function visualSignature(item) {
     if (!item.visual || item.visual.type === "none")
         return "";
-    const { visualId: _visualId, title: _title, altText: _altText, purpose: _purpose, ...structural } = item.visual;
+    const { visualId: _visualId, title: _title, altText: _altText, purpose: _purpose, illustration: _illustration, ...structural } = item.visual;
     return JSON.stringify(structural);
 }
 function reviewReadiness(selected) {
@@ -657,7 +838,7 @@ function renderStudentPaper(subject, paperLayout) {
     <div class="paper-title"><h2>${escapeHtml(state.draft.title)}</h2><p>${subject} · الصف ${state.draft.grade} · الفصل الدراسي ${escapeHtml(state.draft.semester)} · ${escapeHtml(state.draft.academicYear)}</p></div>
     <div class="student-row"><span>اسم الطالب: ____________________</span><span>التاريخ: ${formatArabicDate(state.draft.examDate)}</span><span>الزمن: ${state.draft.durationMinutes} دقيقة</span></div>
     <div class="paper-questions">${paperLayout.html}</div>
-    <footer class="paper-footer">- 1 -</footer>
+    <footer class="paper-footer">انتهت الأسئلة</footer>
   </section>`;
 }
 function exportDocumentHtml(kind) {
@@ -802,18 +983,17 @@ function renderPolicyRuleCard(title, rules) {
     return `<article class="policy-rule-card"><h3>${title}</h3><ul>${rules.map((rule) => `<li>${escapeHtml(rule)}</li>`).join("")}</ul></article>`;
 }
 function renderLibrary() {
-    const localDraft = loadDraft();
-    const localExam = localDraft ? [{
-            id: localDraft.id,
-            title: localDraft.title || "مسودة اختبار بلا عنوان",
-            subject: SUBJECTS.find((item) => item.id === localDraft.subjectId)?.label ?? "غير محددة",
-            grade: localDraft.grade ?? 0,
-            status: localDraft.status === "معتمد" ? "معتمد" : "مسودة",
-            date: localDraft.updatedAt.slice(0, 10),
-            progress: localDraft.status === "معتمد" ? 100 : localDraft.currentStep * 25,
-            isLocal: true,
-            isComplete: localDraft.currentStep >= 4 && isPlanComplete(localDraft),
-        }] : [];
+    const localExam = loadDrafts().map((draft) => ({
+        id: draft.id,
+        title: draft.title || "مسودة اختبار بلا عنوان",
+        subject: SUBJECTS.find((item) => item.id === draft.subjectId)?.label ?? "غير محددة",
+        grade: draft.grade ?? 0,
+        status: draft.status === "معتمد" ? "معتمد" : "مسودة",
+        date: draft.updatedAt.slice(0, 10),
+        progress: draft.status === "معتمد" ? 100 : draft.currentStep * 25,
+        isLocal: true,
+        isComplete: draft.currentStep >= 4 && isPlanComplete(draft),
+    }));
     const examples = MOCK_LIBRARY.map((exam) => ({ ...exam, isLocal: false }));
     const exams = [...localExam, ...examples]
         .filter((exam) => state.libraryFilter === "الكل" || exam.status === state.libraryFilter);
@@ -828,12 +1008,16 @@ function renderExamCard(exam) {
          <button class="secondary-btn compact" data-action="library-export-student-pdf">الطالب PDF</button>
          <button class="secondary-btn compact" data-action="library-export-answer-word">الإجابة Word</button>
          <button class="secondary-btn compact" data-action="library-export-answer-pdf">الإجابة PDF</button>`;
+    const draftAttr = exam.isLocal ? ` data-draft-id="${escapeHtml(exam.id)}"` : "";
+    const exportActionsWithDraft = exam.isLocal
+        ? exportActions.replaceAll("data-action=", `${draftAttr} data-action=`)
+        : exportActions;
     const actions = exam.isLocal
         ? exam.status === "مسودة"
             ? exam.isComplete
-                ? `<button class="primary-btn compact" data-action="preview-library-exam">معاينة المسودة</button><button class="secondary-btn compact" data-action="resume-draft">متابعة التعديل</button>${exportActions}<button class="ghost-btn compact" data-action="delete-draft">حذف</button>`
-                : `<button class="primary-btn compact" data-action="resume-draft">متابعة</button><button class="ghost-btn compact" data-action="delete-draft">حذف</button>`
-            : `<button class="primary-btn compact" data-action="preview-library-exam">معاينة الاختبار</button>${exportActions}`
+                ? `<button class="primary-btn compact"${draftAttr} data-action="preview-library-exam">معاينة المسودة</button><button class="secondary-btn compact"${draftAttr} data-action="resume-draft">متابعة التعديل</button>${exportActionsWithDraft}<button class="ghost-btn compact"${draftAttr} data-action="delete-draft">حذف</button>`
+                : `<button class="primary-btn compact"${draftAttr} data-action="resume-draft">متابعة</button><button class="ghost-btn compact"${draftAttr} data-action="delete-draft">حذف</button>`
+            : `<button class="primary-btn compact"${draftAttr} data-action="preview-library-exam">معاينة الاختبار</button>${exportActionsWithDraft}`
         : `<button class="ghost-btn compact" data-action="mock-download">مثال توضيحي</button>`;
     return `<article class="exam-card" data-search-text="${escapeHtml(`${exam.title} ${exam.subject} ${exam.grade}`)}"><div class="exam-card-head"><span class="status-badge ${exam.status === "معتمد" ? "approved" : "draft"}">${exam.status}</span>${exam.hasModelB ? `<span class="model-badge">أ + ب</span>` : ""}</div><h2>${escapeHtml(exam.title)}</h2><p>${escapeHtml(exam.subject)} · الصف ${exam.grade || "غير محدد"}</p><div class="exam-meta"><span>${formatArabicDate(exam.date)}</span>${exam.progress ? `<span>${exam.progress}% مكتمل</span>` : ""}</div>${exam.progress ? `<div class="progress-track"><span style="width:${exam.progress}%"></span></div>` : ""}<div class="exam-actions library-exam-actions">${actions}</div></article>`;
 }
@@ -1153,38 +1337,67 @@ function bindEvents() {
     bindAdmin();
 }
 function handleAction(action, element) {
+    const requestedDraftId = element.dataset.draftId ?? "";
     if (action === "new-exam") {
+        persistDraftCheckpoint(false);
         const profile = loadProfile();
         state.draft = createEmptyDraft();
+        state.lessonCatalog = [];
+        state.lessonCatalogKey = "";
+        state.lessonCatalogBusy = false;
+        state.lessonCatalogMessage = "";
+        state.lessonCatalogActiveUnitKey = "";
         state.questionGenerationBusy = false;
         state.questionGenerationMessage = "";
         state.sourceRetrievalMessage = "";
+        state.visualEnhancementBusyIds.clear();
+        state.visualEnhancementMessages = {};
+        state.visualEnhancementAutoStarted = false;
         if (profile) {
             state.draft.school = profile.school;
             state.draft.directorate = profile.directorate;
         }
+        saveDraft(state.draft);
         navigate("wizard");
         scheduleSave();
         return;
     }
     if (action === "resume-draft") {
-        const loaded = loadDraft();
-        if (loaded)
-            state.draft = loaded;
+        const loaded = loadDraft(requestedDraftId || undefined);
+        if (!loaded) {
+            showToast("تعذر العثور على المسودة المطلوبة؛ لم يتم فتح اختبار جديد بدلًا منها.");
+            return;
+        }
+        state.draft = loaded;
+        setActiveDraftId(loaded.id);
+        restoreDraftRuntimeContext(loaded);
+        // ثبّت الترقية غير المتلفة فورًا حتى لا تعود المسودة إلى خطوة المحتوى في الزيارة التالية.
+        persistDraftCheckpoint(false);
+        state.visualEnhancementBusyIds.clear();
+        state.visualEnhancementMessages = {};
+        state.visualEnhancementAutoStarted = false;
         navigate("wizard");
+        if (loaded.currentStep >= 3 && loaded.status !== "معتمد") {
+            window.setTimeout(() => { void enhanceEligibleVisuals(); }, 0);
+        }
         return;
     }
     if (action === "preview-library-exam") {
-        const loaded = loadDraft();
+        const loaded = loadDraft(requestedDraftId || undefined);
         if (!loaded)
             return showToast("تعذر العثور على الاختبار المحفوظ.");
         state.draft = loaded;
+        setActiveDraftId(loaded.id);
+        restoreDraftRuntimeContext(loaded);
+        state.visualEnhancementBusyIds.clear();
+        state.visualEnhancementMessages = {};
+        state.visualEnhancementAutoStarted = false;
         state.draft.currentStep = 4;
         navigate("wizard");
         return;
     }
     if (["library-export-student-word", "library-export-student-pdf", "library-export-answer-word", "library-export-answer-pdf"].includes(action)) {
-        const loaded = loadDraft();
+        const loaded = loadDraft(requestedDraftId || undefined);
         if (!loaded || loaded.currentStep < 4 || !isPlanComplete(loaded))
             return showToast("لا يوجد اختبار مكتمل قابل للتصدير.");
         state.draft = loaded;
@@ -1198,6 +1411,18 @@ function handleAction(action, element) {
         else if (!printHtmlDocument(document.fileName, document.html)) {
             showToast("تعذر فتح نافذة الطباعة. اسمح بالنوافذ المنبثقة ثم أعد المحاولة.");
         }
+        return;
+    }
+    if (action === "enhance-visual" || action === "regenerate-visual") {
+        const planItemId = element.dataset.planId ?? "";
+        if (planItemId)
+            void enhancePlanVisual(planItemId);
+        return;
+    }
+    if (action === "restore-deterministic-visual") {
+        const planItemId = element.dataset.planId ?? "";
+        if (planItemId)
+            restoreDeterministicVisual(planItemId);
         return;
     }
     if (action === "save-now")
@@ -1247,11 +1472,23 @@ function handleAction(action, element) {
     if (action === "apply-suggestion")
         return applySuggestedCounts();
     if (action === "delete-draft") {
-        clearDraft();
-        state.draft = createEmptyDraft();
+        const targetDraftId = requestedDraftId || state.draft.id;
+        clearDraft(targetDraftId);
+        const remaining = loadDraft();
+        state.draft = remaining ?? createEmptyDraft();
+        if (remaining)
+            restoreDraftRuntimeContext(remaining);
+        else {
+            state.lessonCatalog = [];
+            state.lessonCatalogKey = "";
+            state.lessonCatalogActiveUnitKey = "";
+        }
         state.questionGenerationBusy = false;
         state.questionGenerationMessage = "";
         state.sourceRetrievalMessage = "";
+        state.visualEnhancementBusyIds.clear();
+        state.visualEnhancementMessages = {};
+        state.visualEnhancementAutoStarted = false;
         showToast("تم حذف المسودة المحلية.");
         return;
     }
@@ -1365,6 +1602,116 @@ function handleAction(action, element) {
         return;
     }
 }
+const MAX_AUTO_VISUAL_ENHANCEMENTS = 4;
+function visualEnhancementProposal(item) {
+    return selectedProposal(state.draft, item) ?? item.proposals[0];
+}
+async function enhancePlanVisual(planItemId, automatic = false) {
+    const item = state.draft.plan.find((entry) => entry.id === planItemId);
+    if (!item?.visual || item.visual.type === "none" || !isAiIllustrationEligible(item.visual)) {
+        if (!automatic)
+            showToast("هذا الرسم يجب أن يبقى حتميًا لحماية دقته العلمية.");
+        return false;
+    }
+    if (!state.draft.visualEnhancementEnabled) {
+        if (!automatic)
+            showToast("فعّل خيار الرسوم الهجينة أولًا؛ بقي الرسم العلمي الحتمي مستخدمًا.");
+        return false;
+    }
+    if (state.draft.status === "معتمد" || state.visualEnhancementBusyIds.has(planItemId))
+        return false;
+    if (!questionGenerationService || !centralSourceStore?.currentSession || state.sourceStorageStatus !== "متصل") {
+        const message = "يلزم تسجيل دخول مالك المنصة لتوليد الصورة؛ بقي الرسم العلمي الحتمي محفوظًا.";
+        state.visualEnhancementMessages[planItemId] = message;
+        if (!automatic)
+            showToast(message);
+        render();
+        return false;
+    }
+    const proposal = visualEnhancementProposal(item);
+    if (!proposal || state.draft.grade === null)
+        return false;
+    const subject = SUBJECTS.find((entry) => entry.id === state.draft.subjectId)?.label ?? state.draft.subjectId;
+    const previousAssetPath = item.visual.illustration?.assetPath ?? "";
+    const startedDraftId = state.draft.id;
+    state.visualEnhancementBusyIds.add(planItemId);
+    state.visualEnhancementMessages[planItemId] = "جارٍ إنشاء صورة 2D ثم فحصها علميًا؛ الرسم الحتمي باقٍ كخطة رجوع.";
+    render();
+    try {
+        const result = await questionGenerationService.generateIllustration({
+            action: "generate_visual_illustration",
+            draftId: state.draft.id,
+            planItemId: item.id,
+            grade: state.draft.grade,
+            subject,
+            lessonLabel: item.lessonLabel,
+            questionText: `${proposal.stimulus ? `${proposal.stimulus} ` : ""}${proposal.text}`.trim(),
+            sourceSupport: proposal.sourceSupport || item.outcomeLabel || item.lessonLabel,
+            ...(previousAssetPath ? { previousAssetPath } : {}),
+            visual: stripQuestionVisualIllustration(item.visual),
+        });
+        if (state.draft.id !== startedDraftId)
+            return false;
+        if (result.status === "ready" && result.illustration) {
+            item.visual = { ...stripQuestionVisualIllustration(item.visual), illustration: result.illustration };
+            state.visualEnhancementMessages[planItemId] = "تم اعتماد صورة 2D بعد الفحص العلمي، مع الاحتفاظ بالرسم الحتمي خلفها.";
+            scheduleSave();
+            if (!automatic)
+                showToast("تم تحسين الرسم بصريًا واعتماده علميًا.");
+            return true;
+        }
+        state.visualEnhancementMessages[planItemId] = result.reason || "لم تجتز الصورة الفحص؛ استخدم واثق الرسم الحتمي دون تعطيل الاختبار.";
+        if (!automatic)
+            showToast("لم تعتمد الصورة الجديدة؛ بقي الرسم الحتمي الآمن.");
+        return false;
+    }
+    catch (error) {
+        if (state.draft.id !== startedDraftId)
+            return false;
+        const message = error instanceof Error ? error.message : "تعذر تحسين الصورة.";
+        state.visualEnhancementMessages[planItemId] = `${message} بقي الرسم الحتمي محفوظًا.`;
+        if (!automatic)
+            showToast(state.visualEnhancementMessages[planItemId]);
+        return false;
+    }
+    finally {
+        state.visualEnhancementBusyIds.delete(planItemId);
+        if (state.draft.id === startedDraftId)
+            render();
+    }
+}
+async function enhanceEligibleVisuals() {
+    if (state.visualEnhancementAutoStarted || !state.draft.visualEnhancementEnabled || state.draft.status === "معتمد")
+        return;
+    state.visualEnhancementAutoStarted = true;
+    const candidates = state.draft.plan
+        .filter((item) => item.visual && item.visual.type !== "none" && isAiIllustrationEligible(item.visual) && !item.visual.illustration?.validated)
+        .slice(0, MAX_AUTO_VISUAL_ENHANCEMENTS);
+    if (!candidates.length)
+        return;
+    state.questionGenerationMessage = `تم بناء الاختبار، ويجري الآن تجهيز ${candidates.length} من المرئيات التعليمية ثنائية الأبعاد وفحصها علميًا.`;
+    render();
+    let approved = 0;
+    for (const item of candidates) {
+        if (await enhancePlanVisual(item.id, true))
+            approved += 1;
+    }
+    state.questionGenerationMessage = approved === candidates.length
+        ? `اكتمل تصميم الاختبار واعتماد ${approved} من المرئيات التعليمية ثنائية الأبعاد علميًا.`
+        : `اكتمل تصميم الاختبار. اعتُمدت ${approved} من ${candidates.length} صور 2D، واستُخدمت رسوم ثنائية الأبعاد مصقولة للبقية.`;
+    scheduleSave();
+    render();
+}
+function restoreDeterministicVisual(planItemId) {
+    const item = state.draft.plan.find((entry) => entry.id === planItemId);
+    if (!item?.visual || state.draft.status === "معتمد")
+        return;
+    item.visual = stripQuestionVisualIllustration(item.visual);
+    state.visualEnhancementMessages[planItemId] = "تمت العودة إلى الرسم العلمي الحتمي فقط.";
+    scheduleSave();
+    render();
+    showToast("تم استخدام الرسم الحتمي فقط.");
+}
 function mergeReusablePlan(expected, existing) {
     const existingById = new Map(existing.map((item) => [item.id, item]));
     return expected.map((item) => {
@@ -1375,7 +1722,7 @@ function mergeReusablePlan(expected, existing) {
             && saved.cognitiveLevel === item.cognitiveLevel
             && saved.marks === item.marks
             && saved.sourceReferenceId === item.sourceReferenceId;
-        return sameStructure ? { ...item, proposals: saved.proposals } : item;
+        return sameStructure ? { ...item, proposals: saved.proposals, ...(saved.visual ? { visual: saved.visual } : {}) } : item;
     });
 }
 function replacePlanItems(plan, replacements) {
@@ -1404,10 +1751,14 @@ async function nextStep() {
         state.draft.plan = mergeReusablePlan(expectedPlan, state.draft.plan);
         const validPlanIds = new Set(state.draft.plan.map((item) => item.id));
         state.draft.selectedProposalByPlanItem = Object.fromEntries(Object.entries(state.draft.selectedProposalByPlanItem).filter(([planItemId]) => validPlanIds.has(planItemId)));
+        if (!persistDraftCheckpoint())
+            return;
         const generated = await generateQuestionsForPlan(state.draft.plan);
         if (!generated)
             return;
-        return setStep(3);
+        setStep(3);
+        await enhanceEligibleVisuals();
+        return;
     }
     if (step === 3) {
         if (!isPlanComplete(state.draft))
@@ -1430,6 +1781,50 @@ async function generateQuestionsForPlan(plan) {
         return false;
     }
     const subject = SUBJECTS.find((item) => item.id === state.draft.subjectId)?.label ?? state.draft.subjectId;
+    if (state.draft.generationMode === "whole_exam_v2" && plan.length <= 12) {
+        const completeV2 = plan.length > 0 && plan.every((item) => item.proposals.length === 1);
+        if (completeV2) {
+            state.questionGenerationMessage = `اكتمل تصميم الاختبار الكامل وحُفظت ${plan.length} مفردات؛ راجعها قبل الاعتماد.`;
+            return true;
+        }
+        state.questionGenerationBusy = true;
+        state.questionGenerationMessage = "جارٍ تصميم الاختبار كاملًا، ثم مراجعته علميًا وتقويميًا كوحدة واحدة…";
+        if (!persistDraftCheckpoint()) {
+            state.questionGenerationBusy = false;
+            return false;
+        }
+        render();
+        try {
+            const request = buildWholeExamGenerationRequestV2(state.draft.assessmentType, state.draft.topic, state.draft.lessonTopics, state.draft.grade, subject, state.draft.difficulty, state.draft.sourceReferences, state.draft.plan, state.lessonCatalog, state.draft.trustedEnrichmentEnabled);
+            const rawResponse = await questionGenerationService.generateWholeExam(request);
+            const response = parseWholeExamGenerationResponseV2(rawResponse, request.items);
+            state.draft.plan = applyWholeExamQuestionsV2(state.draft.plan, response);
+            state.draft.selectedProposalByPlanItem = Object.fromEntries(state.draft.plan.map((item) => [item.id, item.proposals[0]?.id ?? ""]).filter((entry) => Boolean(entry[1])));
+            state.draft.generationVersion = ASSESSMENT_GENERATION_V2_VERSION;
+            state.draft.generationModel = response.model;
+            state.draft.generatedAt = response.generatedAt;
+            state.questionGenerationBusy = false;
+            state.questionGenerationMessage = `تم تصميم اختبار كامل من ${state.draft.plan.length} مفردات ومراجعته كوحدة واحدة. راجع الأسئلة ثم اعتمدها أو جدد مفردة محددة.`;
+            persistDraftCheckpoint(false);
+            render();
+            return true;
+        }
+        catch (error) {
+            state.questionGenerationBusy = false;
+            const detail = error instanceof Error ? error.message : "تعذر تصميم الاختبار الكامل.";
+            const saved = persistDraftCheckpoint(false);
+            state.questionGenerationMessage = `${detail} بقيت المسودة على محرك تصميم الاختبار كاملًا ولم يغيّر واثق طريقة التوليد؛ ${saved ? "حُفظت المسودة الحالية ويمكنك إعادة المحاولة من الموضع نفسه." : "تعذر حفظ المسودة في تخزين المتصفح؛ استخدم زر الحفظ قبل مغادرة الصفحة."}`;
+            render();
+            showToast(detail);
+            return false;
+        }
+    }
+    if (state.draft.generationMode === "whole_exam_v2" && plan.length > 12) {
+        state.draft.generationMode = "legacy_items";
+        state.questionGenerationMessage = "محرك الاختبار الكامل V2 يدعم الاختبارات القصيرة حتى 12 مفردة في هذه المرحلة؛ حوّل واثق هذه المسودة إلى المحرك السابق للاختبار النهائي مع بقاء الخطة كاملة.";
+        scheduleSave();
+        render();
+    }
     const pendingItems = plan.filter((item) => item.proposals.length !== 3);
     if (!pendingItems.length) {
         state.questionGenerationMessage = `اكتملت ${plan.length} مفردات وحُفظت؛ يمكنك الانتقال إلى الاختيار.`;
@@ -1440,13 +1835,8 @@ async function generateQuestionsForPlan(plan) {
     state.questionGenerationBusy = true;
     render();
     try {
-        for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
-            const batch = batches[batchIndex];
-            if (!batch)
-                continue;
-            state.questionGenerationMessage = `جارٍ إنشاء الدفعة ${batchIndex + 1} من ${batches.length}؛ اكتمل ${completedCount} من ${plan.length} مفردات…`;
-            render();
-            const request = buildQuestionGenerationRequest(state.draft.assessmentType, state.draft.topic, state.draft.lessonTopics, state.draft.grade, subject, state.draft.difficulty, state.draft.sourceReferences, batch, state.draft.plan);
+        const generateBatch = async (batch) => {
+            const request = buildQuestionGenerationRequest(state.draft.assessmentType, state.draft.topic, state.draft.lessonTopics, state.draft.grade, subject, state.draft.difficulty, state.draft.sourceReferences, batch, state.draft.plan, state.lessonCatalog, state.draft.trustedEnrichmentEnabled);
             const response = await questionGenerationService.generate(request);
             const replacements = applyGeneratedQuestions(batch, response);
             state.draft.plan = replacePlanItems(state.draft.plan, replacements);
@@ -1454,12 +1844,31 @@ async function generateQuestionsForPlan(plan) {
             state.draft.generationModel = response.model;
             state.draft.generatedAt = response.generatedAt;
             completedCount += batch.length;
-            scheduleSave();
+            persistDraftCheckpoint(false);
+        };
+        for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
+            const batch = batches[batchIndex];
+            if (!batch)
+                continue;
+            state.questionGenerationMessage = `جارٍ إنشاء الدفعة ${batchIndex + 1} من ${batches.length}؛ اكتمل ${completedCount} من ${plan.length} مفردات…`;
+            render();
+            try {
+                await generateBatch(batch);
+            }
+            catch (batchError) {
+                if (batch.length === 1)
+                    throw batchError;
+                state.questionGenerationMessage = `تعذر اعتماد دفعة من مفردتين؛ يعزل واثق كل مفردة الآن حتى لا تضيع المفردة السليمة. اكتمل ${completedCount} من ${plan.length}…`;
+                render();
+                for (const isolatedItem of batch) {
+                    await generateBatch([isolatedItem]);
+                }
+            }
         }
         state.draft.selectedProposalByPlanItem = {};
         state.questionGenerationBusy = false;
         state.questionGenerationMessage = `تم إنشاء ${state.draft.plan.length} مفردات موثقة على دفعات؛ اختر البديل الأنسب لكل مفردة.`;
-        scheduleSave();
+        persistDraftCheckpoint(false);
         render();
         return true;
     }
@@ -1467,8 +1876,8 @@ async function generateQuestionsForPlan(plan) {
         state.questionGenerationBusy = false;
         const completed = state.draft.plan.filter((item) => item.proposals.length === 3).length;
         const detail = error instanceof Error ? error.message : "تعذر إنشاء الأسئلة من المصدر.";
-        state.questionGenerationMessage = `${detail} تم الاحتفاظ بـ ${completed} من ${state.draft.plan.length} مفردات مكتملة؛ اضغط التالي لإكمال الباقي فقط.`;
-        scheduleSave();
+        const saved = persistDraftCheckpoint(false);
+        state.questionGenerationMessage = `${detail} تم الاحتفاظ بـ ${completed} من ${state.draft.plan.length} مفردات مكتملة${saved ? " وحفظها" : ""}؛ اضغط التالي لإكمال الباقي فقط.`;
         render();
         showToast(detail);
         return false;
@@ -1486,7 +1895,7 @@ async function regeneratePlanItem(item) {
     state.questionGenerationMessage = `جارٍ توليد بدائل مشابهة للسؤال ${state.draft.plan.indexOf(item) + 1}…`;
     render();
     try {
-        const request = buildQuestionGenerationRequest(state.draft.assessmentType, state.draft.topic, state.draft.lessonTopics, state.draft.grade, subject, state.draft.difficulty, state.draft.sourceReferences, [item], state.draft.plan);
+        const request = buildQuestionGenerationRequest(state.draft.assessmentType, state.draft.topic, state.draft.lessonTopics, state.draft.grade, subject, state.draft.difficulty, state.draft.sourceReferences, [item], state.draft.plan, state.lessonCatalog, state.draft.trustedEnrichmentEnabled);
         const anchor = selectedProposal(state.draft, item) ?? item.proposals[0];
         if (anchor && request.items[0]) {
             request.items[0].regenerationAnchor = {
@@ -1497,16 +1906,27 @@ async function regeneratePlanItem(item) {
             };
         }
         const response = await questionGenerationService.generate(request);
-        const [replacement] = applyGeneratedQuestions([item], response);
-        if (!replacement)
+        const [generatedReplacement] = applyGeneratedQuestions([item], response);
+        if (!generatedReplacement)
             throw new Error("تعذر ربط البدائل الجديدة بمفردة الخطة.");
+        const replacement = state.draft.generationMode === "whole_exam_v2"
+            ? { ...generatedReplacement, proposals: generatedReplacement.proposals.slice(0, 1).map((proposal) => ({ ...proposal, id: `${item.id}-v2-primary` })) }
+            : generatedReplacement;
         state.draft.plan = state.draft.plan.map((entry) => entry.id === item.id ? replacement : entry);
-        delete state.draft.selectedProposalByPlanItem[item.id];
-        state.draft.generationVersion = SOURCE_GENERATION_VERSION;
+        if (state.draft.generationMode === "whole_exam_v2" && replacement.proposals[0]) {
+            state.draft.selectedProposalByPlanItem[item.id] = replacement.proposals[0].id;
+            state.draft.generationVersion = ASSESSMENT_GENERATION_V2_VERSION;
+        }
+        else {
+            delete state.draft.selectedProposalByPlanItem[item.id];
+            state.draft.generationVersion = SOURCE_GENERATION_VERSION;
+        }
         state.draft.generationModel = response.model;
         state.draft.generatedAt = response.generatedAt;
         state.questionGenerationBusy = false;
-        state.questionGenerationMessage = "تم توليد ثلاثة بدائل مشابهة لهذه المفردة.";
+        state.questionGenerationMessage = state.draft.generationMode === "whole_exam_v2"
+            ? "تم تجديد السؤال المحدد مع الحفاظ على وضع تصميم الاختبار الكامل."
+            : "تم توليد ثلاثة بدائل مشابهة لهذه المفردة.";
         scheduleSave();
         render();
         showToast(state.questionGenerationMessage);
@@ -1562,15 +1982,19 @@ async function prepareSourceContext() {
                 ? candidates.filter((candidate) => candidate.source.id === catalogLesson.sourceId)
                 : candidates;
             const pageStart = catalogLesson?.pageStart;
-            const pageScoped = pageStart
-                ? sourceScoped.filter((candidate) => {
-                    const pageEnd = catalogLesson?.pageEnd ?? pageStart;
-                    return candidate.chunk.pageFrom <= pageEnd && candidate.chunk.pageTo >= pageStart;
-                })
+            const pageEnd = catalogLesson?.pageEnd ?? pageStart;
+            const exactPageScoped = pageStart && pageEnd
+                ? sourceScoped.filter((candidate) => candidate.chunk.pageFrom <= pageEnd && candidate.chunk.pageTo >= pageStart)
                 : sourceScoped;
-            const scopedCandidates = pageScoped.length ? pageScoped : sourceScoped;
+            // Curated TOC pages are mapped to PDF pages, but extraction boundaries may drift by a page or two.
+            // Search the exact lesson range first, then a small PDF neighbourhood, then the source with strict title matching.
+            const paddedPageScoped = pageStart && pageEnd
+                ? sourceScoped.filter((candidate) => candidate.chunk.pageFrom <= pageEnd + 3 && candidate.chunk.pageTo >= Math.max(1, pageStart - 3))
+                : sourceScoped;
             const query = catalogLesson ? `${catalogLesson.code} ${catalogLesson.title}` : lesson;
-            const result = rankSourceChunks(query, scopedCandidates, 2);
+            const exactResult = rankSourceChunks(query, exactPageScoped, 2);
+            const paddedResult = exactResult.references.length ? exactResult : rankSourceChunks(query, paddedPageScoped, 2);
+            const result = paddedResult.references.length ? paddedResult : rankSourceChunks(query, sourceScoped, 2);
             return {
                 lesson,
                 references: result.references.map((reference) => ({
@@ -1613,8 +2037,8 @@ async function loadLessonCatalogForCurrentSelection(force = false) {
     const key = lessonCatalogSelectionKey();
     if (!force && (state.lessonCatalogBusy || state.lessonCatalogKey === key))
         return;
+    const savedSnapshot = [...state.lessonCatalog];
     state.lessonCatalogKey = key;
-    state.lessonCatalog = [];
     state.lessonCatalogMessage = "";
     if (state.draft.grade === null || !state.draft.subjectId)
         return;
@@ -1630,21 +2054,14 @@ async function loadLessonCatalogForCurrentSelection(force = false) {
         if (centralSourceStore?.currentSession && state.sourceStorageStatus === "متصل") {
             const loaded = await Promise.all(eligible.map(async (source) => {
                 try {
-                    let nodes = await centralSourceStore.listSourceStructure(source.id);
-                    let existingCatalog = buildLessonCatalog([source], new Map([[source.id, nodes]]));
-                    if (existingCatalog.length < MIN_LESSON_TOPICS) {
-                        const curated = buildCuratedBookStructure(source);
-                        if (curated.length) {
-                            nodes = curated;
-                            existingCatalog = buildLessonCatalog([source], new Map([[source.id, nodes]]));
-                        }
-                    }
-                    if (existingCatalog.length < MIN_LESSON_TOPICS) {
-                        const chunks = await centralSourceStore.listSourceChunks(source.id);
-                        const extracted = extractSourceStructure(source.id, chunks, source.extractedPageCount ?? 0, { allowUnitHeadingFallback: false });
-                        if (extracted.reliableTocFound)
-                            nodes = extracted.nodes;
-                    }
+                    const storedNodes = await centralSourceStore.listSourceStructure(source.id);
+                    const curatedNodes = buildCuratedBookStructure(source);
+                    let nodes = [...storedNodes, ...curatedNodes];
+                    // ندمج البنية المستخرجة الموثوقة بدل استبدال شجرة بأخرى؛ فالاستبدال كان يسقط دروسًا صحيحة.
+                    const chunks = await centralSourceStore.listSourceChunks(source.id);
+                    const extracted = extractSourceStructure(source.id, chunks, source.extractedPageCount ?? 0, { allowUnitHeadingFallback: false });
+                    if (extracted.reliableTocFound)
+                        nodes = [...nodes, ...extracted.nodes];
                     return [source.id, nodes];
                 }
                 catch {
@@ -1653,7 +2070,10 @@ async function loadLessonCatalogForCurrentSelection(force = false) {
             }));
             loaded.forEach(([sourceId, nodes]) => structures.set(sourceId, nodes));
         }
-        state.lessonCatalog = buildLessonCatalog(eligible, structures);
+        const liveCatalog = buildLessonCatalog(eligible, structures);
+        state.lessonCatalog = liveCatalog.length ? liveCatalog : savedSnapshot;
+        const unitGroups = buildLessonUnitGroups(state.lessonCatalog);
+        state.lessonCatalogActiveUnitKey = resolveActiveLessonUnitKey(unitGroups, new Set(normalizeLessonTopics(state.draft.lessonTopics)));
         const validLabels = new Set(state.lessonCatalog.map((lesson) => lesson.label));
         const retained = normalizeLessonTopics(state.draft.lessonTopics).filter((label) => validLabels.has(label));
         if (retained.length !== normalizeLessonTopics(state.draft.lessonTopics).length) {
@@ -1663,11 +2083,13 @@ async function loadLessonCatalogForCurrentSelection(force = false) {
             scheduleSave();
         }
         const curatedCount = state.lessonCatalog.filter((lesson) => lesson.origin === "curated-book-tree").length;
-        state.lessonCatalogMessage = state.lessonCatalog.length
-            ? curatedCount
-                ? `تم تجهيز شجرة الكتاب المعتمدة: ${state.lessonCatalog.length} درسًا.`
-                : `تم تجهيز شجرة المصدر: ${state.lessonCatalog.length} درسًا.`
-            : "لا توجد شجرة محتوى موثوقة لهذا الكتاب بعد.";
+        const detectedCount = state.lessonCatalog.filter((lesson) => lesson.origin === "detected-heading").length;
+        const unitCount = buildLessonUnitGroups(state.lessonCatalog).length;
+        state.lessonCatalogMessage = liveCatalog.length
+            ? `${curatedCount ? "تم تجهيز شجرة الكتاب المعتمدة" : "تم تجهيز شجرة المصدر"}: ${unitCount} وحدات و${state.lessonCatalog.length} درسًا${detectedCount ? `، منها ${detectedCount} دروس مكتملة من عناوين المصدر` : ""}.`
+            : state.lessonCatalog.length
+                ? "تعذر تحديث الشجرة الآن؛ احتفظ واثق بنسخة الدروس المحفوظة داخل المسودة."
+                : "لا توجد شجرة محتوى موثوقة لهذا الكتاب بعد.";
     }
     finally {
         state.lessonCatalogBusy = false;
@@ -1685,6 +2107,7 @@ function bindContentStep() {
         state.lessonCatalog = [];
         state.lessonCatalogKey = "";
         state.lessonCatalogMessage = "";
+        state.lessonCatalogActiveUnitKey = "";
         invalidateSourceAndGeneratedQuestions();
         scheduleSave();
         render();
@@ -1697,15 +2120,32 @@ function bindContentStep() {
         state.lessonCatalog = [];
         state.lessonCatalogKey = "";
         state.lessonCatalogMessage = "";
+        state.lessonCatalogActiveUnitKey = "";
         invalidateSourceAndGeneratedQuestions();
         scheduleSave();
         render();
+    });
+    document.querySelectorAll("[data-lesson-unit-target]").forEach((control) => {
+        control.addEventListener("click", () => {
+            const target = control.dataset.lessonUnitTarget;
+            if (!target || target === state.lessonCatalogActiveUnitKey)
+                return;
+            state.lessonCatalogActiveUnitKey = target;
+            render();
+            document.querySelector(".lesson-catalog-field")?.scrollIntoView({ block: "start" });
+        });
+    });
+    document.querySelector("#lesson-unit-select")?.addEventListener("change", (event) => {
+        state.lessonCatalogActiveUnitKey = event.target.value;
+        render();
+        document.querySelector(".lesson-catalog-field")?.scrollIntoView({ block: "start" });
     });
     document.querySelectorAll("[data-lesson-option-id]").forEach((input) => {
         input.addEventListener("change", () => {
             const option = state.lessonCatalog.find((lesson) => lesson.id === input.dataset.lessonOptionId);
             if (!option)
                 return;
+            state.lessonCatalogActiveUnitKey = input.dataset.lessonUnitKey ?? state.lessonCatalogActiveUnitKey;
             const selected = new Set(normalizeLessonTopics(state.draft.lessonTopics));
             if (input.checked) {
                 if (selected.size >= MAX_LESSON_TOPICS) {
@@ -1773,6 +2213,34 @@ function bindSetupStep() {
     document.querySelector("#semester-select")?.addEventListener("change", (event) => {
         state.draft.semester = event.target.value;
         scheduleSave();
+    });
+    document.querySelectorAll('input[name="generation-mode"]').forEach((input) => {
+        input.addEventListener("change", () => {
+            state.draft.generationMode = input.value === "legacy_items" ? "legacy_items" : "whole_exam_v2";
+            invalidateGeneratedQuestions();
+            state.questionGenerationMessage = state.draft.generationMode === "whole_exam_v2"
+                ? "سيصمم واثق الاختبار كاملًا في طلب واحد، ثم يراجعه بوصفه وحدة متكاملة قبل عرضه."
+                : "تم اختيار المحرك السابق الذي يولد المفردات على دفعات صغيرة.";
+            scheduleSave();
+            render();
+        });
+    });
+    document.querySelector("#trusted-enrichment-toggle")?.addEventListener("change", (event) => {
+        state.draft.trustedEnrichmentEnabled = event.target.checked;
+        state.questionGenerationMessage = state.draft.trustedEnrichmentEnabled
+            ? "سيستخدم واثق إثراءً موثقًا في المفردات الجديدة أو المعاد توليدها، مع بقاء صفحات الكتاب حاكمة للسؤال والإجابة."
+            : "تم إيقاف الإثراء الخارجي للمفردات الجديدة أو المعاد توليدها؛ ولن تُحذف الأسئلة المكتملة.";
+        scheduleSave();
+        render();
+    });
+    document.querySelector("#visual-enhancement-toggle")?.addEventListener("change", (event) => {
+        state.draft.visualEnhancementEnabled = event.target.checked;
+        state.visualEnhancementAutoStarted = false;
+        state.questionGenerationMessage = state.draft.visualEnhancementEnabled
+            ? "سيحافظ واثق على الرسوم الحتمية، ويضيف صورًا ثنائية الأبعاد مدققة للمشاهد المؤهلة فقط."
+            : "تم إيقاف تحسين الصور الجديدة؛ وتبقى الرسوم الحالية والأسئلة المكتملة محفوظة.";
+        scheduleSave();
+        render();
     });
     document.querySelector("#duration-input")?.addEventListener("change", (event) => {
         state.draft.durationMinutes = Number(event.target.value);

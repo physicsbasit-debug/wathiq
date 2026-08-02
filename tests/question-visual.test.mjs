@@ -251,7 +251,7 @@ test("يستخدم صورة 2D مدققة للمشهد المؤهل ويبقي S
   assert.match(html, /data-visual-mode="hybrid"/);
   const stripped = stripQuestionVisualIllustration(visual);
   assert.equal(stripped.illustration, undefined);
-  assert.match(renderQuestionVisualSvg(stripped), /data-visual-mode="deterministic"/);
+  assert.match(renderQuestionVisualSvg(stripped), /data-visual-mode="(?:deterministic|2d-vector)"/);
 });
 
 test("يرفض بيانات صورة غير آمنة ولا يحول مخطط القوى إلى صورة حرة", () => {

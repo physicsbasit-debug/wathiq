@@ -1,19 +1,19 @@
-# تعليمات رفع Phase 2-B Fix 1
+# تعليمات رفع Phase 2-C1
 
 ## الأساس المطلوب
 
-يجب أن تكون `main` متضمنة **Phase 2-B (`0.0.51`)** قبل الرفع.
+يجب أن تكون `main` متضمنة **Phase 2-B Fix 1 (`0.0.52`)** قبل الرفع.
 
 ## الفرع
 
 ```text
-phase-2b-fix1-atomic-draft-resume
+phase-2c1-visual-first-2d
 ```
 
 ## رسالة الحفظ
 
 ```text
-fix: make draft resume atomic and non-destructive
+feat: add visual-first scientific 2d rendering
 ```
 
 ## خطوات الرفع
@@ -26,7 +26,7 @@ fix: make draft resume atomic and non-destructive
 النتيجة المطلوبة:
 
 ```text
-392 passed
+398 passed
 0 failed
 ```
 
@@ -38,6 +38,6 @@ fix: make draft resume atomic and non-destructive
 supabase/functions/generate-source-questions/index.ts
 ```
 
-ثم نفذ `Ctrl + F5`.
+ثم نفذ `Ctrl + F5` وأنشئ اختبارًا جديدًا يحتوي مشهدًا سياقيًا مؤهلًا للصور.
 
 لا يلزم SQL أو سر جديد أو إعادة فهرسة أو رفع دليل المعلم.

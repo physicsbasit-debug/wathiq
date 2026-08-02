@@ -117,6 +117,32 @@ const EXPORT_STYLES = `
   .qv-dimension { stroke-dasharray: 5 4; }
   .qv-context-road { fill: #f2f4f7; stroke: #182536; stroke-width: 3; }
   .qv-context-road-line { stroke-dasharray: 12 10; }
+
+  .qv-charged-object { fill: #dbeafe; stroke: #1e3a5f; stroke-width: 2.5; }
+  .qv-charge-object-two { fill: #fce7f3; }
+  .qv-charge-highlight { fill: rgba(255,255,255,.72); stroke: none; }
+  .qv-charge-main { fill: #173b6d; font-size: 22px; font-weight: 900; }
+  .qv-string { stroke: #64748b; stroke-width: 2; }
+  .qv-rod { fill: #7dd3fc; stroke: #164e63; stroke-width: 2.5; }
+  .qv-rod-highlight { fill: rgba(255,255,255,.65); stroke: none; }
+  .qv-cloth { fill: #fda4af; stroke: #881337; stroke-width: 2; }
+  .qv-paper-piece { fill: #fef3c7; stroke: #92400e; stroke-width: 1.4; }
+  .qv-force-body { fill: #dbeafe; stroke: #173b6d; stroke-width: 2.5; }
+  .qv-force-pocket { fill: #bfdbfe; stroke: #173b6d; stroke-width: 1.5; }
+  .qv-force-wheel { fill: #334155; stroke: #0f172a; stroke-width: 2; }
+  .qv-force-detail { fill: none; stroke: #173b6d; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+  .qv-force-crate-cross { stroke-width: 1.6; opacity: .45; }
+  .qv-force-ground { stroke: #64748b; stroke-width: 2.5; }
+  .qv-context-object { fill: #e0f2fe; stroke: #173b6d; }
+  .qv-context-panel { fill: #bfdbfe; stroke: #173b6d; }
+  .qv-context-instrument { fill: #d1fae5; stroke: #166534; }
+  .qv-context-flask { fill: #ccfbf1; stroke: #0f766e; }
+  .qv-context-wheel { fill: #334155; stroke: #0f172a; }
+  .qv-context-person { fill: #fed7aa; stroke: #9a3412; }
+  .qv-context-sun { fill: #fde68a; stroke: #a16207; }
+  .qv-context-road { fill: #e2e8f0; stroke: #334155; }
+  .qv-context-emphasis { stroke: #c2410c; }
+  .qv-context-motion { stroke: #0369a1; }
   .paper-footer { text-align: center; margin-top: 8mm; }
   .teacher-key { margin-top: 10mm; break-before: page; page-break-before: always; }
   .teacher-key h2 { text-align: center; border-bottom: 2px solid #173b6d; padding-bottom: 3mm; }
@@ -182,6 +208,32 @@ const SVG_RASTER_STYLES = `
   .qv-dimension { stroke-dasharray: 5 4; }
   .qv-context-road { fill: #f2f4f7; stroke: #182536; stroke-width: 3; }
   .qv-context-road-line { stroke-dasharray: 12 10; }
+
+  .qv-charged-object { fill: #dbeafe; stroke: #1e3a5f; stroke-width: 2.5; }
+  .qv-charge-object-two { fill: #fce7f3; }
+  .qv-charge-highlight { fill: rgba(255,255,255,.72); stroke: none; }
+  .qv-charge-main { fill: #173b6d; font-size: 22px; font-weight: 900; }
+  .qv-string { stroke: #64748b; stroke-width: 2; }
+  .qv-rod { fill: #7dd3fc; stroke: #164e63; stroke-width: 2.5; }
+  .qv-rod-highlight { fill: rgba(255,255,255,.65); stroke: none; }
+  .qv-cloth { fill: #fda4af; stroke: #881337; stroke-width: 2; }
+  .qv-paper-piece { fill: #fef3c7; stroke: #92400e; stroke-width: 1.4; }
+  .qv-force-body { fill: #dbeafe; stroke: #173b6d; stroke-width: 2.5; }
+  .qv-force-pocket { fill: #bfdbfe; stroke: #173b6d; stroke-width: 1.5; }
+  .qv-force-wheel { fill: #334155; stroke: #0f172a; stroke-width: 2; }
+  .qv-force-detail { fill: none; stroke: #173b6d; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+  .qv-force-crate-cross { stroke-width: 1.6; opacity: .45; }
+  .qv-force-ground { stroke: #64748b; stroke-width: 2.5; }
+  .qv-context-object { fill: #e0f2fe; stroke: #173b6d; }
+  .qv-context-panel { fill: #bfdbfe; stroke: #173b6d; }
+  .qv-context-instrument { fill: #d1fae5; stroke: #166534; }
+  .qv-context-flask { fill: #ccfbf1; stroke: #0f766e; }
+  .qv-context-wheel { fill: #334155; stroke: #0f172a; }
+  .qv-context-person { fill: #fed7aa; stroke: #9a3412; }
+  .qv-context-sun { fill: #fde68a; stroke: #a16207; }
+  .qv-context-road { fill: #e2e8f0; stroke: #334155; }
+  .qv-context-emphasis { stroke: #c2410c; }
+  .qv-context-motion { stroke: #0369a1; }
 `;
 
 async function svgElementToPngDataUrl(svg: SVGSVGElement): Promise<string> {

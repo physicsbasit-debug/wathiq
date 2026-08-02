@@ -758,7 +758,7 @@ function renderSetupStep(): string {
     <label class="trusted-enrichment-card visual-enhancement-card ${state.draft.visualEnhancementEnabled ? "enabled" : ""}">
       <input id="visual-enhancement-toggle" type="checkbox" ${state.draft.visualEnhancementEnabled ? "checked" : ""}/>
       <span class="trusted-enrichment-check">${state.draft.visualEnhancementEnabled ? icon("check") : ""}</span>
-      <span><strong>الرسوم الهجينة المنضبطة</strong><small>يحافظ واثق على الرسم العلمي الحتمي أساسًا، ويضيف صورة ثنائية الأبعاد جميلة فقط للمشاهد السياقية الآمنة بعد فحصها علميًا. عند أي فشل يبقى الرسم الأصلي دون تعطيل الاختبار.</small></span>
+      <span><strong>المرئيات التعليمية ثنائية الأبعاد</strong><small>يولّد واثق تلقائيًا صور 2D واضحة للمشاهد السياقية والكهرباء الساكنة الآمنة، ثم يفحصها علميًا قبل اعتمادها. تبقى القيم والأسهم والمخططات الحسابية حتمية، وعند تعذر الصورة يستخدم رسمًا ثنائي الأبعاد مصقولًا بدل الخطوط البدائية.</small></span>
     </label>
 
     ${officialSettings}
@@ -820,10 +820,10 @@ function renderPlanVisual(item: PlanItem, compact = false): string {
   const hasIllustration = Boolean(item.visual.illustration?.validated && eligible);
   const busy = state.visualEnhancementBusyIds.has(item.id);
   const modeLabel = hasIllustration
-    ? "صورة 2D مولدة ومدققة علميًا مع رسم حتمي احتياطي"
+    ? "صورة تعليمية 2D مولدة ومدققة علميًا"
     : eligible
-      ? "رسم علمي حتمي، ويمكن تحسين المشهد بصريًا دون المساس بالبيانات"
-      : "رسم علمي حتمي قابل للتحقق";
+      ? "رسم 2D مصقول مع محاولة تلقائية لتوليد صورة مدققة"
+      : "مخطط علمي دقيق ومصقول قابل للتحقق";
   const controls = !compact && eligible && state.draft.visualEnhancementEnabled ? `<div class="visual-action-row">
     <button class="secondary-btn compact" data-action="${hasIllustration ? "regenerate-visual" : "enhance-visual"}" data-plan-id="${escapeHtml(item.id)}" ${(busy || state.draft.status === "معتمد") ? "disabled" : ""}>${icon("spark")} ${busy ? "جارٍ تحسين الصورة…" : hasIllustration ? "إعادة توليد الصورة" : "تحسين الصورة ثنائية الأبعاد"}</button>
     ${hasIllustration ? `<button class="text-btn" data-action="restore-deterministic-visual" data-plan-id="${escapeHtml(item.id)}" ${(busy || state.draft.status === "معتمد") ? "disabled" : ""}>استخدام الرسم الحتمي فقط</button>` : ""}
@@ -1564,6 +1564,9 @@ function handleAction(action: string, element: HTMLElement): void {
     state.visualEnhancementMessages = {};
     state.visualEnhancementAutoStarted = false;
     navigate("wizard");
+    if (loaded.currentStep >= 3 && loaded.status !== "معتمد") {
+      window.setTimeout(() => { void enhanceEligibleVisuals(); }, 0);
+    }
     return;
   }
   if (action === "preview-library-exam") {
@@ -1763,7 +1766,7 @@ function handleAction(action: string, element: HTMLElement): void {
   if (action === "index-source" && sourceId) { void extractAndIndexSource(sourceId); return; }
 }
 
-const MAX_AUTO_VISUAL_ENHANCEMENTS = 3;
+const MAX_AUTO_VISUAL_ENHANCEMENTS = 4;
 
 function visualEnhancementProposal(item: PlanItem): PlanItem["proposals"][number] | undefined {
   return selectedProposal(state.draft, item) ?? item.proposals[0];
@@ -1837,9 +1840,18 @@ async function enhanceEligibleVisuals(): Promise<void> {
   const candidates = state.draft.plan
     .filter((item) => item.visual && item.visual.type !== "none" && isAiIllustrationEligible(item.visual) && !item.visual.illustration?.validated)
     .slice(0, MAX_AUTO_VISUAL_ENHANCEMENTS);
+  if (!candidates.length) return;
+  state.questionGenerationMessage = `تم بناء الاختبار، ويجري الآن تجهيز ${candidates.length} من المرئيات التعليمية ثنائية الأبعاد وفحصها علميًا.`;
+  render();
+  let approved = 0;
   for (const item of candidates) {
-    await enhancePlanVisual(item.id, true);
+    if (await enhancePlanVisual(item.id, true)) approved += 1;
   }
+  state.questionGenerationMessage = approved === candidates.length
+    ? `اكتمل تصميم الاختبار واعتماد ${approved} من المرئيات التعليمية ثنائية الأبعاد علميًا.`
+    : `اكتمل تصميم الاختبار. اعتُمدت ${approved} من ${candidates.length} صور 2D، واستُخدمت رسوم ثنائية الأبعاد مصقولة للبقية.`;
+  scheduleSave();
+  render();
 }
 
 function restoreDeterministicVisual(planItemId: string): void {
@@ -1897,7 +1909,7 @@ async function nextStep(): Promise<void> {
     const generated = await generateQuestionsForPlan(state.draft.plan);
     if (!generated) return;
     setStep(3);
-    void enhanceEligibleVisuals();
+    await enhanceEligibleVisuals();
     return;
   }
   if (step === 3) {

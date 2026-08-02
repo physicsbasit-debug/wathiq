@@ -635,7 +635,7 @@ function renderElectrostaticDiagram(spec: QuestionVisualSpec): string {
     const arrows = unlike
       ? `<line x1="290" y1="${centerY}" x2="315" y2="${centerY}" class="qv-force-arrow" marker-end="url(#qv-force-head)"/><line x1="350" y1="${centerY}" x2="325" y2="${centerY}" class="qv-force-arrow" marker-end="url(#qv-force-head)"/>`
       : `<line x1="290" y1="${centerY}" x2="255" y2="${centerY}" class="qv-force-arrow" marker-end="url(#qv-force-head)"/><line x1="350" y1="${centerY}" x2="385" y2="${centerY}" class="qv-force-arrow" marker-end="url(#qv-force-head)"/>`;
-    return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}"><defs><marker id="qv-force-head" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" class="qv-arrow-fill"/></marker></defs><text x="${width / 2}" y="28" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text><line x1="${leftX}" y1="85" x2="${leftX}" y2="150" class="qv-string"/><line x1="${rightX}" y1="85" x2="${rightX}" y2="150" class="qv-string"/><circle cx="${leftX}" cy="${centerY}" r="38" class="qv-charged-object"/><circle cx="${rightX}" cy="${centerY}" r="38" class="qv-charged-object"/><text x="${leftX}" y="${centerY + 10}" class="qv-charge-main" text-anchor="middle">+</text><text x="${rightX}" y="${centerY + 10}" class="qv-charge-main" text-anchor="middle">${secondSign}</text>${arrows}<text x="${leftX}" y="${centerY + 68}" class="qv-annotation" text-anchor="middle">${escapeXml(first)}</text><text x="${rightX}" y="${centerY + 68}" class="qv-annotation" text-anchor="middle">${escapeXml(second)}</text></svg>`;
+    return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}"><defs><marker id="qv-force-head" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" class="qv-arrow-fill"/></marker></defs><text x="${width / 2}" y="28" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text><line x1="${leftX}" y1="85" x2="${leftX}" y2="150" class="qv-string"/><line x1="${rightX}" y1="85" x2="${rightX}" y2="150" class="qv-string"/><circle cx="${leftX}" cy="${centerY}" r="38" class="qv-charged-object qv-charge-object-one"/><circle cx="${rightX}" cy="${centerY}" r="38" class="qv-charged-object qv-charge-object-two"/><circle cx="${leftX - 12}" cy="${centerY - 13}" r="7" class="qv-charge-highlight"/><circle cx="${rightX - 12}" cy="${centerY - 13}" r="7" class="qv-charge-highlight"/><text x="${leftX}" y="${centerY + 10}" class="qv-charge-main" text-anchor="middle">+</text><text x="${rightX}" y="${centerY + 10}" class="qv-charge-main" text-anchor="middle">${secondSign}</text>${arrows}<text x="${leftX}" y="${centerY + 68}" class="qv-annotation" text-anchor="middle">${escapeXml(first)}</text><text x="${rightX}" y="${centerY + 68}" class="qv-annotation" text-anchor="middle">${escapeXml(second)}</text></svg>`;
   }
 
   const rodX = 160;
@@ -646,7 +646,7 @@ function renderElectrostaticDiagram(spec: QuestionVisualSpec): string {
     const py = 280 + (index % 2) * 13;
     return `<rect x="${px}" y="${py}" width="18" height="8" class="qv-paper-piece" transform="rotate(${index % 2 ? -12 : 10} ${px + 9} ${py + 4})"/>`;
   }).join("");
-  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}"><defs><marker id="qv-electron-head" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" class="qv-arrow-fill"/></marker></defs><text x="${width / 2}" y="28" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text><rect x="${rodX}" y="${y}" width="220" height="24" rx="12" class="qv-rod" transform="rotate(-8 ${rodX + 110} ${y + 12})"/><path d="M ${clothX} ${y - 35} q 50 -18 92 12 v 90 q -50 18 -96 -8 z" class="qv-cloth"/><path d="M ${clothX - 6} ${y + 2} C 350 ${y - 28}, 330 ${y - 14}, 300 ${y - 2}" class="qv-electron-arrow" marker-end="url(#qv-electron-head)"/><text x="335" y="${y - 32}" class="qv-annotation">اتجاه الدلك</text><text x="${rodX + 110}" y="${y + 65}" class="qv-annotation" text-anchor="middle">${escapeXml(first)}</text><text x="${clothX + 45}" y="${y + 88}" class="qv-annotation" text-anchor="middle">${escapeXml(second)}</text>${paperPieces}<text x="230" y="330" class="qv-annotation" text-anchor="middle">قصاصات ورق خفيفة</text></svg>`;
+  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}"><defs><marker id="qv-electron-head" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" class="qv-arrow-fill"/></marker></defs><text x="${width / 2}" y="28" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text><rect x="${rodX}" y="${y}" width="220" height="28" rx="14" class="qv-rod" transform="rotate(-8 ${rodX + 110} ${y + 14})"/><rect x="${rodX + 18}" y="${y + 5}" width="150" height="6" rx="3" class="qv-rod-highlight" transform="rotate(-8 ${rodX + 110} ${y + 14})"/><path d="M ${clothX} ${y - 35} q 50 -18 92 12 v 90 q -50 18 -96 -8 z" class="qv-cloth"/><path d="M ${clothX - 6} ${y + 2} C 350 ${y - 28}, 330 ${y - 14}, 300 ${y - 2}" class="qv-electron-arrow" marker-end="url(#qv-electron-head)"/><text x="335" y="${y - 32}" class="qv-annotation">اتجاه الدلك</text><text x="${rodX + 110}" y="${y + 65}" class="qv-annotation" text-anchor="middle">${escapeXml(first)}</text><text x="${clothX + 45}" y="${y + 88}" class="qv-annotation" text-anchor="middle">${escapeXml(second)}</text>${paperPieces}<text x="230" y="330" class="qv-annotation" text-anchor="middle">قصاصات ورق خفيفة</text></svg>`;
 }
 
 function renderDataTable(spec: QuestionVisualSpec): string {
@@ -746,7 +746,7 @@ export function isAiIllustrationEligible(spec: QuestionVisualSpec): boolean {
   if (spec.type === "context_scene") {
     return ["read", "interpret", "compare", "evaluate"].includes(spec.role ?? "read");
   }
-  if (spec.type === "electrostatic_diagram" && spec.variant === "charge_transfer") {
+  if (spec.type === "electrostatic_diagram" && ["charge_transfer", "attraction_repulsion"].includes(spec.variant ?? "")) {
     return !["calculate", "complete", "draw"].includes(spec.role ?? "read");
   }
   if (spec.type === "pressure_diagram" && spec.variant === "submerged_object") {
@@ -796,6 +796,25 @@ function renderContextScene(spec: QuestionVisualSpec): string {
   return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}">${title}<rect x="145" y="95" width="350" height="190" rx="18" class="qv-context-object"/><circle cx="250" cy="190" r="35" class="qv-context-flask"/><rect x="350" y="135" width="80" height="110" class="qv-context-instrument"/>${label(250,330,spec.labels[0] ?? "تجربة مدرسية")}${label(390,330,spec.labels[1] ?? "أداة قياس")}</svg>`;
 }
 
+
+function forceDiagramObjectKind(spec: QuestionVisualSpec): "trolley" | "school_bag" | "crate" {
+  const material = `${spec.title} ${spec.altText} ${spec.labels.join(" ")}`.toLowerCase();
+  if (/(عربه|عربة|تسوق|trolley|cart)/u.test(material)) return "trolley";
+  if (/(حقيبه|حقيبة|مدرسيه|مدرسية|bag)/u.test(material)) return "school_bag";
+  return "crate";
+}
+
+function renderForceDiagramObject(spec: QuestionVisualSpec): string {
+  const kind = forceDiagramObjectKind(spec);
+  if (kind === "trolley") {
+    return `<g class="qv-force-object qv-force-trolley"><path d="M250 150 H390 L370 220 H270 Z" class="qv-force-body"/><line x1="250" y1="150" x2="225" y2="125" class="qv-force-detail"/><circle cx="290" cy="238" r="14" class="qv-force-wheel"/><circle cx="350" cy="238" r="14" class="qv-force-wheel"/></g>`;
+  }
+  if (kind === "school_bag") {
+    return `<g class="qv-force-object qv-force-bag"><rect x="268" y="135" width="104" height="100" rx="22" class="qv-force-body"/><path d="M288 145 Q320 105 352 145" class="qv-force-detail"/><rect x="288" y="175" width="64" height="42" rx="10" class="qv-force-pocket"/></g>`;
+  }
+  return `<g class="qv-force-object qv-force-crate"><rect x="265" y="150" width="110" height="80" rx="8" class="qv-force-body"/><path d="M278 163 L362 217 M362 163 L278 217" class="qv-force-detail qv-force-crate-cross"/></g>`;
+}
+
 function renderForceDiagram(spec: QuestionVisualSpec): string {
   const width = 640;
   const height = 360;
@@ -815,7 +834,7 @@ function renderForceDiagram(spec: QuestionVisualSpec): string {
   const momentDistance2 = numberLabel(spec.values[1] ?? 1.75);
   const support = spec.variant === "moments"
     ? `<line x1="130" y1="230" x2="510" y2="230" class="qv-beam"/><path d="M 300 230 L 340 230 L 320 275 Z" class="qv-pivot"/><text x="320" y="302" class="qv-annotation" text-anchor="middle">نقطة الارتكاز</text><line x1="190" y1="252" x2="320" y2="252" class="qv-dimension"/><line x1="190" y1="244" x2="190" y2="260" class="qv-dimension"/><line x1="320" y1="244" x2="320" y2="260" class="qv-dimension"/><text x="255" y="278" class="qv-annotation" text-anchor="middle">${escapeXml(momentDistance1)} m</text><line x1="320" y1="252" x2="450" y2="252" class="qv-dimension"/><line x1="450" y1="244" x2="450" y2="260" class="qv-dimension"/><text x="385" y="278" class="qv-annotation" text-anchor="middle">${escapeXml(momentDistance2)} m</text>`
-    : `<rect x="265" y="150" width="110" height="80" class="qv-object"/><text x="320" y="195" class="qv-object-label" text-anchor="middle">${escapeXml(spec.labels[0] ?? "الجسم")}</text><line x1="150" y1="230" x2="490" y2="230" class="qv-surface"/>`;
+    : `${renderForceDiagramObject(spec)}<text x="320" y="200" class="qv-object-label" text-anchor="middle">${escapeXml(spec.labels[0] ?? "الجسم")}</text><line x1="150" y1="252" x2="490" y2="252" class="qv-surface qv-force-ground"/>`;
   return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}"><defs><marker id="${marker}" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" class="qv-arrow-fill"/></marker></defs><text x="${width / 2}" y="28" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text>${support}${vectors}</svg>`;
 }
 
@@ -917,6 +936,6 @@ export function renderQuestionVisualSvg(spec: QuestionVisualSpec): string {
   const media = spec.illustration?.validated && isAiIllustrationEligible(spec)
     ? `<div class="question-visual-hybrid" data-hybrid-visual="ready"><div class="question-visual-deterministic-fallback" aria-hidden="true">${svg}</div><img class="question-visual-illustration" src="${escapeXml(spec.illustration.url)}" alt="${escapeXml(spec.altText)}" loading="eager" decoding="async" crossorigin="anonymous"/></div>`
     : svg;
-  const mode = spec.illustration?.validated && isAiIllustrationEligible(spec) ? "hybrid" : "deterministic";
+  const mode = spec.illustration?.validated && isAiIllustrationEligible(spec) ? "hybrid" : "2d-vector";
   return `<figure class="question-visual question-visual-${spec.type} question-visual-${mode}" data-visual-id="${escapeXml(spec.visualId ?? "")}" data-visual-variant="${escapeXml(spec.variant ?? "default")}" data-visual-mode="${mode}">${media}<figcaption>${escapeXml(spec.altText)}</figcaption></figure>`;
 }
