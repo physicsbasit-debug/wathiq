@@ -1,0 +1,54 @@
+Phase 2-C3 — Durable Visual Asset Pipeline
+Version: 0.0.55
+
+Changed/new files:
+- package.json
+- src/app.ts
+- src/domain.ts
+- src/exam-export.ts
+- src/question-visual.ts
+- src/storage.ts
+- src/styles.css
+- src/types.ts
+- src/visual-jobs.ts
+- supabase/config.toml
+- supabase/functions/question-visual-jobs/index.ts
+- supabase/phase_2_c3_visual_asset_jobs.sql
+- tests/phase-1-a-simple-source-brief.test.mjs
+- tests/phase-1-b-files.test.mjs
+- tests/phase-1-b3-files.test.mjs
+- tests/phase-1-b4-files.test.mjs
+- tests/phase-1-b5-files.test.mjs
+- tests/phase-1-b6-files.test.mjs
+- tests/phase-1-b7-files.test.mjs
+- tests/phase-1-b8-files.test.mjs
+- tests/phase-1-c1-files.test.mjs
+- tests/phase-1-c1-fix2-files.test.mjs
+- tests/phase-1-c2-files.test.mjs
+- tests/phase-1-c2-fix1-files.test.mjs
+- tests/phase-1-c2-fix2-files.test.mjs
+- tests/phase-1-c2-fix3-files.test.mjs
+- tests/phase-1-c2-fix4-files.test.mjs
+- tests/phase-1-c2-fix5-files.test.mjs
+- tests/phase-1-c2-fix6-files.test.mjs
+- tests/phase-1-c2-fix7-files.test.mjs
+- tests/phase-1-c3-files.test.mjs
+- tests/phase-1-d1-files.test.mjs
+- tests/phase-1-d2-files.test.mjs
+- tests/phase-1-d2-fix1-lesson-tree.test.mjs
+- tests/phase-2-a-fix2-calculation-working.test.mjs
+- tests/phase-2-a-fix3-visual-reference-normalization.test.mjs
+- tests/phase-2-a-fix4-question-visual-semantic-binding.test.mjs
+- tests/phase-2-a-whole-exam-v2-files.test.mjs
+- tests/phase-2-b-exam-integrity-resume.test.mjs
+- tests/phase-2-c1-visual-first-2d.test.mjs
+- tests/phase-2-c3-durable-visual-jobs.test.mjs
+- tests/storage-draft.test.mjs
+- PHASE_2_C3_DURABLE_VISUAL_ASSET_PIPELINE_TEST_REPORT.md
+- PHASE_2_C3_DEPLOYMENT_INSTRUCTIONS.md
+
+Validation:
+- npm run check: PASS
+- 406 passed, 0 failed
+- Edge Function TypeScript check: PASS
+- dist local HTTP: 200

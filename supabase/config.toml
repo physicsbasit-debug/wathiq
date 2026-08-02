@@ -3,3 +3,6 @@ verify_jwt = false
 
 [functions.generate-source-questions]
 verify_jwt = false
+
+[functions.question-visual-jobs]
+verify_jwt = false

@@ -29,7 +29,7 @@ function illustration() {
 }
 
 test("يثبت Phase 2-C2 وإصدار المرئيات التعليمية True 2D", () => {
-  assert.equal(pkg.version, "0.0.54");
+  assert.match(pkg.version, /^0\.0\.(?:54|55)$/);
   assert.match(pkg.description, /True 2D|طبقة الشرح العلمي|ثنائية الأبعاد/);
 });
 
@@ -74,12 +74,13 @@ test("يحافظ على مخططات القوى دقيقة لكنه يرسم ا�
   assert.match(html, /data-visual-mode="2d-vector"/);
 });
 
-test("ينتظر تجهيز الصور 2D تلقائيًا ويغطي ميزانية المرئيات كاملة", () => {
-  assert.match(app, /const MAX_AUTO_VISUAL_ENHANCEMENTS = 4/);
-  assert.match(app, /await enhanceEligibleVisuals\(\)/);
-  assert.match(app, /المرئيات التعليمية ثنائية الأبعاد/);
-  assert.match(app, /اعتُمدت \$\{approved\} من \$\{candidates\.length\}/);
-  assert.match(app, /loaded\.currentStep >= 3[\s\S]*enhanceEligibleVisuals/);
+test("ينشئ مهام صور دائمة بلا حد أربع مرئيات ويستأنفها عند فتح المسودة", () => {
+  assert.match(app, /requiredVisualJobItems/);
+  assert.match(app, /visualJobService\.enqueue/);
+  assert.match(app, /visualJobService\.list/);
+  assert.match(app, /loaded\.currentStep >= 3[\s\S]*syncVisualJobs/);
+  assert.doesNotMatch(app, /MAX_AUTO_VISUAL_ENHANCEMENTS/);
+  assert.doesNotMatch(app, /enhanceEligibleVisuals/);
 });
 
 test("يعيد توليد الصورة مرة ثانية بملاحظات المدقق ويشدد جودة الطباعة", () => {

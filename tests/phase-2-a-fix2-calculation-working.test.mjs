@@ -9,7 +9,7 @@ const app = await readFile(new URL("../src/app.ts", import.meta.url), "utf8");
 const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 
 test("يثبت إصدار Phase 2-A Fix 2", () => {
-  assert.match(pkg.version, /^0\.0\.(?:50|51|52|53|54)$/);
+  assert.match(pkg.version, /^0\.0\.(?:50|51|52|53|54|55)$/);
 });
 
 test("يستبدل رفض workingRequired بتطبيع حتمي حسب عدد الدرجات", () => {

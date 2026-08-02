@@ -48,6 +48,27 @@ export interface QuestionVisualIllustration {
   renderMode?: QuestionVisualIllustrationRenderMode;
 }
 
+
+export type VisualJobStatus = "queued" | "generating" | "validating" | "ready" | "retry_pending" | "failed" | "cancelled";
+export type VisualJobRequiredMode = "replace" | "overlay";
+
+export interface QuestionVisualJobSnapshot {
+  id: string;
+  draftId: string;
+  planItemId: string;
+  visualHash: string;
+  requiredMode: VisualJobRequiredMode;
+  status: VisualJobStatus;
+  attemptCount: number;
+  maxAttempts: number;
+  errorCode: string;
+  errorMessage: string;
+  asset?: QuestionVisualIllustration;
+  startedAt: string;
+  completedAt: string;
+  updatedAt: string;
+}
+
 export interface QuestionVisualSpec {
   type: QuestionVisualType;
   visualId?: string;
@@ -169,6 +190,7 @@ export interface ExamDraft {
   difficulty: Difficulty;
   trustedEnrichmentEnabled: boolean;
   visualEnhancementEnabled: boolean;
+  visualJobs: Record<string, QuestionVisualJobSnapshot>;
   generationMode: AssessmentGenerationMode;
   counts: QuestionCounts;
   plan: PlanItem[];

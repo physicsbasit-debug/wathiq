@@ -9,7 +9,7 @@ test("يثبت الإصدار ومحرك المرئيات التقويمية ا�
   const pkg = JSON.parse(await text("package.json"));
   const types = await text("src/types.ts");
   const visual = await text("src/question-visual.ts");
-  assert.match(pkg.version, /^0\.0\.(?:44|45|46|47|48|49|50|51|52|53|54)$/);
+  assert.match(pkg.version, /^0\.0\.(?:44|45|46|47|48|49|50|51|52|53|54|55)$/);
   for (const type of ["data_table", "instrument_scale", "ray_diagram", "force_diagram", "flow_diagram"]) {
     assert.match(types, new RegExp(type));
     assert.match(visual, new RegExp(type));

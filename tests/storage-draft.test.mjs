@@ -179,7 +179,7 @@ test("يرحّل المسودة القديمة إلى قالب التقويم ا
 });
 
 
-test("يفعل الرسوم الهجينة افتراضيًا ويحافظ على تعطيلها الصريح", () => {
+test("يفرض منظومة الأصول البصرية الدائمة ولا يسمح بتعطيلها صراحة", () => {
   const base = {
     id: "hybrid-default",
     grade: 10,
@@ -191,7 +191,7 @@ test("يفعل الرسوم الهجينة افتراضيًا ويحافظ عل�
     currentStep: 2,
   };
   assert.equal(normalizeExamDraft(base)?.visualEnhancementEnabled, true);
-  assert.equal(normalizeExamDraft({ ...base, visualEnhancementEnabled: false })?.visualEnhancementEnabled, false);
+  assert.equal(normalizeExamDraft({ ...base, visualEnhancementEnabled: false })?.visualEnhancementEnabled, true);
 });
 
 function withMemoryStorage(run) {
