@@ -914,10 +914,11 @@ test("تمرر المحاولة الثانية سبب رفض stimulus بدل إ�
   assert.match(result.items[0].alternatives[0].stimulus, /سطحين مختلفي المساحة/);
 });
 
-test("يقصر الصور الحرة على مشاهد سياقية آمنة ويمنع الرسوم الحسابية", () => {
+test("يقصر الصور الحرة على المشاهد الآمنة ويسمح لمخطط القوى بأصل 2D منضبط فقط", () => {
   assert.equal(helpers.isControlledIllustrationEligible({ type: "electrostatic_diagram", variant: "charge_transfer", role: "interpret" }), true);
   assert.equal(helpers.isControlledIllustrationEligible({ type: "pressure_diagram", variant: "submerged_object", role: "read" }), true);
-  assert.equal(helpers.isControlledIllustrationEligible({ type: "force_diagram", variant: "free_body", role: "calculate" }), false);
+  assert.equal(helpers.isControlledIllustrationEligible({ type: "force_diagram", variant: "free_body", role: "calculate" }), true);
+  assert.equal(helpers.isControlledIllustrationEligible({ type: "force_diagram", variant: "moments", role: "calculate" }), false);
   assert.equal(helpers.isControlledIllustrationEligible({ type: "electrostatic_diagram", variant: "electric_field", role: "interpret" }), false);
 });
 
