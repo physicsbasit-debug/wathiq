@@ -776,6 +776,22 @@ function illustrationAssetKind(spec: QuestionVisualSpec): QuestionVisualIllustra
   return "scene_2d";
 }
 
+export interface QuestionVisualAssetRequirement {
+  required: boolean;
+  mode: QuestionVisualIllustrationRenderMode | null;
+  reason: string;
+}
+
+export function questionVisualAssetRequirement(spec: QuestionVisualSpec): QuestionVisualAssetRequirement {
+  if (!isAiIllustrationEligible(spec)) {
+    return { required: false, mode: null, reason: "هذا النوع يبقى مخططًا علميًا حتميًا لضمان الدقة." };
+  }
+  if (spec.type === "force_diagram") {
+    return { required: true, mode: "overlay", reason: "يتطلب أصلًا بصريًا 2D مع طبقة أسهم وتسميات علمية من واثق." };
+  }
+  return { required: true, mode: "replace", reason: "يتطلب صورة تعليمية 2D مدققة علميًا بدل الرسم الخطي الاحتياطي." };
+}
+
 export function stripQuestionVisualIllustration(spec: QuestionVisualSpec): QuestionVisualSpec {
   const { illustration: _illustration, ...deterministic } = spec;
   return deterministic;

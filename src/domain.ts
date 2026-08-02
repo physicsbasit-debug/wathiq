@@ -68,6 +68,7 @@ export function createEmptyDraft(now = new Date()): ExamDraft {
     difficulty: "متوسط",
     trustedEnrichmentEnabled: true,
     visualEnhancementEnabled: true,
+    visualJobs: {},
     generationMode: "whole_exam_v2",
     counts: { mcq: 2, short: 3, long: 1 },
     plan: [],
@@ -93,6 +94,7 @@ export function applyOfficialAssessmentTemplate(draft: ExamDraft): ExamDraft {
   draft.counts = { ...spec.counts };
   draft.plan = [];
   draft.selectedProposalByPlanItem = {};
+  draft.visualJobs = {};
   draft.generationVersion = "";
   draft.generationModel = "";
   draft.generatedAt = "";

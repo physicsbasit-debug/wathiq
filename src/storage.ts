@@ -1,4 +1,4 @@
-import type { DraftResumeSnapshot, ExamDraft, ExamSourceReference, ExamTitleOption, ManagedSource, PlanItem } from "./types.js";
+import type { DraftResumeSnapshot, ExamDraft, ExamSourceReference, ExamTitleOption, ManagedSource, PlanItem, QuestionVisualJobSnapshot, VisualJobStatus } from "./types.js";
 import type { LessonCatalogOption } from "./lesson-catalog.js";
 import { applyOfficialAssessmentTemplate, createEmptyDraft, toDateInputValue } from "./domain.js";
 import { SCIENCE_ASSESSMENT_POLICY_ID, assessmentTypeForTitle, getOfficialAssessmentSpec, isExamTitleOption } from "./assessment-policy.js";
@@ -177,6 +177,38 @@ function normalizeSourceReferences(value: unknown): ExamSourceReference[] {
   });
 }
 
+function normalizeVisualJobs(value: unknown): Record<string, QuestionVisualJobSnapshot> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
+  const allowed = new Set<VisualJobStatus>(["queued", "generating", "validating", "ready", "retry_pending", "failed", "cancelled"]);
+  const result: Record<string, QuestionVisualJobSnapshot> = {};
+  for (const [planItemId, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) continue;
+    const item = raw as Partial<QuestionVisualJobSnapshot>;
+    if (typeof item.id !== "string" || typeof item.draftId !== "string" || typeof item.planItemId !== "string"
+      || typeof item.visualHash !== "string" || (item.requiredMode !== "replace" && item.requiredMode !== "overlay")
+      || typeof item.status !== "string" || !allowed.has(item.status as VisualJobStatus)
+      || typeof item.attemptCount !== "number" || typeof item.maxAttempts !== "number"
+      || typeof item.updatedAt !== "string") continue;
+    result[planItemId] = {
+      id: item.id,
+      draftId: item.draftId,
+      planItemId: item.planItemId,
+      visualHash: item.visualHash,
+      requiredMode: item.requiredMode,
+      status: item.status as VisualJobStatus,
+      attemptCount: item.attemptCount,
+      maxAttempts: item.maxAttempts,
+      errorCode: typeof item.errorCode === "string" ? item.errorCode : "",
+      errorMessage: typeof item.errorMessage === "string" ? item.errorMessage : "",
+      ...(item.asset ? { asset: item.asset } : {}),
+      startedAt: typeof item.startedAt === "string" ? item.startedAt : "",
+      completedAt: typeof item.completedAt === "string" ? item.completedAt : "",
+      updatedAt: item.updatedAt,
+    };
+  }
+  return result;
+}
+
 function normalizeStoredPlan(value: unknown): PlanItem[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((entry, index) => {
@@ -225,7 +257,8 @@ export function normalizeExamDraft(value: unknown): ExamDraft | null {
     ...(resumeContext ? { resumeContext } : {}),
     title: normalizedTitle,
     trustedEnrichmentEnabled: candidate.trustedEnrichmentEnabled !== false,
-    visualEnhancementEnabled: candidate.visualEnhancementEnabled !== false,
+    visualEnhancementEnabled: true,
+    visualJobs: normalizeVisualJobs(candidate.visualJobs),
     generationMode: candidate.generationMode === "legacy_items"
       ? "legacy_items"
       : candidate.generationMode === "whole_exam_v2"
@@ -294,6 +327,7 @@ export function normalizeExamDraft(value: unknown): ExamDraft | null {
     }
     draft.plan = [];
     draft.selectedProposalByPlanItem = {};
+    draft.visualJobs = {};
     draft.generationVersion = "";
     draft.generationModel = "";
     draft.generatedAt = "";

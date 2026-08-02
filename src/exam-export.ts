@@ -292,34 +292,69 @@ async function imageUrlToDataUrl(url: string): Promise<string> {
   });
 }
 
+async function dataUrlToImage(dataUrl: string): Promise<HTMLImageElement> {
+  const image = new Image();
+  image.decoding = "sync";
+  await new Promise<void>((resolve, reject) => {
+    image.onload = () => resolve();
+    image.onerror = () => reject(new Error("تعذر تجهيز الأصل البصري للتصدير."));
+    image.src = dataUrl;
+  });
+  return image;
+}
+
+async function compositeVisualToPngDataUrl(composite: HTMLElement): Promise<string> {
+  const sourceImage = composite.querySelector<HTMLImageElement>("img.question-visual-illustration");
+  const overlaySvg = composite.querySelector<SVGSVGElement>(".question-visual-overlay svg");
+  if (!sourceImage || !overlaySvg) throw new Error("الأصل البصري المركب غير مكتمل.");
+  const [baseDataUrl, overlayDataUrl] = await Promise.all([
+    imageUrlToDataUrl(sourceImage.src),
+    svgElementToPngDataUrl(overlaySvg),
+  ]);
+  const [baseImage, overlayImage] = await Promise.all([dataUrlToImage(baseDataUrl), dataUrlToImage(overlayDataUrl)]);
+  const width = 1280;
+  const height = 960;
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("المتصفح لا يدعم دمج طبقة الرسم العلمي.");
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, width, height);
+  const scale = Math.min(width / baseImage.naturalWidth, height / baseImage.naturalHeight);
+  const drawWidth = baseImage.naturalWidth * scale;
+  const drawHeight = baseImage.naturalHeight * scale;
+  context.drawImage(baseImage, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight);
+  context.drawImage(overlayImage, 0, 0, width, height);
+  return canvas.toDataURL("image/png");
+}
+
 export async function prepareWordHtml(html: string): Promise<string> {
   const parsed = new DOMParser().parseFromString(html, "text/html");
+  const composites = [...parsed.querySelectorAll<HTMLElement>(".question-visual-composite")];
+  for (const composite of composites) {
+    const dataUrl = await compositeVisualToPngDataUrl(composite);
+    const image = parsed.createElement("img");
+    image.src = dataUrl;
+    image.alt = composite.closest("figure")?.querySelector("figcaption")?.textContent ?? "رسم علمي مركب";
+    image.className = "question-visual-raster";
+    composite.replaceWith(image);
+  }
+
   const illustrations = [...parsed.querySelectorAll<HTMLImageElement>("img.question-visual-illustration")];
   for (const image of illustrations) {
-    const hybrid = image.closest<HTMLElement>(".question-visual-hybrid");
-    try {
-      image.src = await imageUrlToDataUrl(image.src);
-      hybrid?.querySelector(".question-visual-deterministic-fallback")?.remove();
-    } catch {
-      image.remove();
-      if (hybrid) hybrid.dataset.hybridVisual = "fallback";
-    }
+    image.src = await imageUrlToDataUrl(image.src);
+    image.closest<HTMLElement>(".question-visual-illustrated, .question-visual-hybrid")
+      ?.querySelector(".question-visual-deterministic-fallback")?.remove();
   }
   const svgs = [...parsed.querySelectorAll("svg")];
   for (const svg of svgs) {
-    try {
-      const dataUrl = await svgElementToPngDataUrl(svg as SVGSVGElement);
-      const image = parsed.createElement("img");
-      image.src = dataUrl;
-      image.alt = svg.getAttribute("aria-label") ?? "رسم تعليمي";
-      image.className = "question-visual-raster";
-      svg.replaceWith(image);
-    } catch {
-      // يبقى SVG مضمنًا في ملف Word بدل إلغاء التصدير كله بسبب رسم واحد.
-      svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-      svg.setAttribute("role", svg.getAttribute("role") ?? "img");
-      svg.setAttribute("style", "display:block;width:100%;height:auto;max-height:70mm;margin:0 auto;");
-    }
+    const dataUrl = await svgElementToPngDataUrl(svg as SVGSVGElement);
+    const image = parsed.createElement("img");
+    image.src = dataUrl;
+    image.alt = svg.getAttribute("aria-label") ?? "رسم تعليمي";
+    image.className = "question-visual-raster";
+    svg.replaceWith(image);
   }
   return `<!doctype html>${parsed.documentElement.outerHTML}`;
 }

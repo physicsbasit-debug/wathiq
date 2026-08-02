@@ -27,15 +27,13 @@ test("يبقي الرسم الحتمي أساسًا ويقصر صورة AI عل�
   assert.match(visual, /pressure_diagram.*submerged_object/s);
 });
 
-test("تتيح الواجهة التحسين وإعادة التوليد والرجوع دون مسح الأسئلة", () => {
-  assert.match(app, /visual-enhancement-toggle/);
-  assert.match(app, /enhancePlanVisual/);
-  assert.match(app, /regenerate-visual/);
-  assert.match(app, /restore-deterministic-visual/);
-  const start = app.indexOf('document.querySelector<HTMLInputElement>("#visual-enhancement-toggle")');
-  const end = app.indexOf('document.querySelector<HTMLInputElement>("#duration-input")', start);
-  assert.ok(start >= 0 && end > start);
-  assert.doesNotMatch(app.slice(start, end), /invalidateGeneratedQuestions/);
+test("تنقل الواجهة المرئيات من تحسين اختياري إلى مهام دائمة قابلة للاستئناف", () => {
+  assert.match(app, /VisualJobService/);
+  assert.match(app, /syncVisualJobs/);
+  assert.match(app, /retryVisualJob/);
+  assert.match(app, /VISUAL_JOB_POLL_INTERVAL_MS/);
+  assert.match(app, /لا تُعامل كزينة اختيارية/);
+  assert.doesNotMatch(app, /visual-enhancement-toggle/);
 });
 
 test("تولد الوظيفة صورة 2D وتفحصها قبل التخزين مع رجوع آمن", () => {
@@ -48,11 +46,11 @@ test("تولد الوظيفة صورة 2D وتفحصها قبل التخزين �
   assert.match(edge, /no words, no letters, no numbers, no units, no arrows/);
 });
 
-test("يحافظ تصدير Word وPDF على الصورة أو يعود إلى SVG عند تعذر تنزيلها", () => {
+test("يوحد Word وPDF على الأصل البصري نفسه ولا يسمح برجوع صامت", () => {
   assert.match(exporter, /imageUrlToDataUrl/);
-  assert.match(exporter, /question-visual-deterministic-fallback/);
-  assert.match(exporter, /hybrid\.dataset\.hybridVisual = "fallback"/);
-  assert.match(styles, /question-visual-hybrid/);
-  assert.match(styles, /max-height: 260px/);
-  assert.match(app, /انتهت الأسئلة/);
+  assert.match(exporter, /compositeVisualToPngDataUrl/);
+  assert.match(exporter, /question-visual-composite/);
+  assert.doesNotMatch(exporter, /hybrid\.dataset\.hybridVisual = "fallback"/);
+  assert.match(styles, /question-visual-composite/);
+  assert.match(app, /لا يمكن التصدير قبل اكتمال الأصول البصرية/);
 });

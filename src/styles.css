@@ -1988,3 +1988,17 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
 }
 
 .qv-dimension { stroke-width: 1.5; stroke-dasharray: 5 4; }
+
+.visual-fallback-warning {
+  margin: .7rem 0 0;
+  padding: .65rem .8rem;
+  border: 1px solid #d99b24;
+  border-radius: .7rem;
+  background: #fff8e8;
+  color: #7a4b00;
+  font-size: .85rem;
+  font-weight: 700;
+}
+.visual-enhancement-message.error { color: #a11b1b; }
+.visual-enhancement-message.success { color: #0f6b45; }
+.durable-visual-policy { cursor: default; }
