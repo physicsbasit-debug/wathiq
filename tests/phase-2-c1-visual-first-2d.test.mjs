@@ -29,7 +29,7 @@ function illustration() {
 }
 
 test("يثبت Phase 2-C2 وإصدار المرئيات التعليمية True 2D", () => {
-  assert.match(pkg.version, /^0\.0\.(?:54|55)$/);
+  assert.match(pkg.version, /^0\.0\.(?:54|55|56)$/);
   assert.match(pkg.description, /True 2D|طبقة الشرح العلمي|ثنائية الأبعاد/);
 });
 

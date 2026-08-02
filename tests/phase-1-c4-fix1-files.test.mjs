@@ -18,7 +18,7 @@ test("يثبت Fix 1 توافق المتن البصري ويحافظ على مس
 
 test("يمرر سبب الرفض إلى المحاولة الثانية ويوسع مرجع الرسم للجدول والتدريج", () => {
   assert.match(generator, /previousValidationError/);
-  assert.match(generator, /repairFeedback = errorMessage\(validationError\)/);
+  assert.match(generator, /repairFeedback = itemRepairFeedback\(batch\.failures\)/);
   assert.match(generator, /الجدول\|التدريج\|الجهاز/);
   assert.match(generator, /يجوز أن يكون فارغًا في السؤال البصري/);
 });

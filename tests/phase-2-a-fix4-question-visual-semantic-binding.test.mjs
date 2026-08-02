@@ -12,7 +12,7 @@ const edge = await readFile(new URL("../supabase/functions/generate-source-quest
 const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 
 test("يثبت Fix 4 دون تغيير إصدار أو عقد محرك V2", () => {
-  assert.match(pkg.version, /^0\.0\.(?:51|52|53|54|55)$/);
+  assert.match(pkg.version, /^0\.0\.(?:51|52|53|54|55|56)$/);
   assert.match(edge, /source-grounded-policy-ai-17-whole-exam-v2/);
 });
 
@@ -60,5 +60,6 @@ test("يدعم رمز المحرك في الدوائر الكهربائية ال
 });
 
 test("يمنح V2 محاولة إصلاح إضافية قبل إظهار الفشل للمستخدم", () => {
-  assert.match(edge, /const maxAttempts = request\.generationMode === "whole_exam_v2" \? 3 : 2/);
+  assert.match(edge, /const maxRounds = request\.generationMode === "whole_exam_v2" \? 4 : 2/);
+  assert.match(edge, /validateGeneratedItemsIndividually/);
 });

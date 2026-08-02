@@ -20,7 +20,7 @@ import {
 } from "./question-generation.js";
 import { parseQuestionVisualSpec } from "./question-visual.js";
 
-export const ASSESSMENT_GENERATION_V2_VERSION = "source-grounded-policy-ai-18-exam-integrity-resume";
+export const ASSESSMENT_GENERATION_V2_VERSION = "source-grounded-policy-ai-19-structured-scenario-repair";
 export type AssessmentGenerationMode = "whole_exam_v2" | "legacy_items";
 
 export interface LessonCardV2 {

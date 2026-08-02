@@ -338,6 +338,13 @@ interface ModelGeneratedMarkSchemeSlots {
   point4: string;
 }
 
+interface ModelGeneratedScenarioContract {
+  target: QuestionScenarioTarget;
+  evidencePhrases: string[];
+  scientificLink: string;
+  contextIsEssential: boolean;
+}
+
 interface ModelGeneratedAlternative {
   stimulus: string;
   text: string;
@@ -349,6 +356,7 @@ interface ModelGeneratedAlternative {
   workingRequired: boolean;
   sourceEvidenceId: string;
   enrichmentEvidenceId: string;
+  scenarioContract?: ModelGeneratedScenarioContract;
   needsReview: boolean;
 }
 
@@ -394,6 +402,16 @@ interface GeneratedItem {
 
 interface GeneratedPayload {
   items: GeneratedItem[];
+}
+
+interface ItemValidationFailure {
+  planItemId: string;
+  message: string;
+}
+
+interface ItemValidationBatch {
+  items: GeneratedItem[];
+  failures: ItemValidationFailure[];
 }
 
 interface EvidenceFragment {
@@ -1025,6 +1043,36 @@ async function prepareTrustedEnrichment(request: GenerationRequest, requestId: s
   }
 }
 
+function scopedGenerationRequest(request: GenerationRequest, planItemIds: Set<string>): GenerationRequest {
+  const items = request.items.filter((item) => planItemIds.has(item.planItemId));
+  const officialPlanItems = (request.officialPlanItems ?? request.items).filter((item) => planItemIds.has(item.planItemId));
+  const lessons = [...new Set(items.map((item) => item.lessonLabel))];
+  const lessonCards = (request.lessonCards ?? []).filter((card) => lessons.includes(card.lessonLabel));
+  const blueprintItems = request.blueprint?.items.filter((item) => planItemIds.has(item.planItemId)) ?? [];
+  const blueprint = request.blueprint
+    ? {
+        ...request.blueprint,
+        totalMarks: blueprintItems.reduce((sum, item) => sum + item.marks, 0),
+        itemCount: blueprintItems.length,
+        lessons,
+        items: blueprintItems,
+      }
+    : null;
+  return { ...request, items, officialPlanItems, lessons, lessonCards, blueprint };
+}
+
+function itemRepairFeedback(failures: ItemValidationFailure[]): string {
+  return failures
+    .map((failure) => `${failure.planItemId}: ${failure.message}`)
+    .join("\n");
+}
+
+function orderedGeneratedPayload(request: GenerationRequest, accepted: Map<string, GeneratedItem>): GeneratedPayload {
+  const items = request.items.map((item) => accepted.get(item.planItemId)).filter((item): item is GeneratedItem => Boolean(item));
+  if (items.length !== request.items.length) throw retryableError("لم تكتمل جميع مفردات الاختبار بعد الإصلاح الانتقائي.");
+  return { items };
+}
+
 async function generateAndValidate(request: GenerationRequest, requestId: string): Promise<GeneratedPayload> {
   const evidenceCatalog = buildEvidenceCatalog(request.references);
   logStage(requestId, "evidence_catalog_ready", {
@@ -1037,34 +1085,65 @@ async function generateAndValidate(request: GenerationRequest, requestId: string
     attempted: enrichment.attempted,
     segmentCount: enrichment.segments.length,
   });
-  let lastError: unknown = null;
+  const accepted = new Map<string, GeneratedItem>();
+  let pendingIds = new Set(request.items.map((item) => item.planItemId));
   let repairFeedback = "";
-  const maxAttempts = request.generationMode === "whole_exam_v2" ? 3 : 2;
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+  let lastError: unknown = null;
+  const maxRounds = request.generationMode === "whole_exam_v2" ? 4 : 2;
+
+  for (let round = 1; round <= maxRounds; round += 1) {
+    const scopedRequest = scopedGenerationRequest(request, pendingIds);
     try {
-      const payload = await callGemini(request, evidenceCatalog, enrichment, attempt > 1, requestId, attempt, repairFeedback);
+      const payload = await callGemini(scopedRequest, evidenceCatalog, enrichment, round > 1, requestId, round, repairFeedback);
+      const markSchemeSafePayload = await repairGeneratedPayloadMarkSchemes(payload, scopedRequest, requestId);
+      const batch = validateGeneratedItemsIndividually(markSchemeSafePayload, scopedRequest, evidenceCatalog, enrichment);
+      for (const item of batch.items) accepted.set(item.planItemId, item);
+
+      if (batch.failures.length) {
+        pendingIds = new Set(batch.failures.map((failure) => failure.planItemId));
+        repairFeedback = itemRepairFeedback(batch.failures);
+        logStage(requestId, "per_item_validation_failed", {
+          round,
+          acceptedCount: accepted.size,
+          failedItemIds: [...pendingIds],
+          failures: batch.failures,
+        });
+        if (round === maxRounds) {
+          throw retryableError(`تعذر إصلاح المفردات التالية دون المساس ببقية الاختبار:
+${repairFeedback}`);
+        }
+        await delay(500);
+        continue;
+      }
+
+      pendingIds = new Set(request.items.filter((item) => !accepted.has(item.planItemId)).map((item) => item.planItemId));
+      if (pendingIds.size) {
+        repairFeedback = [...pendingIds].map((id) => `${id}: لم تصل نتيجة صالحة بعد.`).join("\n");
+        continue;
+      }
+
+      const complete = orderedGeneratedPayload(request, accepted);
       try {
-        const markSchemeSafePayload = await repairGeneratedPayloadMarkSchemes(payload, request, requestId);
-        const hydrated = validateAndHydrateGeneratedPayload(markSchemeSafePayload, request, evidenceCatalog, enrichment);
+        if (request.generationMode === "whole_exam_v2") validateWholeExamGeneratedDiversity(complete.items);
         logStage(requestId, "questions_validated", {
-          attempt,
-          itemCount: hydrated.items.length,
+          round,
+          itemCount: complete.items.length,
+          repairedIndividually: round > 1,
         });
-        return hydrated;
-      } catch (validationError) {
-        const payloadRecord = asRecord(payload);
-        repairFeedback = errorMessage(validationError);
-        logStage(requestId, "generation_validation_failed", {
-          attempt,
-          topLevelKeys: payloadRecord ? Object.keys(payloadRecord).slice(0, 8) : [],
-          returnedItemCount: Array.isArray(payloadRecord?.items) ? payloadRecord.items.length : null,
-          message: repairFeedback,
-        });
-        throw validationError;
+        return complete;
+      } catch (globalError) {
+        lastError = globalError;
+        if (round === maxRounds) throw globalError;
+        accepted.clear();
+        pendingIds = new Set(request.items.map((item) => item.planItemId));
+        repairFeedback = `مراجعة الاختبار الكامل: ${errorMessage(globalError)}`;
+        logStage(requestId, "whole_exam_global_review_failed", { round, message: repairFeedback });
+        await delay(500);
       }
     } catch (error) {
       lastError = error;
-      if (attempt === maxAttempts || !isRetryableGenerationError(error) || isTransportRetryExhausted(error)) break;
+      if (round === maxRounds || !isRetryableGenerationError(error) || isTransportRetryExhausted(error)) break;
+      if (!repairFeedback) repairFeedback = errorMessage(error);
       await delay(700);
     }
   }
@@ -1548,19 +1627,6 @@ const SKILL_GUIDANCE: Record<QuestionSkillTarget, string> = {
   investigate: "تحديد متغير أو طريقة قياس أو ضبط أو موثوقية تجربة",
 };
 
-const SCENARIO_KEYWORDS: Record<QuestionScenarioTarget, readonly string[]> = {
-  scientific_abstract: [],
-  door_handle: ["باب", "مقبض", "بوابه", "خزانه"],
-  playground_seesaw: ["ارجوح", "طفلان", "طفلين", "حديقه", "ساحه المدرسه"],
-  wrench_tool: ["مفتاح ربط", "صاموله", "مسمار", "مفتاح الصواميل"],
-  bicycle_brake: ["دراج", "مكبح", "فرامل", "مقود", "عجله"],
-  shopping_trolley: ["عربه", "تسوق", "متجر", "سوق", "دفع"],
-  school_bag: ["حقيبه", "حمال", "كتب", "كتف"],
-  water_tank: ["خزان", "ماء", "صنبور", "انبوب"],
-  solar_panel: ["لوح شمسي", "طاقه شمسيه", "الشمس", "خليه شمسيه"],
-  laboratory_setup: ["مختبر", "تجرب", "اداه", "قياس", "عينة", "عينه"],
-  road_safety: ["طريق", "سيار", "مركب", "مرآه", "مراه", "اشاره", "سلامه"],
-};
 
 function assessmentDiversityBlueprint(request: GenerationRequest): Array<Record<string, string | number>> {
   return request.officialPlanItems.map((item, index) => ({
@@ -1596,6 +1662,7 @@ function buildSystemInstructions(request: GenerationRequest): string {
       : "اجعل البدائل الثلاثة للمفردة الواحدة مختلفة في تفاصيل الموقف والقيم وطريقة التفكير، لا مجرد تبديل كلمات في السؤال نفسه.",
     "في الاختبار القصير لا تجعل أكثر من مفردة واحدة تعريفًا أو سؤال وحدة مباشرًا، واجعل بقية المفردات تطبيقًا أو تفسيرًا أو بيانات أو قرارًا أو استقصاءً وفق الخطة.",
     "السياق الحياتي يجب أن يكون ضروريًا للإجابة، قصيرًا، واقعيًا، مناسبًا لعمر الطالب، ومتصلًا مباشرة بالمفهوم العلمي؛ لا تضع قصة زخرفية يمكن حذفها دون أن يتغير السؤال.",
+    "أعد scenarioContract منظمًا لكل بديل: target مطابق حرفيًا لـscenarioTarget، وevidencePhrases عبارتان إلى أربع عبارات قصيرة منسوخة حرفيًا من stimulus أو text تثبت عناصر السياق، وscientificLink يشرح كيف يخدم السياق هدف التعلم، وcontextIsEssential=true عندما يكون السياق الحياتي أو حالة القرار جزءًا من الحل.",
     "لا تخلط بين الدروس؛ كل مفردة مرتبطة باسم درس ومرجع صفحة محددين في الخطة.",
     "يُمنع إنشاء أسئلة عن اسم الوحدة أو رقمها أو اسم الكتاب أو الصفحة أو موضع الدرس في المنهج؛ المطلوب قياس المحتوى العلمي للدرس فقط.",
     "إذا وُجد regenerationAnchor فأنشئ البدائل الجديدة مشابهة له في المفهوم العلمي ونمط السؤال ومستوى العمق، مع تغيير الصياغة أو القيم فقط عندما يدعم المرجع ذلك. لا تنتقل إلى مفهوم آخر داخل الكتاب.",
@@ -1653,7 +1720,7 @@ function buildUserPrompt(request: GenerationRequest, evidenceCatalog: EvidenceCa
   return JSON.stringify({
     task: repairAttempt
       ? (request.generationMode === "whole_exam_v2"
-          ? "أعد تصميم الاختبار الكامل وصحح سبب الرفض السابق، ثم راجعه علميًا وتقويميًا بوصفه وحدة واحدة."
+          ? "صحح المفردات المرسلة في هذا الطلب فقط وفق أسباب الرفض المحددة، ولا تعِد أو تغيّر مفردات غير مرسلة. احتفظ بالخطة والدرس والدرجة والسياق المنظم كما هي."
           : "أعد التوليد بدقة أكبر، وصحح سبب رفض المحاولة السابقة تحديدًا مع إبقاء الخطة والدرس والدرجة كما هي.")
       : (request.generationMode === "whole_exam_v2"
           ? "صمم اختبارًا كاملًا قابلًا للاستخدام الفعلي من بطاقات الدروس والمخطط والمراجع، ثم أعد سؤالًا نهائيًا واحدًا لكل مفردة."
@@ -1689,6 +1756,14 @@ function buildUserPrompt(request: GenerationRequest, evidenceCatalog: EvidenceCa
       visualTarget: item.visualTarget,
       scenarioTarget: item.scenarioTarget,
       scenarioGuidance: SCENARIO_GUIDANCE[item.scenarioTarget],
+      scenarioContract: {
+        target: item.scenarioTarget,
+        evidencePhraseRule: item.scenarioTarget === "scientific_abstract"
+          ? "يجوز أن تكون evidencePhrases فارغة إذا لم يكن السؤال حياتيًا."
+          : "أعد عبارتين إلى أربع عبارات منسوخة حرفيًا من متن السؤال تثبت عناصر السياق.",
+        scientificLinkRule: `اربط السياق بهدف التعلم: ${item.outcomeLabel}`,
+        contextIsEssential: item.scenarioTarget !== "scientific_abstract" || ["real_life_scene", "decision_case"].includes(item.stimulusTarget),
+      },
       stimulusTarget: item.stimulusTarget,
       stimulusGuidance: STIMULUS_GUIDANCE[item.stimulusTarget],
       skillTarget: item.skillTarget,
@@ -1707,7 +1782,7 @@ function buildUserPrompt(request: GenerationRequest, evidenceCatalog: EvidenceCa
       itemCount: request.items.length,
       alternativesPerItem: request.generationMode === "whole_exam_v2" ? 1 : 3,
       exactPlanItemIds: request.items.map((item) => item.planItemId),
-      evidenceRule: "أعد sourceEvidenceId من allowedEvidenceIds الخاصة بالمفردة فقط. أعد enrichmentEvidenceId من allowedEnrichmentIds عند استخدام إثراء خارجي، وإلا فأعد سلسلة فارغة.",
+      evidenceRule: "أعد sourceEvidenceId من allowedEvidenceIds الخاصة بالمفردة فقط. أعد enrichmentEvidenceId من allowedEnrichmentIds عند استخدام إثراء خارجي، وإلا فأعد سلسلة فارغة. أعد scenarioContract المنظم، ولا تعتمد على كلمات مفتاحية منفردة لإثبات السياق.",
       styleRule: "اجعل questionForm مطابقًا حرفيًا لـ styleTarget، ونفذ scenarioTarget وstimulusTarget وskillTarget. أعد markScheme كمصفوفة طولها يساوي marks تمامًا، وكل عنصر فيها معيار مستقل غير فارغ لدرجة واحدة. في السؤال الحسابي أعد workingRequired=true فقط عندما تكون marks درجتين أو أكثر، وfalse عندما تكون درجة واحدة. في الأسئلة غير المفهومية اجعل stimulus غير فارغ، إلا إذا كان fixedVisual يحمل السياق أو البيانات ويشير text إليه صراحة، أو كان text نفسه يتضمن السياق كاملًا.",
       visualRule: request.generationMode === "whole_exam_v2"
         ? "لا تعد visual في JSON. إذا كان fixedVisual.type لا يساوي none، يجب أن يعتمد السؤال النهائي عليه اعتمادًا جوهريًا ويذكره صراحة."
@@ -1797,9 +1872,39 @@ function generationSchema(requestedItems: GenerationItem[], evidenceSource: Evid
                       enum: ["", ...enrichmentIds],
                       description: "معرف إثراء رسمي مستخدم في السياق، أو سلسلة فارغة عند عدم استخدام إثراء خارجي.",
                     },
+                    scenarioContract: {
+                      type: "object",
+                      description: "إثبات منظم لاستخدام السياق المخصص للمفردة، بدل الاعتماد على مطابقة كلمة واحدة.",
+                      properties: {
+                        target: {
+                          type: "string",
+                          enum: [requestedItem.scenarioTarget],
+                          description: "السياق المستهدف للمفردة كما أرسله الخادم حرفيًا.",
+                        },
+                        evidencePhrases: {
+                          type: "array",
+                          minItems: requestedItem.scenarioTarget === "scientific_abstract" ? 0 : 2,
+                          maxItems: 4,
+                          items: {
+                            type: "string",
+                            description: "عبارة قصيرة منسوخة حرفيًا من stimulus أو text تثبت عنصرًا فعليًا من السياق.",
+                          },
+                        },
+                        scientificLink: {
+                          type: "string",
+                          description: "شرح موجز للعلاقة بين السياق وهدف التعلم أو المهارة العلمية.",
+                        },
+                        contextIsEssential: {
+                          type: "boolean",
+                          description: "true عندما يتغير السؤال أو طريقة التفكير بحذف السياق.",
+                        },
+                      },
+                      required: ["target", "evidencePhrases", "scientificLink", "contextIsEssential"],
+                      additionalProperties: false,
+                    },
                     needsReview: { type: "boolean" },
                   },
-                  required: ["stimulus", "text", "options", "answer", "rationale", "markScheme", "questionForm", "workingRequired", "sourceEvidenceId", "enrichmentEvidenceId", "needsReview"],
+                  required: ["stimulus", "text", "options", "answer", "rationale", "markScheme", "questionForm", "workingRequired", "sourceEvidenceId", "enrichmentEvidenceId", "scenarioContract", "needsReview"],
                   additionalProperties: false,
                 },
               },
@@ -1822,6 +1927,7 @@ function parseGenerationRequest(value: unknown): GenerationRequest {
   const compatibleWholeExamVersions = new Set([
     "source-grounded-policy-ai-17-whole-exam-v2",
     "source-grounded-policy-ai-18-exam-integrity-resume",
+    "source-grounded-policy-ai-19-structured-scenario-repair",
   ]);
   if (generationMode === "whole_exam_v2" && !compatibleWholeExamVersions.has(generationVersion)) {
     throw httpError("إصدار محرك الاختبار الكامل غير متوافق.", 400);
@@ -2270,6 +2376,82 @@ function splitLongEvidencePiece(value: string, maxCharacters: number): string[] 
   return chunks;
 }
 
+function hydrateGeneratedItem(
+  generatedItem: ModelGeneratedItem,
+  requested: GenerationItem,
+  request: GenerationRequest,
+  evidenceCatalog: EvidenceCatalog,
+  enrichment: TrustedEnrichmentContext,
+): GeneratedItem {
+  const expectedAlternativeCount = request.generationMode === "whole_exam_v2" ? 1 : 3;
+  if (!Array.isArray(generatedItem.alternatives) || generatedItem.alternatives.length !== expectedAlternativeCount) {
+    throw retryableError(request.generationMode === "whole_exam_v2"
+      ? "محرك الاختبار الكامل لم يلتزم بسؤال نهائي واحد للمفردة."
+      : "مولد الأسئلة لم يلتزم بثلاثة بدائل للمفردة.");
+  }
+  const visual = buildServerOwnedVisualSpec(requested, request);
+  const alternatives = generatedItem.alternatives.map((alternative) =>
+    validateAndHydrateAlternative(
+      alternative,
+      requested.questionType,
+      requested.sourceReferenceId,
+      evidenceCatalog,
+      requested.styleTarget,
+      requested.visualTarget,
+      requested.marks,
+      requested.lessonLabel,
+      requested.outcomeLabel,
+      requested.regenerationAnchor,
+      enrichment,
+      visual,
+      requested.scenarioTarget,
+      requested.stimulusTarget,
+      requested.skillTarget,
+      requested.diversityKey,
+      request.generationVersion === "source-grounded-policy-ai-19-structured-scenario-repair",
+    )
+  );
+  if (alternatives.length > 1) validateAlternativeDiversity(alternatives, requested.diversityKey);
+  return { planItemId: requested.planItemId, visual, alternatives };
+}
+
+function validateGeneratedItemsIndividually(
+  payload: ModelGeneratedPayload,
+  request: GenerationRequest,
+  evidenceCatalog: EvidenceCatalog,
+  enrichment: TrustedEnrichmentContext = { segments: [], attempted: false },
+): ItemValidationBatch {
+  const generatedById = new Map<string, ModelGeneratedItem[]>();
+  if (payload && Array.isArray(payload.items)) {
+    for (const generatedItem of payload.items) {
+      if (!generatedItem || typeof generatedItem.planItemId !== "string") continue;
+      const existing = generatedById.get(generatedItem.planItemId) ?? [];
+      existing.push(generatedItem);
+      generatedById.set(generatedItem.planItemId, existing);
+    }
+  }
+  const items: GeneratedItem[] = [];
+  const failures: ItemValidationFailure[] = [];
+  for (const requested of request.items) {
+    const candidates = generatedById.get(requested.planItemId) ?? [];
+    if (candidates.length !== 1) {
+      failures.push({
+        planItemId: requested.planItemId,
+        message: candidates.length > 1
+          ? "أعاد المولد المفردة أكثر من مرة."
+          : "لم يُعد المولد هذه المفردة.",
+      });
+      continue;
+    }
+    try {
+      items.push(hydrateGeneratedItem(candidates[0]!, requested, request, evidenceCatalog, enrichment));
+    } catch (error) {
+      failures.push({ planItemId: requested.planItemId, message: errorMessage(error) });
+    }
+  }
+  return { items, failures };
+}
+
 function validateAndHydrateGeneratedPayload(
   payload: ModelGeneratedPayload,
   request: GenerationRequest,
@@ -2277,52 +2459,13 @@ function validateAndHydrateGeneratedPayload(
   enrichment: TrustedEnrichmentContext = { segments: [], attempted: false },
 ): GeneratedPayload {
   if (!payload || !Array.isArray(payload.items)) throw retryableError("بنية الأسئلة المولدة غير صالحة.");
-  const requestedById = new Map(request.items.map((item) => [item.planItemId, item]));
-  const seen = new Set<string>();
-  const hydratedItems: GeneratedItem[] = [];
-
-  for (const generatedItem of payload.items) {
-    if (!generatedItem || typeof generatedItem.planItemId !== "string" || seen.has(generatedItem.planItemId)) {
-      throw retryableError("مولد الأسئلة أعاد مفردة مجهولة أو مكررة.");
-    }
-    const requested = requestedById.get(generatedItem.planItemId);
-    const expectedAlternativeCount = request.generationMode === "whole_exam_v2" ? 1 : 3;
-    if (!requested || !Array.isArray(generatedItem.alternatives) || generatedItem.alternatives.length !== expectedAlternativeCount) {
-      throw retryableError(request.generationMode === "whole_exam_v2"
-        ? "محرك الاختبار الكامل لم يلتزم بسؤال نهائي واحد لكل مفردة."
-        : "مولد الأسئلة لم يلتزم بثلاثة بدائل لكل مفردة.");
-    }
-    seen.add(generatedItem.planItemId);
-    const visual = buildServerOwnedVisualSpec(requested, request);
-    const alternatives = generatedItem.alternatives.map((alternative) =>
-      validateAndHydrateAlternative(
-        alternative,
-        requested.questionType,
-        requested.sourceReferenceId,
-        evidenceCatalog,
-        requested.styleTarget,
-        requested.visualTarget,
-        requested.marks,
-        requested.lessonLabel,
-        requested.regenerationAnchor,
-        enrichment,
-        visual,
-        requested.scenarioTarget,
-        requested.stimulusTarget,
-        requested.skillTarget,
-        requested.diversityKey,
-      )
-    );
-    if (alternatives.length > 1) validateAlternativeDiversity(alternatives, requested.diversityKey);
-    hydratedItems.push({
-      planItemId: generatedItem.planItemId,
-      visual,
-      alternatives,
-    });
+  const batch = validateGeneratedItemsIndividually(payload, request, evidenceCatalog, enrichment);
+  if (batch.failures.length) {
+    const first = batch.failures[0]!;
+    throw retryableError(`${first.planItemId}: ${first.message}`);
   }
-  if (seen.size !== requestedById.size) throw retryableError("مولد الأسئلة لم يُعد جميع مفردات الخطة.");
-  if (request.generationMode === "whole_exam_v2") validateWholeExamGeneratedDiversity(hydratedItems);
-  return { items: hydratedItems };
+  if (request.generationMode === "whole_exam_v2") validateWholeExamGeneratedDiversity(batch.items);
+  return { items: batch.items };
 }
 
 function wholeExamQuestionMaterial(item: GeneratedItem): string {
@@ -3296,6 +3439,85 @@ function validateVisualSemanticBinding(
   }
 }
 
+function sanitizeScenarioContract(value: unknown): ModelGeneratedScenarioContract {
+  const record = asRecord(value);
+  if (!record) throw retryableError("السؤال لا يحتوي عقد السياق المنظم المطلوب.");
+  const target = requireEnum(record.target, ["scientific_abstract", "door_handle", "playground_seesaw", "wrench_tool", "bicycle_brake", "shopping_trolley", "school_bag", "water_tank", "solar_panel", "laboratory_setup", "road_safety"] as const, "سياق السؤال المنظم غير صالح.");
+  const evidencePhrases = Array.isArray(record.evidencePhrases)
+    ? record.evidencePhrases
+      .filter((entry): entry is string => typeof entry === "string")
+      .map((entry) => sanitizeGeneratedDisplayText(entry).trim())
+      .filter(Boolean)
+      .slice(0, 4)
+    : [];
+  const scientificLink = typeof record.scientificLink === "string"
+    ? sanitizeGeneratedDisplayText(record.scientificLink).trim()
+    : "";
+  return {
+    target,
+    evidencePhrases,
+    scientificLink,
+    contextIsEssential: record.contextIsEssential === true,
+  };
+}
+
+function normalizedContainsPhrase(material: string, phrase: string): boolean {
+  const normalizedPhrase = normalizeForEvidence(phrase);
+  if (normalizedPhrase.length < 4) return false;
+  return normalizeForEvidence(material).includes(normalizedPhrase);
+}
+
+function validateStructuredScenarioContract(
+  alternative: ModelGeneratedAlternative,
+  scenarioTarget: QuestionScenarioTarget,
+  stimulusTarget: QuestionStimulusTarget,
+  skillTarget: QuestionSkillTarget,
+  outcomeLabel: string,
+  fixedVisual: QuestionVisualSpec,
+): void {
+  const contract = alternative.scenarioContract;
+  if (!contract || contract.target !== scenarioTarget) {
+    throw retryableError("عقد السياق لا يطابق السياق المخصص لهذه المفردة.");
+  }
+  const requiresContext = scenarioTarget !== "scientific_abstract"
+    || ["real_life_scene", "decision_case"].includes(stimulusTarget);
+  if (!requiresContext) return;
+  if (!contract.contextIsEssential) {
+    throw retryableError("عقد السياق يصرح بأن الموقف زخرفي وليس جزءًا من التفكير المطلوب.");
+  }
+  if (contract.evidencePhrases.length < 2) {
+    throw retryableError("عقد السياق لا يقدم عبارتين فعليتين من متن السؤال تثبتان الموقف الحياتي.");
+  }
+  const material = `${alternative.stimulus} ${alternative.text}`;
+  if (contract.evidencePhrases.some((phrase) => !normalizedContainsPhrase(material, phrase))) {
+    throw retryableError("عقد السياق يستشهد بعبارة غير موجودة حرفيًا في متن السؤال.");
+  }
+  const expectedCorpus = [
+    SCENARIO_GUIDANCE[scenarioTarget],
+    outcomeLabel,
+    SKILL_GUIDANCE[skillTarget],
+    fixedVisual.purpose,
+    fixedVisual.title,
+    fixedVisual.altText,
+    fixedVisual.labels.join(" "),
+  ].join(" ");
+  const evidenceCorpus = `${contract.evidencePhrases.join(" ")} ${contract.scientificLink}`;
+  const scenarioOverlap = Math.max(
+    semanticOverlap(semanticTokens(evidenceCorpus), semanticTokens(expectedCorpus)),
+    semanticOverlap(semanticTokens(material), semanticTokens(expectedCorpus)),
+  );
+  if (scenarioOverlap < 1) {
+    throw retryableError("عقد السياق لا يثبت علاقة دلالية بالسياق وهدف التعلم المخصصين للمفردة.");
+  }
+  const scientificLinkOverlap = semanticOverlap(
+    semanticTokens(contract.scientificLink),
+    semanticTokens(`${outcomeLabel} ${material} ${SKILL_GUIDANCE[skillTarget]}`),
+  );
+  if (contract.scientificLink.length < 12 || scientificLinkOverlap < 1) {
+    throw retryableError("الرابط العلمي في عقد السياق غير كافٍ لشرح دور الموقف في قياس هدف التعلم.");
+  }
+}
+
 function validateAssessmentQuality(
   alternative: ModelGeneratedAlternative,
   scenarioTarget: QuestionScenarioTarget,
@@ -3312,12 +3534,6 @@ function validateAssessmentQuality(
   if (["real_life_scene", "decision_case"].includes(stimulusTarget)) {
     if (`${alternative.stimulus} ${alternative.text}`.trim().length < 48) {
       throw retryableError("الموقف الحياتي قصير أو شكلي ولا يقدم سياقًا كافيًا للتفكير.");
-    }
-    if (scenarioTarget !== "scientific_abstract") {
-      const keywords = SCENARIO_KEYWORDS[scenarioTarget];
-      if (!keywords.some((keyword) => material.includes(normalizeForEvidence(keyword)))) {
-        throw retryableError("السؤال لم يلتزم بسياق الحياة اليومية المخصص لهذه المفردة.");
-      }
     }
   }
   if (stimulusTarget === "experiment" && !/(تجرب|متغير|قياس|اداه|خطوه|نتيج|ضبط|موثوق)/u.test(material)) {
@@ -3376,6 +3592,7 @@ function validateAndHydrateAlternative(
   requestedVisualTarget: QuestionVisualType,
   marks: number,
   lessonLabel: string,
+  outcomeLabel: string,
   regenerationAnchor?: RegenerationAnchor,
   enrichment: TrustedEnrichmentContext = { segments: [], attempted: false },
   fixedVisual: QuestionVisualSpec = emptyVisualSpec(),
@@ -3383,6 +3600,7 @@ function validateAndHydrateAlternative(
   stimulusTarget: QuestionStimulusTarget = "concise_text",
   skillTarget: QuestionSkillTarget = "recognize",
   diversityKey = "legacy:item",
+  structuredScenarioRequired = false,
 ): GeneratedAlternative {
   if (!alternative || typeof alternative !== "object") throw retryableError("أحد بدائل الأسئلة غير صالح.");
   for (const field of ["text", "answer", "rationale", "sourceEvidenceId"] as const) {
@@ -3408,6 +3626,9 @@ function validateAndHydrateAlternative(
     answer: sanitizeGeneratedDisplayText(alternative.answer),
     rationale: sanitizeGeneratedDisplayText(alternative.rationale),
     markScheme: sanitizeModelMarkScheme(alternative.markScheme),
+    scenarioContract: asRecord(alternative.scenarioContract)
+      ? sanitizeScenarioContract(alternative.scenarioContract)
+      : undefined,
   };
   const visualReference = normalizeVisualQuestionReference(
     alternative.stimulus,
@@ -3436,6 +3657,9 @@ function validateAndHydrateAlternative(
     throw retryableError("السؤال الحسابي ومثيره لا يحتويان جميع القيم والوحدات اللازمة للحل.");
   }
   validateVisualSemanticBinding(alternative, markScheme, fixedVisual);
+  if (structuredScenarioRequired) {
+    validateStructuredScenarioContract(alternative, scenarioTarget, stimulusTarget, skillTarget, outcomeLabel, fixedVisual);
+  }
   validateAssessmentQuality(alternative, scenarioTarget, stimulusTarget, skillTarget, diversityKey);
   if (questionType === "اختيار من متعدد") {
     const options = alternative.options.map((option) => typeof option === "string" ? option.trim() : "");
