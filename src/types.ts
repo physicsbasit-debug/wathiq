@@ -103,6 +103,29 @@ export interface QuestionCounts {
   long: number;
 }
 
+export type DraftLessonCatalogOrigin = "approved-structure" | "validated-structure" | "curated-book-tree" | "detected-heading";
+
+export interface DraftLessonCatalogSnapshot {
+  id: string;
+  sourceId: string;
+  sourceTitle: string;
+  label: string;
+  code: string;
+  title: string;
+  pageStart?: number;
+  pageEnd?: number;
+  unitLabel?: string;
+  origin: DraftLessonCatalogOrigin;
+}
+
+export interface DraftResumeSnapshot {
+  schemaVersion: 1;
+  selectionKey: string;
+  activeUnitKey: string;
+  lessonCatalog: DraftLessonCatalogSnapshot[];
+  savedAt: string;
+}
+
 export interface ExamSourceReference {
   id: string;
   sourceId: string;
@@ -129,6 +152,7 @@ export interface ExamDraft {
   topic: string;
   sourceReferences: ExamSourceReference[];
   sourceRetrievalVersion: string;
+  resumeContext?: DraftResumeSnapshot;
   title: ExamTitleOption;
   examDate: string;
   school: string;

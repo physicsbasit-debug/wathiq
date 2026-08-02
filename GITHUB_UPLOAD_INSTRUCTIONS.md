@@ -1,19 +1,19 @@
-# تعليمات رفع Phase 2-B
+# تعليمات رفع Phase 2-B Fix 1
 
 ## الأساس المطلوب
 
-يجب أن تكون `main` متضمنة Phase 2-A Fix 5 قبل الرفع.
+يجب أن تكون `main` متضمنة **Phase 2-B (`0.0.51`)** قبل الرفع.
 
 ## الفرع
 
 ```text
-phase-2b-reliable-resume-exam-integrity
+phase-2b-fix1-atomic-draft-resume
 ```
 
 ## رسالة الحفظ
 
 ```text
-feat: add reliable draft resume and exam integrity gates
+fix: make draft resume atomic and non-destructive
 ```
 
 ## خطوات الرفع
@@ -26,7 +26,7 @@ feat: add reliable draft resume and exam integrity gates
 النتيجة المطلوبة:
 
 ```text
-386 passed
+392 passed
 0 failed
 ```
 

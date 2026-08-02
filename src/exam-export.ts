@@ -65,17 +65,18 @@ const EXPORT_STYLES = `
   .structured-question { border-top: 1px solid #9aa4b0; padding-top: 3mm; }
   .structured-question-header { display: grid; grid-template-columns: auto 1fr auto; gap: 3mm; font-weight: 700; margin-bottom: 3mm; }
   .paper-question-title { display: grid; grid-template-columns: auto 1fr auto; gap: 2mm; align-items: start; }
-  .paper-stimulus { margin: 2mm 5mm; padding: 2.5mm; border: 1px solid #ccd5df; border-radius: 3mm; background: #f8fafc; }
+  .paper-stimulus { margin: 1.5mm 4mm; padding: 2mm; border: 1px solid #ccd5df; border-radius: 3mm; background: #f8fafc; }
   .paper-options { margin: 3mm 7mm 0; padding: 0; list-style: none; display: grid; grid-template-columns: 1fr 1fr; gap: 2mm 7mm; }
   .paper-options li { display: flex; gap: 2mm; align-items: center; }
   .paper-option-circle { width: 4mm; height: 4mm; border: 1px solid #222; border-radius: 50%; flex: 0 0 4mm; }
   .answer-lines { display: grid; gap: 4mm; margin: 3mm 7mm 0; }
   .answer-lines span { border-bottom: 1px solid #333; min-height: 4mm; }
   .working-note { margin: 2mm 7mm 0; font-size: 10px; font-weight: 700; }
-  .plan-shared-visual { margin: 3mm 7mm; padding: 2mm; border: 1px solid #aab3bd; border-radius: 3mm; break-inside: avoid; page-break-inside: avoid; }
+  .plan-shared-visual { margin: 2mm 5mm; padding: 1.5mm; border: 1px solid #aab3bd; border-radius: 3mm; break-inside: avoid; page-break-inside: avoid; }
   .visual-heading { display: none; }
   .question-visual { margin: 0 auto; max-width: 165mm; }
   .question-visual svg, .question-visual-raster { display: block; width: 100%; height: auto; max-height: 70mm; margin: 0 auto; font-family: Tahoma, Arial, sans-serif; direction: ltr; }
+  .question-visual-context_scene svg, .question-visual-context_scene .question-visual-raster, .question-visual-context_scene .question-visual-hybrid { max-height: 52mm; }
   .question-visual-hybrid { position: relative; width: 100%; aspect-ratio: 4 / 3; max-height: 70mm; overflow: hidden; background: #fff; }
   .question-visual-deterministic-fallback { position: absolute; inset: 0; display: grid; place-items: center; }
   .question-visual-deterministic-fallback svg { width: 100%; height: 100%; max-height: none; object-fit: contain; }
