@@ -1,19 +1,28 @@
-Phase 2-B Fix 1 — Atomic Draft Resume & Assessment Finalizer
-Version: 0.0.52
-Base: Phase 2-B 0.0.51
+Phase 2-C1 — Visual-First 2D Scientific Rendering
+Version: 0.0.53
+Base: Phase 2-B Fix 1 0.0.52
 Generation contract: source-grounded-policy-ai-18-exam-integrity-resume
+Image prompt contract: wathiq-visual-first-2d-v3-scientific-quality
 
 Changed files:
+- CHANGED_FILES_MANIFEST.txt
 - GITHUB_UPLOAD_INSTRUCTIONS.md
-- PHASE_2_B_FIX1_TEST_REPORT.md
+- PHASE_2_C1_TEST_REPORT.md
 - README.md
-- docs/PHASE_2_B_FIX1_ATOMIC_DRAFT_RESUME_ASSESSMENT_FINALIZER.md
+- docs/PHASE_2_C1_VISUAL_FIRST_2D_SCIENTIFIC_RENDERING.md
 - package.json
 - src/app.ts
 - src/exam-export.ts
-- src/storage.ts
-- src/types.ts
+- src/question-visual.ts
+- src/styles.css
 - supabase/functions/generate-source-questions/index.ts
+- dist/assets/app.js
+- dist/assets/app.js.map
+- dist/assets/exam-export.js
+- dist/assets/exam-export.js.map
+- dist/assets/question-visual.js
+- dist/assets/question-visual.js.map
+- dist/assets/styles.css
 - tests/phase-1-a-simple-source-brief.test.mjs
 - tests/phase-1-b-files.test.mjs
 - tests/phase-1-b3-files.test.mjs
@@ -40,8 +49,8 @@ Changed files:
 - tests/phase-2-a-fix4-question-visual-semantic-binding.test.mjs
 - tests/phase-2-a-whole-exam-v2-files.test.mjs
 - tests/phase-2-b-exam-integrity-resume.test.mjs
-- tests/phase-2-b-fix1-atomic-draft-resume.test.mjs
-- tests/storage-draft.test.mjs
+- tests/phase-2-c1-visual-first-2d.test.mjs
+- tests/question-visual.test.mjs
 
 Deployment:
 - Upload the contents of the changed-files ZIP to the repository root.
@@ -49,7 +58,7 @@ Deployment:
 - No SQL, new secret, reindexing, or teacher-guide upload is required.
 
 Verification:
-- 392 tests passed, 0 failed.
-- Overlay over Phase 2-B passed.
+- 398 tests passed, 0 failed.
+- Overlay over Phase 2-B Fix 1 passed.
 - Full backup passed.
 - Local dist returned HTTP 200.

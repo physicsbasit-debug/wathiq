@@ -22,7 +22,7 @@ const MARK_SCHEME_REPAIR_MAX_OUTPUT_TOKENS = 900;
 const IMAGE_GENERATION_TIMEOUT_MS = 48_000;
 const IMAGE_VALIDATION_TIMEOUT_MS = 18_000;
 const QUESTION_VISUAL_BUCKET = "wathiq-question-visuals";
-const VISUAL_PROMPT_VERSION = "wathiq-controlled-2d-v2-context-diversity";
+const VISUAL_PROMPT_VERSION = "wathiq-visual-first-2d-v3-scientific-quality";
 const MAX_IMAGE_BASE64_CHARACTERS = 16_000_000;
 const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent`;
 const GEMINI_IMAGE_API_URL = `https://generativelanguage.googleapis.com/v1/models/${encodeURIComponent(GEMINI_IMAGE_MODEL)}:generateContent`;
@@ -523,7 +523,7 @@ function isControlledIllustrationEligible(visual: QuestionVisualSpec): boolean {
   if (visual.type === "context_scene") {
     return ["read", "interpret", "compare", "evaluate"].includes(visual.role);
   }
-  if (visual.type === "electrostatic_diagram" && visual.variant === "charge_transfer") {
+  if (visual.type === "electrostatic_diagram" && ["charge_transfer", "attraction_repulsion"].includes(visual.variant)) {
     return !["calculate", "complete", "draw"].includes(visual.role);
   }
   if (visual.type === "pressure_diagram" && visual.variant === "submerged_object") {
@@ -550,11 +550,22 @@ function controlledIllustrationScene(request: VisualIllustrationRequest): string
       ?? "A simple everyday school science situation with exactly the objects required by the question, shown clearly and safely.";
   }
   if (request.visual.type === "electrostatic_diagram") {
+    if (request.visual.variant === "attraction_repulsion") {
+      const unlikeCharges = (request.visual.values[0] ?? 0) >= 0.5;
+      return [
+        "Two identical lightweight spherical objects or balloons are suspended separately by thin insulating strings against a white background.",
+        unlikeCharges
+          ? "Their positions clearly show mutual attraction: both strings lean gently inward and the objects move closer without touching."
+          : "Their positions clearly show mutual repulsion: both strings lean gently outward and the objects move apart symmetrically.",
+        "Show exactly two objects and two strings. Keep the composition symmetric, clean, and scientifically plausible.",
+        "Do not show charge signs, arrows, field lines, labels, hands, sparks, or extra objects.",
+      ].join(" ");
+    }
     return [
-      "A plastic ruler is being rubbed firmly with a small dry cloth.",
-      "Several tiny lightweight paper pieces lie close to the ruler and are visibly attracted toward it.",
-      "Show one ruler, one cloth, and a small group of paper pieces only.",
-      "Do not show plus or minus charge symbols because the assessment does not require the charge type to be revealed.",
+      "A plastic ruler is being rubbed firmly with a small dry cloth by one school-age learner's hand.",
+      "Several tiny lightweight paper pieces lie close to the ruler and are visibly lifting or tilting toward it.",
+      "Show exactly one ruler, one cloth, one hand, and a small group of paper pieces only.",
+      "Do not show plus or minus charge symbols, arrows, labels, sparks, or extra laboratory apparatus.",
     ].join(" ");
   }
   return [
@@ -564,19 +575,21 @@ function controlledIllustrationScene(request: VisualIllustrationRequest): string
   ].join(" ");
 }
 
-function buildControlledIllustrationPrompt(request: VisualIllustrationRequest): string {
+function buildControlledIllustrationPrompt(request: VisualIllustrationRequest, correctionNote = ""): string {
   return [
     "Create a precise 2D educational textbook illustration for a school science assessment in Oman.",
     `Grade: ${request.grade}. Subject: ${request.subject}. Lesson: ${request.lessonLabel}.`,
     `Scientific scene: ${controlledIllustrationScene(request)}`,
     `Question-specific context: ${request.questionText}`,
     `Reference-grounded context: ${request.sourceSupport}`,
-    "Visual style: clean flat vector-style illustration, crisp outlines, restrained natural colors, white background, landscape 4:3 composition, suitable for clear A4 printing.",
+    "Visual style: premium 2D science textbook illustration, clean flat shapes with subtle depth, crisp outlines, restrained natural colors, white background, landscape 4:3 composition, high visual hierarchy, suitable for sharp A4 printing.",
+    "Composition: the required scientific objects must be large, centered, clearly separated, and immediately understandable at a glance; avoid tiny objects and excessive empty space.",
     "Scientific constraints: preserve the exact object count and relationships; do not invent apparatus, forces, particles, labels, measurements, or effects not requested.",
     "Assessment constraints: no words, no letters, no numbers, no units, no arrows, no captions, no watermarks, no decorative border, and no photorealistic rendering.",
     "Make the scientific action unmistakable through the objects and their positions alone.",
     "Do not reuse the ruler-and-paper composition or any other stock composition unless the requested scene explicitly requires it. Match the requested variant and question-specific context.",
-  ].join("\n");
+    correctionNote ? `Correction required after scientific review: ${correctionNote}` : "",
+  ].filter(Boolean).join("\n");
 }
 
 function findGeneratedImagePart(payload: unknown): { data: string; mimeType: string } | null {
@@ -604,6 +617,7 @@ function findGeneratedImagePart(payload: unknown): { data: string; mimeType: str
 async function requestControlledIllustrationImage(
   request: VisualIllustrationRequest,
   requestId: string,
+  correctionNote = "",
 ): Promise<{ data: string; mimeType: string }> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), IMAGE_GENERATION_TIMEOUT_MS);
@@ -616,7 +630,7 @@ async function requestControlledIllustrationImage(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: buildControlledIllustrationPrompt(request) }] }],
+        contents: [{ parts: [{ text: buildControlledIllustrationPrompt(request, correctionNote) }] }],
         generationConfig: {
           responseModalities: ["IMAGE"],
           responseFormat: { image: { aspectRatio: "4:3", imageSize: "1K" } },
@@ -652,11 +666,14 @@ const visualValidationSchema = {
   properties: {
     approved: { type: "boolean" },
     requiredObjectsPresent: { type: "boolean" },
+    objectCountCorrect: { type: "boolean" },
     scientificRelationshipCorrect: { type: "boolean" },
+    clear2DComposition: { type: "boolean" },
+    printReady: { type: "boolean" },
     forbiddenTextDetected: { type: "boolean" },
     reason: { type: "string" },
   },
-  required: ["approved", "requiredObjectsPresent", "scientificRelationshipCorrect", "forbiddenTextDetected", "reason"],
+  required: ["approved", "requiredObjectsPresent", "objectCountCorrect", "scientificRelationshipCorrect", "clear2DComposition", "printReady", "forbiddenTextDetected", "reason"],
   additionalProperties: false,
 };
 
@@ -683,9 +700,11 @@ async function validateControlledIllustration(
             { text: [
               "افحص الصورة وفق المتطلبات الآتية:",
               controlledIllustrationScene(request),
-              "يجب أن تكون صورة ثنائية الأبعاد واضحة على خلفية بيضاء.",
+              "يجب أن تكون صورة ثنائية الأبعاد واضحة ومصقولة بصريًا على خلفية بيضاء، وتبقى مفهومة عند الطباعة على ورقة A4.",
+              "تحقق من العدد الدقيق للعناصر المطلوبة، ومن عدم اختفاء أي عنصر أو اندماجه بصريًا مع عنصر آخر.",
               "ارفضها إذا ظهر أي نص أو حرف أو رقم أو وحدة أو سهم أو رمز شحنة أو عنصر علمي زائد.",
-              "وافق فقط إذا ظهرت العناصر المطلوبة والعلاقة العلمية بينها بوضوح ودون تضليل.",
+              "ارفضها إذا كانت العناصر صغيرة جدًا، أو التكوين غامضًا، أو العلاقات العلمية غير واضحة، أو الصورة أقرب إلى أيقونات مبهمة من رسم تعليمي.",
+              "وافق فقط إذا ظهرت العناصر المطلوبة والعلاقة العلمية بينها بوضوح ودون تضليل، وكانت الصورة جاهزة للطباعة التعليمية.",
             ].join("\n") },
             { inlineData: { mimeType: image.mimeType, data: image.data } },
           ],
@@ -707,7 +726,10 @@ async function validateControlledIllustration(
     const parsed = asRecord(parseGeneratedJson(output.text));
     const approved = parsed?.approved === true
       && parsed.requiredObjectsPresent === true
+      && parsed.objectCountCorrect === true
       && parsed.scientificRelationshipCorrect === true
+      && parsed.clear2DComposition === true
+      && parsed.printReady === true
       && parsed.forbiddenTextDetected === false;
     const reason = typeof parsed?.reason === "string" ? parsed.reason.trim().slice(0, 240) : "";
     logStage(requestId, "visual_image_validated", { approved, reason, durationMs: Date.now() - startedAt });
@@ -789,27 +811,35 @@ async function generateControlledVisualIllustration(
   userId: string,
   requestId: string,
 ): Promise<VisualIllustrationResult> {
+  let correctionNote = "";
+  let lastReason = "";
   try {
     logStage(requestId, "visual_illustration_started", {
       visualType: request.visual.type,
       visualVariant: request.visual.variant,
       model: GEMINI_IMAGE_MODEL,
+      maxAttempts: 2,
     });
-    const image = await requestControlledIllustrationImage(request, requestId);
-    const validation = await validateControlledIllustration(request, image, requestId);
-    if (!validation.approved) {
-      return {
-        status: "fallback",
-        reason: validation.reason || "لم تجتز الصورة فحص الدقة العلمية؛ أبقى واثق الرسم الحتمي الآمن.",
-      };
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      const image = await requestControlledIllustrationImage(request, requestId, correctionNote);
+      const validation = await validateControlledIllustration(request, image, requestId);
+      if (validation.approved) {
+        const illustration = await storeControlledIllustration(request, userId, image);
+        return { status: "ready", illustration, reason: `تم إنشاء صورة تعليمية ثنائية الأبعاد واعتمادها علميًا بعد ${attempt} محاولة.` };
+      }
+      lastReason = validation.reason || "لم تتحقق جودة الرسم أو دقته العلمية.";
+      correctionNote = lastReason;
+      logStage(requestId, "visual_illustration_retry", { attempt, reason: lastReason });
     }
-    const illustration = await storeControlledIllustration(request, userId, image);
-    return { status: "ready", illustration, reason: "تم إنشاء صورة ثنائية الأبعاد وتدقيقها علميًا." };
+    return {
+      status: "fallback",
+      reason: `${lastReason || "لم تجتز الصورة فحص الدقة العلمية."} استخدم واثق الرسم الثنائي الأبعاد المصقول الآمن.`,
+    };
   } catch (error) {
     logStage(requestId, "visual_illustration_fallback", { message: errorMessage(error) });
     return {
       status: "fallback",
-      reason: `تعذر اعتماد الصورة المحسنة؛ أبقى واثق الرسم الحتمي دون تعطيل الاختبار. ${errorMessage(error)}`.slice(0, 360),
+      reason: `تعذر اعتماد الصورة المحسنة؛ استخدم واثق الرسم الثنائي الأبعاد المصقول دون تعطيل الاختبار. ${errorMessage(error)}`.slice(0, 360),
     };
   }
 }

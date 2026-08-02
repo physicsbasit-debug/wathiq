@@ -35,5 +35,5 @@ test("يدعم القالب النهائي الرسمي في الواجهة وا
   assert.match(edge, /امتحان نهاية الفصل الدراسي/);
   assert.match(edge, /MAX_OFFICIAL_ITEMS\s*=\s*40/);
   assert.match(edge, /validateOfficialAssessmentPlan/);
-  assert.match(pkg.version, /^0\.0\.(?:32|33|34|35|36|37|38|39|40|41|42|43|44|45|46|47|48|49|50|51|52)$/);
+  assert.match(pkg.version, /^0\.0\.(?:32|33|34|35|36|37|38|39|40|41|42|43|44|45|46|47|48|49|50|51|52|53)$/);
 });
