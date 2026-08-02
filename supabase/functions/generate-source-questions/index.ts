@@ -321,6 +321,8 @@ interface VisualIllustrationAsset {
   generatedAt: string;
   promptVersion: string;
   validated: true;
+  assetKind: "scene_2d" | "scene_2d_overlay";
+  renderMode: "replace" | "overlay";
 }
 
 interface VisualIllustrationResult {
@@ -529,10 +531,42 @@ function isControlledIllustrationEligible(visual: QuestionVisualSpec): boolean {
   if (visual.type === "pressure_diagram" && visual.variant === "submerged_object") {
     return ["read", "interpret", "evaluate"].includes(visual.role);
   }
+  if (visual.type === "force_diagram" && ["free_body", "balanced_forces"].includes(visual.variant)) {
+    return !["draw", "complete"].includes(visual.role);
+  }
   return false;
 }
 
+function forceSceneKind(visual: QuestionVisualSpec): "shopping_trolley" | "school_bag" | "crate" {
+  const material = `${visual.title} ${visual.altText} ${visual.labels.join(" ")}`.toLowerCase();
+  if (/(عربه|عربة|تسوق|trolley|cart)/u.test(material)) return "shopping_trolley";
+  if (/(حقيبه|حقيبة|مدرسيه|مدرسية|bag)/u.test(material)) return "school_bag";
+  return "crate";
+}
+
 function controlledIllustrationScene(request: VisualIllustrationRequest): string {
+  if (request.visual.type === "force_diagram") {
+    const kind = forceSceneKind(request.visual);
+    if (kind === "shopping_trolley") {
+      return [
+        "One clear 2D side-view shopping trolley on a clean white background.",
+        "Show exactly one trolley with basket, handle, and two visible wheels, suitable for an Omani school science assessment.",
+        "Do not show any person, arrows, labels, equations, or extra store details.",
+      ].join(" ");
+    }
+    if (kind === "school_bag") {
+      return [
+        "One clear 2D school bag on a clean white background.",
+        "Show exactly one school bag with shoulder straps and a front pocket, large and centered.",
+        "Do not show a person, arrows, labels, books outside the bag, or extra objects.",
+      ].join(" ");
+    }
+    return [
+      "One clear 2D crate or box on a clean white background.",
+      "Show exactly one simple object only, centered and large enough for force arrows to be overlaid later.",
+      "Do not show people, arrows, labels, numbers, or extra objects.",
+    ].join(" ");
+  }
   if (request.visual.type === "context_scene") {
     const sceneByVariant: Partial<Record<QuestionVisualVariant, string>> = {
       door_handle: "A school-age student opens a simple classroom door by pushing or pulling at the handle far from the hinges. Show the door, hinges, handle, and the student's hand clearly.",
@@ -588,6 +622,7 @@ function buildControlledIllustrationPrompt(request: VisualIllustrationRequest, c
     "Assessment constraints: no words, no letters, no numbers, no units, no arrows, no captions, no watermarks, no decorative border, and no photorealistic rendering.",
     "Make the scientific action unmistakable through the objects and their positions alone.",
     "Do not reuse the ruler-and-paper composition or any other stock composition unless the requested scene explicitly requires it. Match the requested variant and question-specific context.",
+    request.visual.type === "force_diagram" ? "For force diagrams, draw only the real 2D base object. The app will add the scientific arrows and labels itself." : "",
     correctionNote ? `Correction required after scientific review: ${correctionNote}` : "",
   ].filter(Boolean).join("\n");
 }
@@ -795,6 +830,8 @@ async function storeControlledIllustration(
   if (previous && previous !== assetPath && previous.startsWith(`${storageSegment(userId)}/`)) {
     void admin.storage.from(QUESTION_VISUAL_BUCKET).remove([previous]);
   }
+  const renderMode = request.visual.type === "force_diagram" ? "overlay" : "replace";
+  const assetKind = renderMode === "overlay" ? "scene_2d_overlay" : "scene_2d";
   return {
     url: publicUrl,
     assetPath,
@@ -803,6 +840,8 @@ async function storeControlledIllustration(
     generatedAt: new Date().toISOString(),
     promptVersion: VISUAL_PROMPT_VERSION,
     validated: true,
+    assetKind,
+    renderMode,
   };
 }
 

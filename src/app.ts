@@ -1779,7 +1779,7 @@ async function enhancePlanVisual(planItemId: string, automatic = false): Promise
     return false;
   }
   if (!state.draft.visualEnhancementEnabled) {
-    if (!automatic) showToast("فعّل خيار الرسوم الهجينة أولًا؛ بقي الرسم العلمي الحتمي مستخدمًا.");
+    if (!automatic) showToast("فعّل خيار المرئيات 2D أولًا؛ بقي الرسم العلمي الحتمي مستخدمًا.");
     return false;
   }
   if (state.draft.status === "معتمد" || state.visualEnhancementBusyIds.has(planItemId)) return false;
@@ -1814,7 +1814,7 @@ async function enhancePlanVisual(planItemId: string, automatic = false): Promise
     if (state.draft.id !== startedDraftId) return false;
     if (result.status === "ready" && result.illustration) {
       item.visual = { ...stripQuestionVisualIllustration(item.visual), illustration: result.illustration };
-      state.visualEnhancementMessages[planItemId] = "تم اعتماد صورة 2D بعد الفحص العلمي، مع الاحتفاظ بالرسم الحتمي خلفها.";
+      state.visualEnhancementMessages[planItemId] = "تم اعتماد أصل بصري 2D بعد الفحص العلمي، ويستخدمه واثق مباشرة أو مع طبقة شرح علمية عند الحاجة.";
       scheduleSave();
       if (!automatic) showToast("تم تحسين الرسم بصريًا واعتماده علميًا.");
       return true;

@@ -7,6 +7,8 @@ import type {
   QuestionVisualType,
   QuestionVisualVariant,
   QuestionVisualVector,
+  QuestionVisualIllustrationAssetKind,
+  QuestionVisualIllustrationRenderMode,
 } from "./types.js";
 
 export const QUESTION_VISUAL_TYPES: readonly QuestionVisualType[] = [
@@ -147,9 +149,11 @@ export function parseQuestionVisualIllustration(value: unknown): QuestionVisualS
   const model = cleanText(record.model, 100);
   const generatedAt = cleanText(record.generatedAt, 60);
   const promptVersion = cleanText(record.promptVersion, 80);
+  const assetKind = record.assetKind === "scene_2d_overlay" ? "scene_2d_overlay" : "scene_2d";
+  const renderMode = record.renderMode === "overlay" ? "overlay" : "replace";
   if (!url || !assetPath || !model || !generatedAt || !promptVersion || record.validated !== true
     || !["image/png", "image/jpeg", "image/webp"].includes(mimeType)) return undefined;
-  return { url, assetPath, mimeType, model, generatedAt, promptVersion, validated: true };
+  return { url, assetPath, mimeType, model, generatedAt, promptVersion, validated: true, assetKind, renderMode };
 }
 
 function cleanTextArray(value: unknown, maxItems: number, maxLength = 80): string[] {
@@ -752,7 +756,24 @@ export function isAiIllustrationEligible(spec: QuestionVisualSpec): boolean {
   if (spec.type === "pressure_diagram" && spec.variant === "submerged_object") {
     return ["read", "interpret", "evaluate"].includes(spec.role ?? "read");
   }
+  if (spec.type === "force_diagram" && ["free_body", "balanced_forces"].includes(spec.variant ?? "free_body")) {
+    return !["draw", "complete"].includes(spec.role ?? "read");
+  }
   return false;
+}
+
+function illustrationRenderMode(spec: QuestionVisualSpec): QuestionVisualIllustrationRenderMode | null {
+  if (!spec.illustration?.validated || !isAiIllustrationEligible(spec)) return null;
+  if (spec.illustration.renderMode === "overlay") return "overlay";
+  if (spec.type === "force_diagram") return "overlay";
+  return "replace";
+}
+
+function illustrationAssetKind(spec: QuestionVisualSpec): QuestionVisualIllustrationAssetKind | null {
+  if (!spec.illustration?.validated || !isAiIllustrationEligible(spec)) return null;
+  if (spec.illustration.assetKind === "scene_2d_overlay") return "scene_2d_overlay";
+  if (illustrationRenderMode(spec) === "overlay") return "scene_2d_overlay";
+  return "scene_2d";
 }
 
 export function stripQuestionVisualIllustration(spec: QuestionVisualSpec): QuestionVisualSpec {
@@ -813,6 +834,24 @@ function renderForceDiagramObject(spec: QuestionVisualSpec): string {
     return `<g class="qv-force-object qv-force-bag"><rect x="268" y="135" width="104" height="100" rx="22" class="qv-force-body"/><path d="M288 145 Q320 105 352 145" class="qv-force-detail"/><rect x="288" y="175" width="64" height="42" rx="10" class="qv-force-pocket"/></g>`;
   }
   return `<g class="qv-force-object qv-force-crate"><rect x="265" y="150" width="110" height="80" rx="8" class="qv-force-body"/><path d="M278 163 L362 217 M362 163 L278 217" class="qv-force-detail qv-force-crate-cross"/></g>`;
+}
+
+function renderForceDiagramOverlaySvg(spec: QuestionVisualSpec): string {
+  const width = 640;
+  const height = 360;
+  const marker = `qv-force-${escapeXml(spec.visualId || "default")}-overlay`;
+  const vectors = spec.vectors.map((vector, index) => {
+    const x1 = 320 + vector.x;
+    const y1 = 190 + vector.y;
+    const scale = Math.min(1.5, Math.max(0.55, vector.magnitude / 10));
+    const x2 = x1 + vector.dx * scale;
+    const y2 = y1 + vector.dy * scale;
+    const vectorLabel = spec.role === "calculate"
+      ? `${vector.label} (${numberLabel(vector.magnitude)} N)`
+      : vector.label;
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" class="qv-force-arrow qv-vector-${index}" marker-end="url(#${marker})"/><text x="${x2 + (vector.dx >= 0 ? 8 : -8)}" y="${y2 - 7}" class="qv-annotation" text-anchor="${vector.dx >= 0 ? "start" : "end"}">${escapeXml(vectorLabel)}</text>`;
+  }).join("");
+  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}"><defs><marker id="${marker}" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" class="qv-arrow-fill"/></marker></defs><text x="${width / 2}" y="28" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text><text x="320" y="228" class="qv-object-label" text-anchor="middle">${escapeXml(spec.labels[0] ?? "الجسم")}</text>${vectors}</svg>`;
 }
 
 function renderForceDiagram(spec: QuestionVisualSpec): string {
@@ -916,26 +955,31 @@ export function renderQuestionVisualSvg(spec: QuestionVisualSpec): string {
     ? renderContextScene(spec)
     : spec.type === "line_graph"
       ? renderLineGraph(spec)
-    : spec.type === "bar_chart"
-      ? renderBarChart(spec)
-      : spec.type === "pressure_diagram"
-        ? renderPressureDiagram(spec)
-        : spec.type === "circuit_diagram"
-          ? renderCircuitDiagram(spec)
-          : spec.type === "electrostatic_diagram"
-            ? renderElectrostaticDiagram(spec)
-            : spec.type === "data_table"
-              ? renderDataTable(spec)
-              : spec.type === "instrument_scale"
-                ? renderInstrumentScale(spec)
-                : spec.type === "ray_diagram"
-                  ? renderRayDiagram(spec)
-                  : spec.type === "force_diagram"
-                    ? renderForceDiagram(spec)
-                    : renderFlowDiagram(spec);
-  const media = spec.illustration?.validated && isAiIllustrationEligible(spec)
-    ? `<div class="question-visual-hybrid" data-hybrid-visual="ready"><div class="question-visual-deterministic-fallback" aria-hidden="true">${svg}</div><img class="question-visual-illustration" src="${escapeXml(spec.illustration.url)}" alt="${escapeXml(spec.altText)}" loading="eager" decoding="async" crossorigin="anonymous"/></div>`
-    : svg;
-  const mode = spec.illustration?.validated && isAiIllustrationEligible(spec) ? "hybrid" : "2d-vector";
-  return `<figure class="question-visual question-visual-${spec.type} question-visual-${mode}" data-visual-id="${escapeXml(spec.visualId ?? "")}" data-visual-variant="${escapeXml(spec.variant ?? "default")}" data-visual-mode="${mode}">${media}<figcaption>${escapeXml(spec.altText)}</figcaption></figure>`;
+      : spec.type === "bar_chart"
+        ? renderBarChart(spec)
+        : spec.type === "pressure_diagram"
+          ? renderPressureDiagram(spec)
+          : spec.type === "circuit_diagram"
+            ? renderCircuitDiagram(spec)
+            : spec.type === "electrostatic_diagram"
+              ? renderElectrostaticDiagram(spec)
+              : spec.type === "data_table"
+                ? renderDataTable(spec)
+                : spec.type === "instrument_scale"
+                  ? renderInstrumentScale(spec)
+                  : spec.type === "ray_diagram"
+                    ? renderRayDiagram(spec)
+                    : spec.type === "force_diagram"
+                      ? renderForceDiagram(spec)
+                      : renderFlowDiagram(spec);
+  const renderMode = illustrationRenderMode(spec);
+  const assetKind = illustrationAssetKind(spec);
+  const overlaySvg = renderMode === "overlay" && spec.type === "force_diagram" ? renderForceDiagramOverlaySvg(spec) : "";
+  const media = renderMode === "overlay" && spec.illustration
+    ? `<div class="question-visual-composite" data-hybrid-visual="ready"><img class="question-visual-illustration" src="${escapeXml(spec.illustration.url)}" alt="${escapeXml(spec.altText)}" loading="eager" decoding="async" crossorigin="anonymous"/><div class="question-visual-overlay">${overlaySvg}</div><div class="question-visual-deterministic-fallback" data-fallback-visual="hidden" hidden aria-hidden="true">${svg}</div></div>`
+    : renderMode === "replace" && spec.illustration
+      ? `<div class="question-visual-illustrated" data-hybrid-visual="ready"><img class="question-visual-illustration" src="${escapeXml(spec.illustration.url)}" alt="${escapeXml(spec.altText)}" loading="eager" decoding="async" crossorigin="anonymous"/><div class="question-visual-deterministic-fallback" data-fallback-visual="hidden" hidden aria-hidden="true">${svg}</div></div>`
+      : svg;
+  const mode = renderMode === "overlay" ? "illustrated-overlay" : renderMode === "replace" ? "illustrated" : "2d-vector";
+  return `<figure class="question-visual question-visual-${spec.type} question-visual-${mode}" data-visual-id="${escapeXml(spec.visualId ?? "")}" data-visual-variant="${escapeXml(spec.variant ?? "default")}" data-visual-mode="${mode}" data-visual-asset-kind="${escapeXml(assetKind ?? "deterministic")}">${media}<figcaption>${escapeXml(spec.altText)}</figcaption></figure>`;
 }
