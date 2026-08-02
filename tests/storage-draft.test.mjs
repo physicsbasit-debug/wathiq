@@ -125,7 +125,21 @@ test("يرقي مسودة C3 المكتملة إلى عقد C4 دون حذف ا�
     sourceRetrievalVersion: SOURCE_RETRIEVAL_VERSION,
     currentStep: 3,
     generationVersion: "source-grounded-policy-ai-12-advanced-visuals",
-    plan: [{ id: "plan-c3", proposals: [{ id: "proposal-c3" }] }],
+    plan: [{
+      id: "plan-c3",
+      lessonId: "lesson-c3",
+      lessonLabel: "الشحنة الكهربائية",
+      outcomeId: "outcome-c3",
+      outcomeLabel: "يفسر أثر الشحنة الكهربائية",
+      cognitiveLevel: "application",
+      questionType: "short",
+      marks: 2,
+      proposals: [{
+        id: "proposal-c3",
+        text: "فسر انجذاب قصاصات الورق إلى مسطرة مشحونة.",
+        answer: "تنجذب القصاصات بسبب الاستقطاب الكهربائي.",
+      }],
+    }],
   });
   assert.ok(draft);
   assert.equal(draft.currentStep, 3);

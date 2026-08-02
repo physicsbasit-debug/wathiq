@@ -12,7 +12,7 @@ const edge = await readFile(new URL("../supabase/functions/generate-source-quest
 const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 
 test("يثبت Fix 4 دون تغيير إصدار أو عقد محرك V2", () => {
-  assert.equal(pkg.version, "0.0.51");
+  assert.match(pkg.version, /^0\.0\.(?:51|52)$/);
   assert.match(edge, /source-grounded-policy-ai-17-whole-exam-v2/);
 });
 

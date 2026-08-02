@@ -1,4 +1,4 @@
-import type { ExamDraft, ExamSourceReference, ExamTitleOption, ManagedSource, PlanItem } from "./types.js";
+import type { DraftResumeSnapshot, ExamDraft, ExamSourceReference, ExamTitleOption, ManagedSource, PlanItem } from "./types.js";
 import type { LessonCatalogOption } from "./lesson-catalog.js";
 import { applyOfficialAssessmentTemplate, createEmptyDraft, toDateInputValue } from "./domain.js";
 import { SCIENCE_ASSESSMENT_POLICY_ID, assessmentTypeForTitle, getOfficialAssessmentSpec, isExamTitleOption } from "./assessment-policy.js";
@@ -65,6 +65,21 @@ function normalizeLessonCatalogSnapshot(value: unknown): LessonCatalogOption[] {
   });
 }
 
+function normalizeEmbeddedResumeSnapshot(value: unknown): DraftResumeSnapshot | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const item = value as Partial<DraftResumeSnapshot>;
+  const lessonCatalog = normalizeLessonCatalogSnapshot(item.lessonCatalog);
+  const savedAt = typeof item.savedAt === "string" ? item.savedAt : "";
+  if (!lessonCatalog.length && !savedAt && typeof item.selectionKey !== "string" && typeof item.activeUnitKey !== "string") return undefined;
+  return {
+    schemaVersion: 1,
+    selectionKey: typeof item.selectionKey === "string" ? item.selectionKey : "",
+    activeUnitKey: typeof item.activeUnitKey === "string" ? item.activeUnitKey : "",
+    lessonCatalog,
+    savedAt,
+  };
+}
+
 function readDraftContextCollection(): StoredDraftContextCollection {
   const raw = localStorage.getItem(DRAFT_CONTEXTS_KEY);
   if (!raw) return { schemaVersion: 1, contexts: [] };
@@ -101,8 +116,17 @@ function writeDraftContextCollection(collection: StoredDraftContextCollection): 
 
 export function saveDraftResumeContext(context: DraftResumeContext): void {
   const collection = readDraftContextCollection();
+  const existing = collection.contexts.find((item) => item.draftId === context.draftId);
+  const normalizedCatalog = normalizeLessonCatalogSnapshot(context.lessonCatalog);
+  const next: DraftResumeContext = {
+    ...context,
+    schemaVersion: 1,
+    selectionKey: context.selectionKey || existing?.selectionKey || "",
+    activeUnitKey: context.activeUnitKey || existing?.activeUnitKey || "",
+    lessonCatalog: normalizedCatalog.length ? normalizedCatalog : (existing?.lessonCatalog ?? []),
+  };
   const contexts = collection.contexts.filter((item) => item.draftId !== context.draftId);
-  contexts.push({ ...context, schemaVersion: 1, lessonCatalog: normalizeLessonCatalogSnapshot(context.lessonCatalog) });
+  contexts.push(next);
   writeDraftContextCollection({ schemaVersion: 1, contexts });
 }
 
@@ -158,7 +182,11 @@ function normalizeStoredPlan(value: unknown): PlanItem[] {
   return value.flatMap((entry, index) => {
     if (typeof entry !== "object" || entry === null) return [];
     const item = entry as PlanItem;
-    if (typeof item.id !== "string" || !Array.isArray(item.proposals)) return [];
+    if (typeof item.id !== "string" || !Array.isArray(item.proposals)
+      || typeof item.lessonId !== "string" || typeof item.lessonLabel !== "string"
+      || typeof item.outcomeId !== "string" || typeof item.outcomeLabel !== "string"
+      || typeof item.questionType !== "string" || typeof item.cognitiveLevel !== "string"
+      || typeof item.marks !== "number") return [];
     if (!item.visual || typeof item.visual !== "object") return [item];
     try {
       return [{ ...item, visual: diversifyQuestionVisualSpec(item.visual, index, item.id) }];
@@ -177,6 +205,7 @@ export function normalizeExamDraft(value: unknown): ExamDraft | null {
   const normalizedTitle: ExamTitleOption = typeof candidate.title === "string" && isExamTitleOption(candidate.title)
     ? candidate.title
     : "الاختبار القصير الأول";
+  const resumeContext = normalizeEmbeddedResumeSnapshot(candidate.resumeContext);
   const draft: ExamDraft = {
     ...base,
     ...candidate,
@@ -193,6 +222,7 @@ export function normalizeExamDraft(value: unknown): ExamDraft | null {
     topic: typeof candidate.topic === "string" ? candidate.topic : "",
     sourceReferences: normalizeSourceReferences(candidate.sourceReferences),
     sourceRetrievalVersion: typeof candidate.sourceRetrievalVersion === "string" ? candidate.sourceRetrievalVersion : "",
+    ...(resumeContext ? { resumeContext } : {}),
     title: normalizedTitle,
     trustedEnrichmentEnabled: candidate.trustedEnrichmentEnabled !== false,
     visualEnhancementEnabled: candidate.visualEnhancementEnabled !== false,
@@ -226,16 +256,28 @@ export function normalizeExamDraft(value: unknown): ExamDraft | null {
     draft.generationMode = "legacy_items";
   }
 
-  const officialSpec = getOfficialAssessmentSpec(draft.grade, draft.title);
-  const requiresPolicyMigration = Boolean(officialSpec && candidatePolicyId !== SCIENCE_ASSESSMENT_POLICY_ID);
-  if (requiresPolicyMigration) applyOfficialAssessmentTemplate(draft);
-
   const generatedPlanItems = draft.plan.filter((item) => item.proposals.some((proposal) =>
-    typeof proposal?.text === "string" && proposal.text.trim().length > 0
-      && typeof proposal?.answer === "string" && proposal.answer.trim().length > 0,
+    typeof proposal?.text === "string" && proposal.text.trim().length > 0,
   ));
   const hasGeneratedContent = generatedPlanItems.length > 0;
   const hasPlanProgress = draft.plan.length > 0;
+
+  const officialSpec = getOfficialAssessmentSpec(draft.grade, draft.title);
+  const requiresPolicyMigration = Boolean(officialSpec && candidatePolicyId !== SCIENCE_ASSESSMENT_POLICY_ID);
+  if (requiresPolicyMigration) {
+    if (hasPlanProgress || hasGeneratedContent || Number(candidate.currentStep) > 1) {
+      // ترقية بيانات السياسة لا يجوز أن تمحو خطة أو أسئلة حقيقية محفوظة.
+      draft.assessmentType = assessmentTypeForTitle(draft.title);
+      draft.assessmentPolicyId = SCIENCE_ASSESSMENT_POLICY_ID;
+      if (officialSpec && !hasPlanProgress) {
+        draft.totalMarks = officialSpec.totalMarks;
+        draft.durationMinutes = officialSpec.defaultDurationMinutes;
+        draft.counts = { ...officialSpec.counts };
+      }
+    } else {
+      applyOfficialAssessmentTemplate(draft);
+    }
+  }
   const requestedStep = Number(candidate.currentStep) || 1;
   if (draft.lessonTopics.filter((item) => item.trim()).length < 2 && draft.plan.length) {
     const recoveredLessons = [...new Set(draft.plan.map((item) => item.lessonLabel?.trim()).filter(Boolean))].slice(0, 5);
@@ -260,11 +302,12 @@ export function normalizeExamDraft(value: unknown): ExamDraft | null {
   };
 
   const lessonCount = draft.lessonTopics.filter((item) => item.trim()).length;
-  if (lessonCount < 2 || draft.sourceReferences.length === 0) {
-    if (hasGeneratedContent) {
-      // لا نمحو اختبارًا مولدًا عند تعذر استعادة مصدره محليًا؛ يبقى قابلًا للمراجعة والتصدير.
-      draft.currentStep = Math.max(3, requestedStep) as ExamDraft["currentStep"];
-    } else if (hasPlanProgress || lessonCount >= 2) {
+  if (hasGeneratedContent) {
+    // المحتوى المولد هو أقوى دليل على أن هذه ليست مسودة جديدة، حتى لو فُقدت لقطة الشجرة أو تغيّر عقد الاسترجاع.
+    draft.currentStep = Math.max(3, requestedStep) as ExamDraft["currentStep"];
+    draft.status = draft.status === "معتمد" ? "معتمد" : (draft.status === "جاهز للمراجعة" ? "جاهز للمراجعة" : "مسودة");
+  } else if (lessonCount < 2 || draft.sourceReferences.length === 0) {
+    if (hasPlanProgress || lessonCount >= 2) {
       // المسودة الجزئية عمل حقيقي أيضًا: نعيدها إلى الإعداد بدل إيهام المستخدم بأنه بدأ اختبارًا جديدًا.
       draft.currentStep = Math.max(2, Math.min(3, requestedStep)) as ExamDraft["currentStep"];
     } else {
@@ -405,7 +448,11 @@ export function saveDraft(draft: ExamDraft): void {
 
 export function loadDraft(draftId?: string): ExamDraft | null {
   const collection = readDraftCollection();
-  const activeId = draftId || localStorage.getItem(ACTIVE_DRAFT_ID_KEY) || collection.activeDraftId;
+  if (draftId) {
+    const requested = collection.drafts.find((item) => item.id === draftId);
+    return requested ? normalizeExamDraft(requested) : null;
+  }
+  const activeId = localStorage.getItem(ACTIVE_DRAFT_ID_KEY) || collection.activeDraftId;
   const draft = collection.drafts.find((item) => item.id === activeId) ?? collection.drafts[0];
   return draft ? normalizeExamDraft(draft) : null;
 }

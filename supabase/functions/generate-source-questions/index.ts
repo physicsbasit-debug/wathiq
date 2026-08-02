@@ -3260,6 +3260,12 @@ function validateAssessmentQuality(
   if (skillTarget === "evaluate" && !/(قيم|قيّم|برر|اقترح|حكم|ناقش|فسر|فسّر)/u.test(material)) {
     throw retryableError("السؤال لا يطلب تقييمًا أو تبريرًا مناسبًا لمستوى الاستدلال.");
   }
+  const usesMomentConcept = /(عزم|دوران)/u.test(material);
+  const momentScenario = ["door_handle", "wrench_tool", "bicycle_brake", "shopping_trolley", "playground_seesaw"].includes(scenarioTarget);
+  if (usesMomentConcept && momentScenario
+    && !/(محور|ارتكاز|مقبض|ذراع|المسافه|المسافة|البعد|نقطه تاثير|نقطة تأثير|عجلات|دواسه|دواسة)/u.test(material)) {
+    throw retryableError("سؤال العزم في الموقف الحياتي لا يحدد محور الدوران أو ذراع القوة أو موضع تأثيرها بصورة تسمح بتبرير الإجابة علميًا.");
+  }
   if (skillTarget === "investigate" && !/(تجرب|متغير|قياس|تحكم|ثابت|موثوق|دقه|دقة|خطوات)/u.test(material)) {
     throw retryableError("السؤال لا يقيس مهارة استقصائية كما تحددها الخطة.");
   }

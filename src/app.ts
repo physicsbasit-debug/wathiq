@@ -186,14 +186,20 @@ function persistDraftCheckpoint(showFailure = true): boolean {
   }
   try {
     state.draft.updatedAt = new Date().toISOString();
+    const existingSnapshot = state.draft.resumeContext;
+    const lessonCatalog = state.lessonCatalog.length ? state.lessonCatalog : (existingSnapshot?.lessonCatalog ?? []);
+    const resumeContext = {
+      schemaVersion: 1 as const,
+      selectionKey: lessonCatalogSelectionKey() || existingSnapshot?.selectionKey || "",
+      activeUnitKey: state.lessonCatalogActiveUnitKey || existingSnapshot?.activeUnitKey || "",
+      lessonCatalog,
+      savedAt: state.draft.updatedAt,
+    };
+    state.draft.resumeContext = resumeContext;
     saveDraft(state.draft);
     saveDraftResumeContext({
-      schemaVersion: 1,
+      ...resumeContext,
       draftId: state.draft.id,
-      selectionKey: lessonCatalogSelectionKey(),
-      activeUnitKey: state.lessonCatalogActiveUnitKey,
-      lessonCatalog: state.lessonCatalog,
-      savedAt: state.draft.updatedAt,
     });
     saveProfile({ school: state.draft.school, directorate: state.draft.directorate });
     state.saveState = "محفوظ";
@@ -407,9 +413,12 @@ function renderHome(): string {
 }
 
 function renderWizard(): string {
+  const resumeLabel = state.draft.currentStep > 1 || state.draft.plan.length || state.draft.sourceReferences.length
+    ? "متابعة المسودة المحفوظة"
+    : "إنشاء اختبار جديد";
   return `
     <section class="page-heading">
-      <div><span class="eyebrow">إنشاء اختبار جديد</span><h1>${wizardTitle(state.draft.currentStep)}</h1></div>
+      <div><span class="eyebrow">${resumeLabel}</span><h1>${wizardTitle(state.draft.currentStep)}</h1></div>
       <div class="save-indicator"><span class="dot"></span><span id="save-label-secondary">${state.saveState}</span></div>
     </section>
     ${renderStepper()}
@@ -520,7 +529,9 @@ function fallbackLessonCatalogFromDraft(draft: ExamDraft): LessonCatalogOption[]
 }
 
 function restoreDraftRuntimeContext(draft: ExamDraft): void {
-  const context = loadDraftResumeContext(draft.id);
+  const storedContext = loadDraftResumeContext(draft.id);
+  const embeddedContext = draft.resumeContext;
+  const context = embeddedContext?.lessonCatalog?.length ? embeddedContext : storedContext;
   const snapshot = context?.lessonCatalog?.length ? context.lessonCatalog : fallbackLessonCatalogFromDraft(draft);
   state.lessonCatalog = snapshot;
   state.lessonCatalogActiveUnitKey = context?.activeUnitKey ?? "";
@@ -1540,11 +1551,15 @@ function handleAction(action: string, element: HTMLElement): void {
   }
   if (action === "resume-draft") {
     const loaded = loadDraft(requestedDraftId || undefined);
-    if (loaded) {
-      state.draft = loaded;
-      setActiveDraftId(loaded.id);
-      restoreDraftRuntimeContext(loaded);
+    if (!loaded) {
+      showToast("تعذر العثور على المسودة المطلوبة؛ لم يتم فتح اختبار جديد بدلًا منها.");
+      return;
     }
+    state.draft = loaded;
+    setActiveDraftId(loaded.id);
+    restoreDraftRuntimeContext(loaded);
+    // ثبّت الترقية غير المتلفة فورًا حتى لا تعود المسودة إلى خطوة المحتوى في الزيارة التالية.
+    persistDraftCheckpoint(false);
     state.visualEnhancementBusyIds.clear();
     state.visualEnhancementMessages = {};
     state.visualEnhancementAutoStarted = false;

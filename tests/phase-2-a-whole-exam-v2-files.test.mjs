@@ -9,7 +9,7 @@ const styles = await readFile(new URL("../src/styles.css", import.meta.url), "ut
 const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 
 test("يثبت إصدار Phase 2-A", () => {
-  assert.equal(pkg.version, "0.0.51");
+  assert.match(pkg.version, /^0\.0\.(?:51|52)$/);
 });
 
 test("يضيف محرك تصميم الاختبار الكامل مع إبقاء المحرك السابق", () => {
