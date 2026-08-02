@@ -220,7 +220,7 @@ test("يرسم مخططات الأشعة والقوى والعمليات بصي�
 });
 
 
-test("يستخدم صورة 2D مدققة للمشهد المؤهل ويبقي SVG حتميًا خلفها", () => {
+test("يستخدم صورة 2D مدققة للمشهد المؤهل ويستخدم الأصل 2D المعتمد مباشرة", () => {
   const visual = parseQuestionVisualSpec({
     ...emptyQuestionVisualSpec(),
     type: "electrostatic_diagram",
@@ -244,17 +244,17 @@ test("يستخدم صورة 2D مدققة للمشهد المؤهل ويبقي S
   }, "electrostatic_diagram");
   assert.equal(isAiIllustrationEligible(visual), true);
   const html = renderQuestionVisualSvg(visual);
-  assert.match(html, /question-visual-hybrid/);
+  assert.match(html, /question-visual-illustrated/);
   assert.match(html, /question-visual-illustration/);
   assert.match(html, /question-visual-deterministic-fallback/);
   assert.match(html, /qv-rod/);
-  assert.match(html, /data-visual-mode="hybrid"/);
+  assert.match(html, /data-visual-mode="illustrated"/);
   const stripped = stripQuestionVisualIllustration(visual);
   assert.equal(stripped.illustration, undefined);
   assert.match(renderQuestionVisualSvg(stripped), /data-visual-mode="(?:deterministic|2d-vector)"/);
 });
 
-test("يرفض بيانات صورة غير آمنة ولا يحول مخطط القوى إلى صورة حرة", () => {
+test("يرفض بيانات صورة غير آمنة ويُبقي شرح القوى داخل طبقة علمية منضبطة", () => {
   assert.equal(parseQuestionVisualIllustration({ url: "javascript:alert(1)", validated: true }), undefined);
   const force = parseQuestionVisualSpec({
     ...emptyQuestionVisualSpec(),
@@ -278,9 +278,10 @@ test("يرفض بيانات صورة غير آمنة ولا يحول مخطط ا
       validated: true,
     },
   }, "force_diagram");
-  assert.equal(isAiIllustrationEligible(force), false);
+  assert.equal(isAiIllustrationEligible(force), true);
   const html = renderQuestionVisualSvg(force);
-  assert.doesNotMatch(html, /question-visual-illustration/);
+  assert.match(html, /question-visual-composite/);
+  assert.match(html, /question-visual-overlay/);
   assert.match(html, /القوة المؤثرة \(8 N\)/);
   assert.match(html, /الاحتكاك \(6 N\)/);
 });
@@ -327,4 +328,39 @@ test("يرسم مشاهد حياتية حتمية مختلفة ويجعلها م
   assert.equal(isAiIllustrationEligible(door), true);
   assert.equal(isAiIllustrationEligible(seesaw), true);
   assert.equal(isAiIllustrationEligible(wrench), true);
+});
+
+
+test("يعرض مخطط القوى كأصل 2D مع طبقة شرح علمية فوقه", () => {
+  const visual = parseQuestionVisualSpec({
+    ...emptyQuestionVisualSpec(),
+    type: "force_diagram",
+    variant: "free_body",
+    role: "calculate",
+    title: "القوى المؤثرة في حقيبة مدرسية",
+    altText: "حقيبة مدرسية تؤثر فيها قوتان أفقيتان",
+    labels: ["الحقيبة المدرسية"],
+    vectors: [
+      { label: "قوة السحب", x: 0, y: 0, dx: 80, dy: 0, magnitude: 8 },
+      { label: "الاحتكاك", x: 0, y: 0, dx: -60, dy: 0, magnitude: 6 },
+    ],
+    illustration: {
+      url: "https://example.supabase.co/storage/v1/object/public/wathiq-question-visuals/user/draft/force.png",
+      assetPath: "user/draft/force.png",
+      mimeType: "image/png",
+      model: "gemini-3.1-flash-image",
+      generatedAt: "2026-08-02T06:00:00.000Z",
+      promptVersion: "wathiq-visual-first-2d-v4-true-render-pipeline",
+      validated: true,
+      assetKind: "scene_2d_overlay",
+      renderMode: "overlay",
+    },
+  }, "force_diagram");
+  assert.equal(isAiIllustrationEligible(visual), true);
+  const html = renderQuestionVisualSvg(visual);
+  assert.match(html, /question-visual-composite/);
+  assert.match(html, /question-visual-overlay/);
+  assert.match(html, /data-visual-mode="illustrated-overlay"/);
+  assert.match(html, /data-visual-asset-kind="scene_2d_overlay"/);
+  assert.match(html, /قوة السحب \(8 N\)/);
 });

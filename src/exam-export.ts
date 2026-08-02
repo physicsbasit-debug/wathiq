@@ -80,6 +80,10 @@ const EXPORT_STYLES = `
   .question-visual-hybrid { position: relative; width: 100%; aspect-ratio: 4 / 3; max-height: 70mm; overflow: hidden; background: #fff; }
   .question-visual-deterministic-fallback { position: absolute; inset: 0; display: grid; place-items: center; }
   .question-visual-deterministic-fallback svg { width: 100%; height: 100%; max-height: none; object-fit: contain; }
+  .question-visual-illustrated { position: relative; width: 100%; aspect-ratio: 4 / 3; max-height: 70mm; overflow: hidden; background: #fff; }
+  .question-visual-composite { position: relative; width: 100%; aspect-ratio: 4 / 3; max-height: 70mm; overflow: hidden; background: #fff; }
+  .question-visual-overlay { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+  .question-visual-overlay svg { width: 100%; height: 100%; max-height: none; object-fit: contain; }
   .question-visual-illustration { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; background: #fff; }
   .question-visual figcaption { display: none; text-align: center; font-size: 9px; margin-top: 1mm; }
   .qv-title { font-size: 16px; font-weight: 800; fill: #172b45; direction: rtl; unicode-bidi: plaintext; }

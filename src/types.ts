@@ -33,6 +33,9 @@ export interface QuestionVisualVector {
   magnitude: number;
 }
 
+export type QuestionVisualIllustrationAssetKind = "scene_2d" | "scene_2d_overlay";
+export type QuestionVisualIllustrationRenderMode = "replace" | "overlay";
+
 export interface QuestionVisualIllustration {
   url: string;
   assetPath: string;
@@ -41,6 +44,8 @@ export interface QuestionVisualIllustration {
   generatedAt: string;
   promptVersion: string;
   validated: boolean;
+  assetKind?: QuestionVisualIllustrationAssetKind;
+  renderMode?: QuestionVisualIllustrationRenderMode;
 }
 
 export interface QuestionVisualSpec {

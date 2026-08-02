@@ -28,9 +28,9 @@ function illustration() {
   };
 }
 
-test("يثبت Phase 2-C1 وإصدار المرئيات التعليمية Visual First", () => {
-  assert.equal(pkg.version, "0.0.53");
-  assert.match(pkg.description, /Visual First|ثنائية الأبعاد/);
+test("يثبت Phase 2-C2 وإصدار المرئيات التعليمية True 2D", () => {
+  assert.equal(pkg.version, "0.0.54");
+  assert.match(pkg.description, /True 2D|طبقة الشرح العلمي|ثنائية الأبعاد/);
 });
 
 test("يؤهل تفاعل الشحنات الآمن لصورة 2D مدققة", () => {
@@ -49,7 +49,7 @@ test("يؤهل تفاعل الشحنات الآمن لصورة 2D مدققة", (
   assert.equal(isAiIllustrationEligible(visual), true);
   const html = renderQuestionVisualSvg(visual);
   assert.match(html, /question-visual-illustration/);
-  assert.match(html, /data-visual-mode="hybrid"/);
+  assert.match(html, /data-visual-mode="illustrated"/);
 });
 
 test("يحافظ على مخططات القوى دقيقة لكنه يرسم الجسم كعنصر 2D لا مستطيل مجرد", () => {
@@ -102,4 +102,14 @@ test("يحافظ العرض والتصدير على ألوان 2D المصقول
   }
   assert.match(visualSource, /forceDiagramObjectKind/);
   assert.match(visualSource, /qv-force-trolley/);
+});
+
+
+test("يفرض الأصل الموحد بين replace وoverlay في كود العرض والخدمة", () => {
+  assert.match(visualSource, /illustrationRenderMode/);
+  assert.match(visualSource, /question-visual-composite/);
+  assert.match(visualSource, /scene_2d_overlay/);
+  assert.match(edge, /force_diagram/);
+  assert.match(edge, /renderMode = request\.visual\.type === "force_diagram" \? "overlay" : "replace"/);
+  assert.match(edge, /The app will add the scientific arrows and labels itself/);
 });
