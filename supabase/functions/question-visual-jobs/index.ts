@@ -28,6 +28,7 @@ interface VisualJobInput {
   sourceSupport: string;
   previousAssetPath: string;
   requiredMode: RequiredMode;
+  scientificItem: Record<string, unknown>;
   visual: Record<string, unknown>;
 }
 
@@ -385,6 +386,7 @@ async function invokeGenerator(
         questionText: input.questionText,
         sourceSupport: input.sourceSupport,
         ...(input.previousAssetPath ? { previousAssetPath: input.previousAssetPath } : {}),
+        scientificItem: input.scientificItem,
         visual: input.visual,
       }),
       signal: controller.signal,
@@ -425,6 +427,7 @@ function parseJobInput(value: unknown, draftId: string): VisualJobInput {
     sourceSupport: requireText(record.sourceSupport, "دليل المصدر غير محدد.", 3_000),
     previousAssetPath: typeof record.previousAssetPath === "string" ? record.previousAssetPath.trim().slice(0, 300) : "",
     requiredMode,
+    scientificItem: requireRecord(record.scientificItem, "النموذج العلمي للمفردة غير صالح."),
     visual,
   };
 }
@@ -482,6 +485,7 @@ async function hashInput(input: VisualJobInput): Promise<string> {
     questionText: input.questionText,
     sourceSupport: input.sourceSupport,
     requiredMode: input.requiredMode,
+    scientificItem: input.scientificItem,
     visual: input.visual,
   }));
   const digest = await crypto.subtle.digest("SHA-256", bytes);

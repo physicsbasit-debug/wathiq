@@ -29,7 +29,7 @@ function illustration() {
 }
 
 test("يثبت Phase 2-C2 وإصدار المرئيات التعليمية True 2D", () => {
-  assert.match(pkg.version, /^0\.0\.(?:54|55|56)$/);
+  assert.match(pkg.version, /^0\.0\.(?:54|55|56|57)$/);
   assert.match(pkg.description, /True 2D|طبقة الشرح العلمي|ثنائية الأبعاد/);
 });
 
@@ -84,14 +84,15 @@ test("ينشئ مهام صور دائمة بلا حد أربع مرئيات وي
 });
 
 test("يعيد توليد الصورة مرة ثانية بملاحظات المدقق ويشدد جودة الطباعة", () => {
-  assert.match(edge, /wathiq-visual-first-2d-v3-scientific-quality/);
+  assert.match(edge, /wathiq-unified-scientific-item-v4/);
   assert.match(edge, /for \(let attempt = 1; attempt <= 2; attempt \+= 1\)/);
   assert.match(edge, /Correction required after scientific review/);
   assert.match(edge, /objectCountCorrect/);
   assert.match(edge, /clear2DComposition/);
   assert.match(edge, /printReady/);
   assert.match(edge, /attraction_repulsion/);
-  assert.match(edge, /mutual attraction|mutual repulsion/);
+  assert.match(edge, /scientificItem/);
+  assert.match(edge, /Keep both strings nearly vertical/);
 });
 
 test("يحافظ العرض والتصدير على ألوان 2D المصقولة", () => {
@@ -111,6 +112,6 @@ test("يفرض الأصل الموحد بين replace وoverlay في كود ال
   assert.match(visualSource, /question-visual-composite/);
   assert.match(visualSource, /scene_2d_overlay/);
   assert.match(edge, /force_diagram/);
-  assert.match(edge, /renderMode = request\.visual\.type === "force_diagram" \? "overlay" : "replace"/);
-  assert.match(edge, /The app will add the scientific arrows and labels itself/);
+  assert.match(edge, /request\.visual\.type === "force_diagram"[\s\S]*attraction_repulsion[\s\S]*"overlay"/);
+  assert.match(edge, /The application will add all scientifically controlled arrows/);
 });

@@ -45,6 +45,7 @@ import {
   parseWholeExamGenerationResponseV2,
 } from "./assessment-generation-v2.js";
 import { VisualJobService, isVisualJobPending, requiredVisualJobItems } from "./visual-jobs.js";
+import { scientificItemIsComplete, scientificItemMatchesVisual } from "./scientific-item.js";
 import {
   ASSESSMENT_ITEM_WRITING_RULES,
   INTERNATIONAL_SCIENCE_QUESTION_STYLE_PRINCIPLES,
@@ -986,6 +987,9 @@ function reviewReadiness(selected: SelectedPaperItem[]): ReviewReadiness {
     || state.draft.generationVersion === ASSESSMENT_GENERATION_V2_VERSION;
   const markSchemesComplete = selected.length === state.draft.plan.length
     && selected.every(({ item, proposal }) => proposal.markScheme?.length === item.marks);
+  const scientificModelsComplete = selected.length === state.draft.plan.length
+    && selected.every(({ item, proposal }) => scientificItemIsComplete(proposal.scientificItem)
+      && scientificItemMatchesVisual(proposal.scientificItem, item.visual));
   const visualItems = state.draft.plan.filter((item) => item.visual && item.visual.type !== "none");
   const visualValidity = visualItems.every((item) => {
     try {
@@ -1015,6 +1019,7 @@ function reviewReadiness(selected: SelectedPaperItem[]): ReviewReadiness {
     { label: "اختيار مفردات الخطة", okay: isPlanComplete(state.draft) },
     { label: "توليد الأسئلة من المصدر", okay: groundedGeneration },
     { label: "نموذج تصحيح لكل درجة", okay: markSchemesComplete },
+    { label: "النموذج العلمي الموحد لكل مفردة", okay: scientificModelsComplete },
     { label: `العناصر البصرية الحتمية (${visualItems.length})`, okay: visualValidity && visualsUnique },
     { label: `الأصول البصرية المطلوبة (${requiredVisualItems.length})`, okay: requiredVisualsReady },
     { label: "بيانات الاختبار والمواصفة", okay: setupValid },
@@ -1033,6 +1038,11 @@ function renderStudentPaper(subject: string, paperLayout: PaperLayout): string {
 }
 
 async function verifyRequiredVisualAssetsForExport(): Promise<void> {
+  const selected = selectedPaperItems();
+  if (selected.some(({ item, proposal }) => !scientificItemIsComplete(proposal.scientificItem)
+    || !scientificItemMatchesVisual(proposal.scientificItem, item.visual))) {
+    throw new Error("تعذر التصدير لأن إحدى المفردات لا تطابق نموذجها العلمي الموحد أو مرئيها المشتق منه.");
+  }
   const required = state.draft.plan.filter((item) => item.visual && questionVisualAssetRequirement(item.visual).required);
   const urls = required.map((item) => item.visual?.illustration?.url ?? "");
   if (urls.some((url) => !url)) throw new Error("تعذر التصدير لأن أحد الأصول البصرية المطلوبة غير مرتبط بالمفردة.");

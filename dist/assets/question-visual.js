@@ -570,6 +570,15 @@ function renderPressureDiagram(spec) {
     const annotations = spec.annotations.slice(0, 3).map((text, index) => `<text x="505" y="${115 + index * 32}" class="qv-annotation" text-anchor="start">${escapeXml(text)}</text>`).join("");
     return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}"><text x="${width / 2}" y="26" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text><path d="M ${tankX} ${tankY} V ${tankY + tankH} H ${tankX + tankW} V ${tankY}" class="qv-vessel"/><rect x="${tankX + 2}" y="${liquidTop}" width="${tankW - 4}" height="${tankY + tankH - liquidTop - 2}" class="qv-liquid"/><line x1="${tankX}" y1="${liquidTop}" x2="${tankX + tankW}" y2="${liquidTop}" class="qv-surface"/><circle cx="${objectX}" cy="${objectY}" r="18" class="qv-object"/><text x="${objectX}" y="${objectY + 4}" class="qv-object-label" text-anchor="middle">${escapeXml(objectLabel)}</text><line x1="${objectX - 54}" y1="${liquidTop}" x2="${objectX - 54}" y2="${objectY}" class="qv-depth"/><path d="M ${objectX - 60} ${liquidTop + 8} L ${objectX - 54} ${liquidTop} L ${objectX - 48} ${liquidTop + 8} M ${objectX - 60} ${objectY - 8} L ${objectX - 54} ${objectY} L ${objectX - 48} ${objectY - 8}" class="qv-depth"/><text x="${objectX - 68}" y="${(liquidTop + objectY) / 2}" class="qv-annotation" text-anchor="end">العمق h</text><text x="${tankX + 16}" y="${liquidTop + 28}" class="qv-liquid-label">${escapeXml(liquidLabel)}</text>${annotations}</svg>`;
 }
+function electrostaticChargeSign(value, fallback) {
+    if (value === "positive")
+        return "+";
+    if (value === "negative")
+        return "−";
+    if (value === "neutral")
+        return "0";
+    return fallback;
+}
 function renderElectrostaticDiagram(spec) {
     const width = 640;
     const height = 360;
@@ -591,11 +600,12 @@ function renderElectrostaticDiagram(spec) {
         const rightX = 415;
         const centerY = 190;
         const unlike = (spec.values[0] ?? 0) >= 0.5;
-        const secondSign = unlike ? "−" : "+";
+        const firstSign = electrostaticChargeSign(spec.annotations[1], "+");
+        const secondSign = electrostaticChargeSign(spec.annotations[2], unlike ? "−" : "+");
         const arrows = unlike
             ? `<line x1="290" y1="${centerY}" x2="315" y2="${centerY}" class="qv-force-arrow" marker-end="url(#qv-force-head)"/><line x1="350" y1="${centerY}" x2="325" y2="${centerY}" class="qv-force-arrow" marker-end="url(#qv-force-head)"/>`
             : `<line x1="290" y1="${centerY}" x2="255" y2="${centerY}" class="qv-force-arrow" marker-end="url(#qv-force-head)"/><line x1="350" y1="${centerY}" x2="385" y2="${centerY}" class="qv-force-arrow" marker-end="url(#qv-force-head)"/>`;
-        return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}"><defs><marker id="qv-force-head" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" class="qv-arrow-fill"/></marker></defs><text x="${width / 2}" y="28" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text><line x1="${leftX}" y1="85" x2="${leftX}" y2="150" class="qv-string"/><line x1="${rightX}" y1="85" x2="${rightX}" y2="150" class="qv-string"/><circle cx="${leftX}" cy="${centerY}" r="38" class="qv-charged-object qv-charge-object-one"/><circle cx="${rightX}" cy="${centerY}" r="38" class="qv-charged-object qv-charge-object-two"/><circle cx="${leftX - 12}" cy="${centerY - 13}" r="7" class="qv-charge-highlight"/><circle cx="${rightX - 12}" cy="${centerY - 13}" r="7" class="qv-charge-highlight"/><text x="${leftX}" y="${centerY + 10}" class="qv-charge-main" text-anchor="middle">+</text><text x="${rightX}" y="${centerY + 10}" class="qv-charge-main" text-anchor="middle">${secondSign}</text>${arrows}<text x="${leftX}" y="${centerY + 68}" class="qv-annotation" text-anchor="middle">${escapeXml(first)}</text><text x="${rightX}" y="${centerY + 68}" class="qv-annotation" text-anchor="middle">${escapeXml(second)}</text></svg>`;
+        return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}"><defs><marker id="qv-force-head" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" class="qv-arrow-fill"/></marker></defs><text x="${width / 2}" y="28" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text><line x1="${leftX}" y1="85" x2="${leftX}" y2="150" class="qv-string"/><line x1="${rightX}" y1="85" x2="${rightX}" y2="150" class="qv-string"/><circle cx="${leftX}" cy="${centerY}" r="38" class="qv-charged-object qv-charge-object-one"/><circle cx="${rightX}" cy="${centerY}" r="38" class="qv-charged-object qv-charge-object-two"/><circle cx="${leftX - 12}" cy="${centerY - 13}" r="7" class="qv-charge-highlight"/><circle cx="${rightX - 12}" cy="${centerY - 13}" r="7" class="qv-charge-highlight"/><text x="${leftX}" y="${centerY + 10}" class="qv-charge-main" text-anchor="middle">${firstSign}</text><text x="${rightX}" y="${centerY + 10}" class="qv-charge-main" text-anchor="middle">${secondSign}</text>${arrows}<text x="${leftX}" y="${centerY + 68}" class="qv-annotation" text-anchor="middle">${escapeXml(first)}</text><text x="${rightX}" y="${centerY + 68}" class="qv-annotation" text-anchor="middle">${escapeXml(second)}</text></svg>`;
     }
     const rodX = 160;
     const clothX = 390;
@@ -606,6 +616,20 @@ function renderElectrostaticDiagram(spec) {
         return `<rect x="${px}" y="${py}" width="18" height="8" class="qv-paper-piece" transform="rotate(${index % 2 ? -12 : 10} ${px + 9} ${py + 4})"/>`;
     }).join("");
     return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}"><defs><marker id="qv-electron-head" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" class="qv-arrow-fill"/></marker></defs><text x="${width / 2}" y="28" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text><rect x="${rodX}" y="${y}" width="220" height="28" rx="14" class="qv-rod" transform="rotate(-8 ${rodX + 110} ${y + 14})"/><rect x="${rodX + 18}" y="${y + 5}" width="150" height="6" rx="3" class="qv-rod-highlight" transform="rotate(-8 ${rodX + 110} ${y + 14})"/><path d="M ${clothX} ${y - 35} q 50 -18 92 12 v 90 q -50 18 -96 -8 z" class="qv-cloth"/><path d="M ${clothX - 6} ${y + 2} C 350 ${y - 28}, 330 ${y - 14}, 300 ${y - 2}" class="qv-electron-arrow" marker-end="url(#qv-electron-head)"/><text x="335" y="${y - 32}" class="qv-annotation">اتجاه الدلك</text><text x="${rodX + 110}" y="${y + 65}" class="qv-annotation" text-anchor="middle">${escapeXml(first)}</text><text x="${clothX + 45}" y="${y + 88}" class="qv-annotation" text-anchor="middle">${escapeXml(second)}</text>${paperPieces}<text x="230" y="330" class="qv-annotation" text-anchor="middle">قصاصات ورق خفيفة</text></svg>`;
+}
+function renderElectrostaticOverlaySvg(spec) {
+    const width = 640;
+    const height = 360;
+    const leftX = 225;
+    const rightX = 415;
+    const centerY = 190;
+    const attraction = (spec.values[0] ?? 0) >= 0.5;
+    const firstSign = electrostaticChargeSign(spec.annotations[1], "+");
+    const secondSign = electrostaticChargeSign(spec.annotations[2], attraction ? "−" : "+");
+    const arrows = attraction
+        ? `<line x1="290" y1="${centerY}" x2="315" y2="${centerY}" class="qv-force-arrow" marker-end="url(#qv-force-head-overlay)"/><line x1="350" y1="${centerY}" x2="325" y2="${centerY}" class="qv-force-arrow" marker-end="url(#qv-force-head-overlay)"/>`
+        : `<line x1="290" y1="${centerY}" x2="255" y2="${centerY}" class="qv-force-arrow" marker-end="url(#qv-force-head-overlay)"/><line x1="350" y1="${centerY}" x2="385" y2="${centerY}" class="qv-force-arrow" marker-end="url(#qv-force-head-overlay)"/>`;
+    return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}"><defs><marker id="qv-force-head-overlay" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" class="qv-arrow-fill"/></marker></defs><text x="${width / 2}" y="28" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text><text x="${leftX}" y="${centerY + 10}" class="qv-charge-main" text-anchor="middle">${firstSign}</text><text x="${rightX}" y="${centerY + 10}" class="qv-charge-main" text-anchor="middle">${secondSign}</text>${arrows}<text x="${leftX}" y="${centerY + 78}" class="qv-annotation" text-anchor="middle">${escapeXml(spec.labels[0] ?? "الجسم س")}</text><text x="${rightX}" y="${centerY + 78}" class="qv-annotation" text-anchor="middle">${escapeXml(spec.labels[1] ?? "الجسم ص")}</text><text x="320" y="315" class="qv-annotation" text-anchor="middle">${attraction ? "تجاذب" : "تنافر"}</text></svg>`;
 }
 function renderDataTable(spec) {
     const width = 640;
@@ -713,7 +737,7 @@ export function isAiIllustrationEligible(spec) {
     return false;
 }
 function illustrationRenderMode(spec) {
-    if (!(spec.illustration?.validated) || !isAiIllustrationEligible(spec))
+    if (!spec.illustration?.validated || !isAiIllustrationEligible(spec))
         return null;
     if (spec.illustration.renderMode === "overlay")
         return "overlay";
@@ -722,13 +746,23 @@ function illustrationRenderMode(spec) {
     return "replace";
 }
 function illustrationAssetKind(spec) {
-    if (!(spec.illustration?.validated) || !isAiIllustrationEligible(spec))
+    if (!spec.illustration?.validated || !isAiIllustrationEligible(spec))
         return null;
     if (spec.illustration.assetKind === "scene_2d_overlay")
         return "scene_2d_overlay";
     if (illustrationRenderMode(spec) === "overlay")
         return "scene_2d_overlay";
     return "scene_2d";
+}
+export function questionVisualAssetRequirement(spec) {
+    if (!isAiIllustrationEligible(spec)) {
+        return { required: false, mode: null, reason: "هذا النوع يبقى مخططًا علميًا حتميًا لضمان الدقة." };
+    }
+    if (spec.type === "force_diagram"
+        || (spec.type === "electrostatic_diagram" && spec.variant === "attraction_repulsion")) {
+        return { required: true, mode: "overlay", reason: "يتطلب أصلًا بصريًا 2D مع طبقة رموز وأسهم وقيم علمية يملكها واثق." };
+    }
+    return { required: true, mode: "replace", reason: "يتطلب صورة تعليمية 2D مدققة علميًا بدل الرسم الخطي الاحتياطي." };
 }
 export function stripQuestionVisualIllustration(spec) {
     const { illustration: _illustration, ...deterministic } = spec;
@@ -921,7 +955,13 @@ export function renderQuestionVisualSvg(spec) {
                                             : renderFlowDiagram(spec);
     const renderMode = illustrationRenderMode(spec);
     const assetKind = illustrationAssetKind(spec);
-    const overlaySvg = renderMode === "overlay" && spec.type === "force_diagram" ? renderForceDiagramOverlaySvg(spec) : "";
+    const overlaySvg = renderMode === "overlay"
+        ? spec.type === "force_diagram"
+            ? renderForceDiagramOverlaySvg(spec)
+            : spec.type === "electrostatic_diagram" && spec.variant === "attraction_repulsion"
+                ? renderElectrostaticOverlaySvg(spec)
+                : ""
+        : "";
     const media = renderMode === "overlay" && spec.illustration
         ? `<div class="question-visual-composite" data-hybrid-visual="ready"><img class="question-visual-illustration" src="${escapeXml(spec.illustration.url)}" alt="${escapeXml(spec.altText)}" loading="eager" decoding="async" crossorigin="anonymous"/><div class="question-visual-overlay">${overlaySvg}</div><div class="question-visual-deterministic-fallback" data-fallback-visual="hidden" hidden aria-hidden="true">${svg}</div></div>`
         : renderMode === "replace" && spec.illustration

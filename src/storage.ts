@@ -7,6 +7,7 @@ import { SOURCE_GENERATION_VERSION } from "./question-generation.js";
 import { ASSESSMENT_GENERATION_V2_VERSION } from "./assessment-generation-v2.js";
 import { diversifyQuestionVisualSpec } from "./question-visual.js";
 import { SOURCE_RETRIEVAL_VERSION } from "./source-retrieval.js";
+import { parseScientificItemModel } from "./scientific-item.js";
 
 const DRAFT_KEY = "wathiq.phase0b.latestDraft";
 const DRAFTS_KEY = "wathiq.examDrafts.v1";
@@ -219,12 +220,18 @@ function normalizeStoredPlan(value: unknown): PlanItem[] {
       || typeof item.outcomeId !== "string" || typeof item.outcomeLabel !== "string"
       || typeof item.questionType !== "string" || typeof item.cognitiveLevel !== "string"
       || typeof item.marks !== "number") return [];
-    if (!item.visual || typeof item.visual !== "object") return [item];
+    const proposals = item.proposals.map((proposal) => {
+      const scientificItem = parseScientificItemModel(proposal.scientificItem);
+      if (scientificItem) return { ...proposal, scientificItem };
+      const { scientificItem: _scientificItem, ...withoutScientificItem } = proposal;
+      return withoutScientificItem;
+    });
+    if (!item.visual || typeof item.visual !== "object") return [{ ...item, proposals }];
     try {
-      return [{ ...item, visual: diversifyQuestionVisualSpec(item.visual, index, item.id) }];
+      return [{ ...item, proposals, visual: diversifyQuestionVisualSpec(item.visual, index, item.id) }];
     } catch {
       const { visual: _visual, ...withoutVisual } = item;
-      return [withoutVisual];
+      return [{ ...withoutVisual, proposals }];
     }
   });
 }

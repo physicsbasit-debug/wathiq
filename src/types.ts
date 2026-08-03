@@ -99,6 +99,39 @@ export interface QuestionVisualSpec {
   illustration?: QuestionVisualIllustration;
 }
 
+
+export type ScientificItemModelKind = "generic" | "force_system" | "electrostatic_system";
+export type ScientificDirection = "left" | "right" | "up" | "down" | "toward" | "away" | "balanced" | "none";
+export type ScientificChargeState = "positive" | "negative" | "neutral" | "unknown";
+export type ScientificRelationship = "attraction" | "repulsion" | "charge_transfer" | "electrostatic_discharge" | "resultant_force" | "conduction" | "insulation" | "none";
+export type ScientificQuantityKind = "applied_force" | "friction_force" | "weight" | "normal_force" | "charge" | "other";
+
+export interface ScientificQuantity {
+  kind: ScientificQuantityKind;
+  label: string;
+  value: number;
+  unit: string;
+  direction: ScientificDirection;
+}
+
+export interface ScientificItemModel {
+  version: "scientific-item-v1";
+  kind: ScientificItemModelKind;
+  phenomenon: string;
+  primaryEntity: string;
+  secondaryEntity: string;
+  visualObject: string;
+  relationship: ScientificRelationship;
+  primaryCharge: ScientificChargeState;
+  secondaryCharge: ScientificChargeState;
+  transferredParticle: string;
+  quantities: ScientificQuantity[];
+  resultValue: number;
+  resultUnit: string;
+  resultDirection: ScientificDirection;
+  expectedResult: string;
+}
+
 export interface LearningOutcome {
   id: string;
   label: string;
@@ -234,6 +267,7 @@ export interface QuestionProposal {
   enrichmentSourceTitle?: string;
   enrichmentSourceUrl?: string;
   needsReview?: boolean;
+  scientificItem?: ScientificItemModel;
 }
 
 export interface ValidationIssue {

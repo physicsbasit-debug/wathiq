@@ -1,6 +1,7 @@
 import { applyGeneratedQuestions, buildQuestionGenerationRequest, shouldRequireCalculationWorking, sanitizeGeneratedQuestionText, } from "./question-generation.js";
 import { parseQuestionVisualSpec } from "./question-visual.js";
-export const ASSESSMENT_GENERATION_V2_VERSION = "source-grounded-policy-ai-19-structured-scenario-repair";
+import { parseScientificItemModel } from "./scientific-item.js";
+export const ASSESSMENT_GENERATION_V2_VERSION = "source-grounded-policy-ai-20-unified-scientific-item";
 function normalizeArabic(value) {
     return value
         .normalize("NFKC")
@@ -177,6 +178,7 @@ function parseProposal(value, expected) {
     const markScheme = Array.isArray(record.markScheme)
         ? record.markScheme.filter((item) => typeof item === "string").map((item) => sanitizeGeneratedQuestionText(item)).filter(Boolean)
         : [];
+    const scientificItem = parseScientificItemModel(record.scientificItem);
     if (!text || !answer || !rationale || !sourceSupport)
         throw new Error("محرك الاختبار الكامل أعاد سؤالًا ناقصًا.");
     if (markScheme.length !== expected.marks)
@@ -204,6 +206,7 @@ function parseProposal(value, expected) {
         enrichmentSourceTitle: typeof record.enrichmentSourceTitle === "string" ? record.enrichmentSourceTitle.trim() : "",
         enrichmentSourceUrl: safeUrl(record.enrichmentSourceUrl),
         needsReview: record.needsReview === true,
+        ...(scientificItem ? { scientificItem } : {}),
     };
 }
 function validateWholeExamDiversity(items) {
@@ -263,6 +266,7 @@ export function parseWholeExamGenerationResponseV2(payload, requestedItems) {
                     enrichmentSourceTitle: proposal.enrichmentSourceTitle ?? "",
                     enrichmentSourceUrl: proposal.enrichmentSourceUrl ?? "",
                     needsReview: proposal.needsReview === true,
+                    ...(proposal.scientificItem ? { scientificItem: proposal.scientificItem } : {}),
                 }],
         };
     });

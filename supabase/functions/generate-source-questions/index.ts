@@ -22,7 +22,7 @@ const MARK_SCHEME_REPAIR_MAX_OUTPUT_TOKENS = 900;
 const IMAGE_GENERATION_TIMEOUT_MS = 48_000;
 const IMAGE_VALIDATION_TIMEOUT_MS = 18_000;
 const QUESTION_VISUAL_BUCKET = "wathiq-question-visuals";
-const VISUAL_PROMPT_VERSION = "wathiq-visual-first-2d-v3-scientific-quality";
+const VISUAL_PROMPT_VERSION = "wathiq-unified-scientific-item-v4";
 const MAX_IMAGE_BASE64_CHARACTERS = 16_000_000;
 const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent`;
 const GEMINI_IMAGE_API_URL = `https://generativelanguage.googleapis.com/v1/models/${encodeURIComponent(GEMINI_IMAGE_MODEL)}:generateContent`;
@@ -310,6 +310,7 @@ interface VisualIllustrationRequest {
   questionText: string;
   sourceSupport: string;
   previousAssetPath: string;
+  scientificItem: ModelGeneratedScientificItem;
   visual: QuestionVisualSpec;
 }
 
@@ -345,6 +346,38 @@ interface ModelGeneratedScenarioContract {
   contextIsEssential: boolean;
 }
 
+type ScientificItemModelKind = "generic" | "force_system" | "electrostatic_system";
+type ScientificDirection = "left" | "right" | "up" | "down" | "toward" | "away" | "balanced" | "none";
+type ScientificChargeState = "positive" | "negative" | "neutral" | "unknown";
+type ScientificRelationship = "attraction" | "repulsion" | "charge_transfer" | "electrostatic_discharge" | "resultant_force" | "conduction" | "insulation" | "none";
+type ScientificQuantityKind = "applied_force" | "friction_force" | "weight" | "normal_force" | "charge" | "other";
+
+interface ModelGeneratedScientificQuantity {
+  kind: ScientificQuantityKind;
+  label: string;
+  value: number;
+  unit: string;
+  direction: ScientificDirection;
+}
+
+interface ModelGeneratedScientificItem {
+  version: "scientific-item-v1";
+  kind: ScientificItemModelKind;
+  phenomenon: string;
+  primaryEntity: string;
+  secondaryEntity: string;
+  visualObject: string;
+  relationship: ScientificRelationship;
+  primaryCharge: ScientificChargeState;
+  secondaryCharge: ScientificChargeState;
+  transferredParticle: string;
+  quantities: ModelGeneratedScientificQuantity[];
+  resultValue: number;
+  resultUnit: string;
+  resultDirection: ScientificDirection;
+  expectedResult: string;
+}
+
 interface ModelGeneratedAlternative {
   stimulus: string;
   text: string;
@@ -357,6 +390,7 @@ interface ModelGeneratedAlternative {
   sourceEvidenceId: string;
   enrichmentEvidenceId: string;
   scenarioContract?: ModelGeneratedScenarioContract;
+  scientificItem?: ModelGeneratedScientificItem;
   needsReview: boolean;
 }
 
@@ -391,6 +425,7 @@ interface GeneratedAlternative {
   enrichmentSupport: string;
   enrichmentSourceTitle: string;
   enrichmentSourceUrl: string;
+  scientificItem: ModelGeneratedScientificItem;
   needsReview: boolean;
 }
 
@@ -504,12 +539,51 @@ function visualIllustrationTextArray(value: unknown, maxItems: number, maxLength
     .slice(0, maxItems);
 }
 
+function parseScientificItemSnapshot(value: unknown): ModelGeneratedScientificItem {
+  const record = requireRecord(value, "النموذج العلمي المرافق للصورة غير صالح.");
+  if (record.version !== "scientific-item-v1") throw httpError("إصدار النموذج العلمي المرافق للصورة غير صالح.", 400);
+  const quantities = Array.isArray(record.quantities)
+    ? record.quantities.map((entry) => {
+        const quantity = requireRecord(entry, "إحدى كميات النموذج العلمي غير صالحة.");
+        const numeric = typeof quantity.value === "number" && Number.isFinite(quantity.value) ? quantity.value : NaN;
+        if (!Number.isFinite(numeric) || numeric < 0) throw httpError("قيمة إحدى كميات النموذج العلمي غير صالحة.", 400);
+        const rawUnit = requireText(quantity.unit, "وحدة إحدى كميات النموذج العلمي غير صالحة.", 30);
+        return {
+          kind: requireEnum(quantity.kind, ["applied_force", "friction_force", "weight", "normal_force", "charge", "other"] as const, "نوع إحدى كميات النموذج العلمي غير صالح."),
+          label: requireText(quantity.label, "وصف إحدى كميات النموذج العلمي غير صالح.", 100),
+          value: Number(numeric.toFixed(4)),
+          unit: /^(?:n|نيوتن)$/iu.test(rawUnit) ? "N" : rawUnit,
+          direction: requireEnum(quantity.direction, ["left", "right", "up", "down", "toward", "away", "balanced", "none"] as const, "اتجاه إحدى كميات النموذج العلمي غير صالح."),
+        } satisfies ModelGeneratedScientificQuantity;
+      })
+    : [];
+  const resultValue = typeof record.resultValue === "number" && Number.isFinite(record.resultValue) ? record.resultValue : 0;
+  return {
+    version: "scientific-item-v1",
+    kind: requireEnum(record.kind, ["generic", "force_system", "electrostatic_system"] as const, "نوع النموذج العلمي المرافق للصورة غير صالح."),
+    phenomenon: requireText(record.phenomenon, "الظاهرة العلمية المرافقة للصورة غير محددة.", 220),
+    primaryEntity: requireText(record.primaryEntity, "الكيان العلمي الأساسي غير محدد.", 120),
+    secondaryEntity: typeof record.secondaryEntity === "string" ? record.secondaryEntity.trim().slice(0, 120) : "",
+    visualObject: requireText(record.visualObject, "الكائن البصري غير محدد.", 120),
+    relationship: requireEnum(record.relationship, ["attraction", "repulsion", "charge_transfer", "electrostatic_discharge", "resultant_force", "conduction", "insulation", "none"] as const, "العلاقة العلمية المرافقة للصورة غير صالحة."),
+    primaryCharge: requireEnum(record.primaryCharge, ["positive", "negative", "neutral", "unknown"] as const, "شحنة الكيان الأول غير صالحة."),
+    secondaryCharge: requireEnum(record.secondaryCharge, ["positive", "negative", "neutral", "unknown"] as const, "شحنة الكيان الثاني غير صالحة."),
+    transferredParticle: typeof record.transferredParticle === "string" ? record.transferredParticle.trim().slice(0, 80) : "",
+    quantities,
+    resultValue: Number(resultValue.toFixed(4)),
+    resultUnit: typeof record.resultUnit === "string" ? record.resultUnit.trim().slice(0, 30) : "",
+    resultDirection: requireEnum(record.resultDirection, ["left", "right", "up", "down", "toward", "away", "balanced", "none"] as const, "اتجاه النتيجة العلمية غير صالح."),
+    expectedResult: requireText(record.expectedResult, "النتيجة العلمية المتوقعة غير محددة.", 260),
+  };
+}
+
 function parseVisualIllustrationRequest(value: unknown): VisualIllustrationRequest {
   const record = requireRecord(value, "طلب تحسين الرسم غير صالح.");
   const visualRecord = requireRecord(record.visual, "مواصفة الرسم المطلوب تحسينه غير صالحة.");
   const visualType = requireEnum(visualRecord.type, VISUAL_TYPES, "نوع الرسم المطلوب تحسينه غير صالح.");
   const variant = requireText(visualRecord.variant, "نسخة الرسم المطلوب تحسينها غير محددة.", 60) as QuestionVisualVariant;
   const role = requireText(visualRecord.role, "دور الرسم التقويمي غير محدد.", 40) as QuestionVisualRole;
+  const scientificItem = parseScientificItemSnapshot(record.scientificItem);
   const visual: QuestionVisualSpec = {
     ...emptyVisualSpec(),
     type: visualType,
@@ -535,6 +609,7 @@ function parseVisualIllustrationRequest(value: unknown): VisualIllustrationReque
     questionText: requireText(record.questionText, "نص السؤال غير محدد.", 1_200),
     sourceSupport: requireText(record.sourceSupport, "دليل المصدر المدرسي غير محدد.", 2_400),
     previousAssetPath: typeof record.previousAssetPath === "string" ? record.previousAssetPath.trim().slice(0, 300) : "",
+    scientificItem,
     visual,
   };
 }
@@ -555,8 +630,8 @@ function isControlledIllustrationEligible(visual: QuestionVisualSpec): boolean {
   return false;
 }
 
-function forceSceneKind(visual: QuestionVisualSpec): "shopping_trolley" | "school_bag" | "crate" {
-  const material = `${visual.title} ${visual.altText} ${visual.labels.join(" ")}`.toLowerCase();
+function forceSceneKind(request: VisualIllustrationRequest): "shopping_trolley" | "school_bag" | "crate" {
+  const material = `${request.scientificItem.visualObject} ${request.scientificItem.primaryEntity} ${request.visual.title} ${request.visual.altText} ${request.visual.labels.join(" ")}`.toLowerCase();
   if (/(عربه|عربة|تسوق|trolley|cart)/u.test(material)) return "shopping_trolley";
   if (/(حقيبه|حقيبة|مدرسيه|مدرسية|bag)/u.test(material)) return "school_bag";
   return "crate";
@@ -564,7 +639,7 @@ function forceSceneKind(visual: QuestionVisualSpec): "shopping_trolley" | "schoo
 
 function controlledIllustrationScene(request: VisualIllustrationRequest): string {
   if (request.visual.type === "force_diagram") {
-    const kind = forceSceneKind(request.visual);
+    const kind = forceSceneKind(request);
     if (kind === "shopping_trolley") {
       return [
         "One clear 2D side-view shopping trolley on a clean white background.",
@@ -586,6 +661,13 @@ function controlledIllustrationScene(request: VisualIllustrationRequest): string
     ].join(" ");
   }
   if (request.visual.type === "context_scene") {
+    if (request.scientificItem.relationship === "electrostatic_discharge") {
+      return [
+        `One clear 2D side-view ${request.scientificItem.visualObject} on a level road or fueling area.`,
+        "Show exactly one vehicle and one metal grounding chain attached to the vehicle and visibly touching the ground.",
+        "Make the grounding contact unmistakable, with no other vehicles, people, charge symbols, arrows, labels, sparks, or decorative objects.",
+      ].join(" ");
+    }
     const sceneByVariant: Partial<Record<QuestionVisualVariant, string>> = {
       door_handle: "A school-age student opens a simple classroom door by pushing or pulling at the handle far from the hinges. Show the door, hinges, handle, and the student's hand clearly.",
       playground_seesaw: "Two school-age children sit safely on opposite sides of a playground seesaw with a clear central pivot. Show visibly different distances from the pivot without any labels.",
@@ -603,14 +685,11 @@ function controlledIllustrationScene(request: VisualIllustrationRequest): string
   }
   if (request.visual.type === "electrostatic_diagram") {
     if (request.visual.variant === "attraction_repulsion") {
-      const unlikeCharges = (request.visual.values[0] ?? 0) >= 0.5;
       return [
-        "Two identical lightweight spherical objects or balloons are suspended separately by thin insulating strings against a white background.",
-        unlikeCharges
-          ? "Their positions clearly show mutual attraction: both strings lean gently inward and the objects move closer without touching."
-          : "Their positions clearly show mutual repulsion: both strings lean gently outward and the objects move apart symmetrically.",
-        "Show exactly two objects and two strings. Keep the composition symmetric, clean, and scientifically plausible.",
-        "Do not show charge signs, arrows, field lines, labels, hands, sparks, or extra objects.",
+        "Two identical lightweight spherical objects are suspended separately by exactly two thin insulating strings against a clean white background.",
+        "Show exactly two spheres and two strings only, centered and symmetric, with enough empty space between them for scientific arrows and charge signs to be overlaid later.",
+        "Keep both strings nearly vertical; do not attempt to show attraction or repulsion in the generated base image because the application will add the scientifically controlled relationship layer.",
+        "Do not show charge signs, arrows, field lines, labels, hands, shadows shaped like extra spheres, sparks, or any additional objects.",
       ].join(" ");
     }
     return [
@@ -634,13 +713,16 @@ function buildControlledIllustrationPrompt(request: VisualIllustrationRequest, c
     `Scientific scene: ${controlledIllustrationScene(request)}`,
     `Question-specific context: ${request.questionText}`,
     `Reference-grounded context: ${request.sourceSupport}`,
+    `Unified scientific contract: ${JSON.stringify(request.scientificItem)}`,
     "Visual style: premium 2D science textbook illustration, clean flat shapes with subtle depth, crisp outlines, restrained natural colors, white background, landscape 4:3 composition, high visual hierarchy, suitable for sharp A4 printing.",
     "Composition: the required scientific objects must be large, centered, clearly separated, and immediately understandable at a glance; avoid tiny objects and excessive empty space.",
     "Scientific constraints: preserve the exact object count and relationships; do not invent apparatus, forces, particles, labels, measurements, or effects not requested.",
     "Assessment constraints: no words, no letters, no numbers, no units, no arrows, no captions, no watermarks, no decorative border, and no photorealistic rendering.",
     "Make the scientific action unmistakable through the objects and their positions alone.",
     "Do not reuse the ruler-and-paper composition or any other stock composition unless the requested scene explicitly requires it. Match the requested variant and question-specific context.",
-    request.visual.type === "force_diagram" ? "For force diagrams, draw only the real 2D base object. The app will add the scientific arrows and labels itself." : "",
+    (request.visual.type === "force_diagram" || (request.visual.type === "electrostatic_diagram" && request.visual.variant === "attraction_repulsion"))
+      ? "Draw only the real 2D base objects. The application will add all scientifically controlled arrows, charge signs, values, units, and labels itself."
+      : "",
     correctionNote ? `Correction required after scientific review: ${correctionNote}` : "",
   ].filter(Boolean).join("\n");
 }
@@ -753,11 +835,14 @@ async function validateControlledIllustration(
             { text: [
               "افحص الصورة وفق المتطلبات الآتية:",
               controlledIllustrationScene(request),
+              `النموذج العلمي الموحد: ${JSON.stringify(request.scientificItem)}`,
+              `نمط الاستخدام: ${(request.visual.type === "force_diagram" || (request.visual.type === "electrostatic_diagram" && request.visual.variant === "attraction_repulsion")) ? "صورة أساس فقط وستضاف فوقها طبقة علمية حتمية" : "صورة نهائية مباشرة"}.`,
               "يجب أن تكون صورة ثنائية الأبعاد واضحة ومصقولة بصريًا على خلفية بيضاء، وتبقى مفهومة عند الطباعة على ورقة A4.",
               "تحقق من العدد الدقيق للعناصر المطلوبة، ومن عدم اختفاء أي عنصر أو اندماجه بصريًا مع عنصر آخر.",
               "ارفضها إذا ظهر أي نص أو حرف أو رقم أو وحدة أو سهم أو رمز شحنة أو عنصر علمي زائد.",
-              "ارفضها إذا كانت العناصر صغيرة جدًا، أو التكوين غامضًا، أو العلاقات العلمية غير واضحة، أو الصورة أقرب إلى أيقونات مبهمة من رسم تعليمي.",
-              "وافق فقط إذا ظهرت العناصر المطلوبة والعلاقة العلمية بينها بوضوح ودون تضليل، وكانت الصورة جاهزة للطباعة التعليمية.",
+              "ارفضها إذا كانت العناصر صغيرة جدًا، أو التكوين غامضًا، أو الصورة أقرب إلى أيقونات مبهمة من رسم تعليمي.",
+              "في نمط صورة الأساس مع طبقة علمية: لا تطلب من الصورة إظهار الأسهم أو الشحنات أو العلاقة؛ اعتبر scientificRelationshipCorrect=true فقط إذا كانت العناصر وعددها ومواضعها لا تناقض النموذج وتسمح بإضافة الطبقة العلمية بدقة.",
+              "وافق فقط إذا ظهرت العناصر المطلوبة دون تضليل، وكانت الصورة جاهزة للطباعة التعليمية.",
             ].join("\n") },
             { inlineData: { mimeType: image.mimeType, data: image.data } },
           ],
@@ -848,7 +933,10 @@ async function storeControlledIllustration(
   if (previous && previous !== assetPath && previous.startsWith(`${storageSegment(userId)}/`)) {
     void admin.storage.from(QUESTION_VISUAL_BUCKET).remove([previous]);
   }
-  const renderMode = request.visual.type === "force_diagram" ? "overlay" : "replace";
+  const renderMode = request.visual.type === "force_diagram"
+    || (request.visual.type === "electrostatic_diagram" && request.visual.variant === "attraction_repulsion")
+    ? "overlay"
+    : "replace";
   const assetKind = renderMode === "overlay" ? "scene_2d_overlay" : "scene_2d";
   return {
     url: publicUrl,
@@ -1663,6 +1751,8 @@ function buildSystemInstructions(request: GenerationRequest): string {
     "في الاختبار القصير لا تجعل أكثر من مفردة واحدة تعريفًا أو سؤال وحدة مباشرًا، واجعل بقية المفردات تطبيقًا أو تفسيرًا أو بيانات أو قرارًا أو استقصاءً وفق الخطة.",
     "السياق الحياتي يجب أن يكون ضروريًا للإجابة، قصيرًا، واقعيًا، مناسبًا لعمر الطالب، ومتصلًا مباشرة بالمفهوم العلمي؛ لا تضع قصة زخرفية يمكن حذفها دون أن يتغير السؤال.",
     "أعد scenarioContract منظمًا لكل بديل: target مطابق حرفيًا لـscenarioTarget، وevidencePhrases عبارتان إلى أربع عبارات قصيرة منسوخة حرفيًا من stimulus أو text تثبت عناصر السياق، وscientificLink يشرح كيف يخدم السياق هدف التعلم، وcontextIsEssential=true عندما يكون السياق الحياتي أو حالة القرار جزءًا من الحل.",
+    "أعد scientificItem لكل بديل بوصفه المصدر العلمي الوحيد للمفردة. يجب أن تتطابق معه كل الكيانات والعلاقات والكميات والوحدات والاتجاهات والنتيجة في stimulus وtext وanswer وmarkScheme. لا تخترع رقمًا أو نوع شحنة أو اتجاه قوة خارج scientificItem.",
+    "في force_system: أدرج فقط القوى التي تظهر أرقامها ووحداتها صراحة في متن السؤال، واحسب resultValue وresultDirection من quantities نفسها. في electrostatic_system: اجعل نوع الشحنتين والعلاقة attraction/repulsion أو charge_transfer أو electrostatic_discharge متسقة علميًا ومطابقة للسؤال والإجابة.",
     "لا تخلط بين الدروس؛ كل مفردة مرتبطة باسم درس ومرجع صفحة محددين في الخطة.",
     "يُمنع إنشاء أسئلة عن اسم الوحدة أو رقمها أو اسم الكتاب أو الصفحة أو موضع الدرس في المنهج؛ المطلوب قياس المحتوى العلمي للدرس فقط.",
     "إذا وُجد regenerationAnchor فأنشئ البدائل الجديدة مشابهة له في المفهوم العلمي ونمط السؤال ومستوى العمق، مع تغيير الصياغة أو القيم فقط عندما يدعم المرجع ذلك. لا تنتقل إلى مفهوم آخر داخل الكتاب.",
@@ -1772,6 +1862,7 @@ function buildUserPrompt(request: GenerationRequest, evidenceCatalog: EvidenceCa
     })),
     batchPlanItems: request.items.map((item) => ({
       ...item,
+      scientificModelKind: scientificItemKindForRequest(item),
       fixedVisual: buildServerOwnedVisualSpec(item, request),
       allowedEvidenceIds: (evidenceCatalog.byReferenceId.get(item.sourceReferenceId) ?? []).map((fragment) => fragment.id),
       allowedEnrichmentIds: enrichment.segments.map((segment) => segment.id),
@@ -1782,13 +1873,70 @@ function buildUserPrompt(request: GenerationRequest, evidenceCatalog: EvidenceCa
       itemCount: request.items.length,
       alternativesPerItem: request.generationMode === "whole_exam_v2" ? 1 : 3,
       exactPlanItemIds: request.items.map((item) => item.planItemId),
-      evidenceRule: "أعد sourceEvidenceId من allowedEvidenceIds الخاصة بالمفردة فقط. أعد enrichmentEvidenceId من allowedEnrichmentIds عند استخدام إثراء خارجي، وإلا فأعد سلسلة فارغة. أعد scenarioContract المنظم، ولا تعتمد على كلمات مفتاحية منفردة لإثبات السياق.",
-      styleRule: "اجعل questionForm مطابقًا حرفيًا لـ styleTarget، ونفذ scenarioTarget وstimulusTarget وskillTarget. أعد markScheme كمصفوفة طولها يساوي marks تمامًا، وكل عنصر فيها معيار مستقل غير فارغ لدرجة واحدة. في السؤال الحسابي أعد workingRequired=true فقط عندما تكون marks درجتين أو أكثر، وfalse عندما تكون درجة واحدة. في الأسئلة غير المفهومية اجعل stimulus غير فارغ، إلا إذا كان fixedVisual يحمل السياق أو البيانات ويشير text إليه صراحة، أو كان text نفسه يتضمن السياق كاملًا.",
+      evidenceRule: "أعد sourceEvidenceId من allowedEvidenceIds الخاصة بالمفردة فقط. أعد enrichmentEvidenceId من allowedEnrichmentIds عند استخدام إثراء خارجي، وإلا فأعد سلسلة فارغة. أعد scenarioContract وscientificItem المنظمين، ولا تعتمد على كلمات مفتاحية منفردة لإثبات السياق.",
+      styleRule: "اجعل questionForm مطابقًا حرفيًا لـ styleTarget، ونفذ scenarioTarget وstimulusTarget وskillTarget. اجعل scientificItem المرجع الوحيد للأرقام والعلاقات والكيانات والنتيجة؛ ويجب أن تتطابق صياغة السؤال والإجابة ونموذج التصحيح معه. أعد markScheme كمصفوفة طولها يساوي marks تمامًا، وكل عنصر فيها معيار مستقل غير فارغ لدرجة واحدة. في السؤال الحسابي أعد workingRequired=true فقط عندما تكون marks درجتين أو أكثر، وfalse عندما تكون درجة واحدة. في الأسئلة غير المفهومية اجعل stimulus غير فارغ، إلا إذا كان fixedVisual يحمل السياق أو البيانات ويشير text إليه صراحة، أو كان text نفسه يتضمن السياق كاملًا.",
       visualRule: request.generationMode === "whole_exam_v2"
         ? "لا تعد visual في JSON. إذا كان fixedVisual.type لا يساوي none، يجب أن يعتمد السؤال النهائي عليه اعتمادًا جوهريًا ويذكره صراحة."
         : "لا تعد visual في JSON. إذا كان fixedVisual.type لا يساوي none، يجب أن تعتمد جميع البدائل الثلاثة على الشكل نفسه اعتمادًا جوهريًا وتذكر الشكل أو الرسم أو الجدول أو التدريج في نص السؤال؛ وإلا فستُرفض المفردة.",
     },
   });
+}
+
+function scientificItemKindForRequest(item: GenerationItem): ScientificItemModelKind {
+  if (item.visualTarget === "force_diagram") return "force_system";
+  if (item.visualTarget === "electrostatic_diagram") return "electrostatic_system";
+  return "generic";
+}
+
+function scientificItemSchema(item: GenerationItem): Record<string, unknown> {
+  const kind = scientificItemKindForRequest(item);
+  const quantityItems = {
+    type: "object",
+    properties: {
+      kind: { type: "string", enum: ["applied_force", "friction_force", "weight", "normal_force", "charge", "other"] },
+      label: { type: "string" },
+      value: { type: "number" },
+      unit: { type: "string" },
+      direction: { type: "string", enum: ["left", "right", "up", "down", "toward", "away", "balanced", "none"] },
+    },
+    required: ["kind", "label", "value", "unit", "direction"],
+    additionalProperties: false,
+  };
+  return {
+    type: "object",
+    description: "النموذج العلمي الموحد للمفردة. هو المصدر الوحيد للكيانات والعلاقات والأرقام والنتيجة التي تستخدمها صياغة السؤال والرسم والإجابة.",
+    properties: {
+      version: { type: "string", enum: ["scientific-item-v1"] },
+      kind: { type: "string", enum: [kind] },
+      phenomenon: { type: "string" },
+      primaryEntity: { type: "string" },
+      secondaryEntity: { type: "string" },
+      visualObject: { type: "string" },
+      relationship: {
+        type: "string",
+        enum: kind === "force_system"
+          ? ["resultant_force"]
+          : kind === "electrostatic_system"
+            ? ["attraction", "repulsion", "charge_transfer", "electrostatic_discharge"]
+            : ["conduction", "insulation", "none"],
+      },
+      primaryCharge: { type: "string", enum: ["positive", "negative", "neutral", "unknown"] },
+      secondaryCharge: { type: "string", enum: ["positive", "negative", "neutral", "unknown"] },
+      transferredParticle: { type: "string" },
+      quantities: {
+        type: "array",
+        minItems: kind === "force_system" ? 2 : 0,
+        maxItems: kind === "force_system" ? 4 : 8,
+        items: quantityItems,
+      },
+      resultValue: { type: "number" },
+      resultUnit: { type: "string" },
+      resultDirection: { type: "string", enum: ["left", "right", "up", "down", "toward", "away", "balanced", "none"] },
+      expectedResult: { type: "string" },
+    },
+    required: ["version", "kind", "phenomenon", "primaryEntity", "secondaryEntity", "visualObject", "relationship", "primaryCharge", "secondaryCharge", "transferredParticle", "quantities", "resultValue", "resultUnit", "resultDirection", "expectedResult"],
+    additionalProperties: false,
+  };
 }
 
 function generationSchema(requestedItems: GenerationItem[], evidenceSource: EvidenceCatalog | string[], enrichmentIds: string[] = [], alternativesPerItem = 3): Record<string, unknown> {
@@ -1902,9 +2050,10 @@ function generationSchema(requestedItems: GenerationItem[], evidenceSource: Evid
                       required: ["target", "evidencePhrases", "scientificLink", "contextIsEssential"],
                       additionalProperties: false,
                     },
+                    scientificItem: scientificItemSchema(requestedItem),
                     needsReview: { type: "boolean" },
                   },
-                  required: ["stimulus", "text", "options", "answer", "rationale", "markScheme", "questionForm", "workingRequired", "sourceEvidenceId", "enrichmentEvidenceId", "scenarioContract", "needsReview"],
+                  required: ["stimulus", "text", "options", "answer", "rationale", "markScheme", "questionForm", "workingRequired", "sourceEvidenceId", "enrichmentEvidenceId", "scenarioContract", "scientificItem", "needsReview"],
                   additionalProperties: false,
                 },
               },
@@ -1928,6 +2077,7 @@ function parseGenerationRequest(value: unknown): GenerationRequest {
     "source-grounded-policy-ai-17-whole-exam-v2",
     "source-grounded-policy-ai-18-exam-integrity-resume",
     "source-grounded-policy-ai-19-structured-scenario-repair",
+    "source-grounded-policy-ai-20-unified-scientific-item",
   ]);
   if (generationMode === "whole_exam_v2" && !compatibleWholeExamVersions.has(generationVersion)) {
     throw httpError("إصدار محرك الاختبار الكامل غير متوافق.", 400);
@@ -2376,6 +2526,341 @@ function splitLongEvidencePiece(value: string, maxCharacters: number): string[] 
   return chunks;
 }
 
+
+const SCIENTIFIC_DIRECTIONS: readonly ScientificDirection[] = ["left", "right", "up", "down", "toward", "away", "balanced", "none"];
+const SCIENTIFIC_CHARGES: readonly ScientificChargeState[] = ["positive", "negative", "neutral", "unknown"];
+const SCIENTIFIC_RELATIONSHIPS: readonly ScientificRelationship[] = ["attraction", "repulsion", "charge_transfer", "electrostatic_discharge", "resultant_force", "conduction", "insulation", "none"];
+const SCIENTIFIC_QUANTITY_KINDS: readonly ScientificQuantityKind[] = ["applied_force", "friction_force", "weight", "normal_force", "charge", "other"];
+
+function sanitizeScientificQuantity(value: unknown): ModelGeneratedScientificQuantity {
+  const record = asRecord(value);
+  if (!record) throw retryableError("النموذج العلمي يحتوي كمية غير صالحة.");
+  const rawUnit = requireText(record.unit, "وحدة إحدى الكميات العلمية غير صالحة.", 30);
+  const normalizedUnit = /^(?:n|نيوتن)$/iu.test(rawUnit.trim()) ? "N" : rawUnit.trim();
+  const numeric = typeof record.value === "number" && Number.isFinite(record.value) ? record.value : NaN;
+  if (!Number.isFinite(numeric) || numeric < 0) throw retryableError("قيمة إحدى الكميات العلمية غير صالحة.");
+  return {
+    kind: requireEnum(record.kind, SCIENTIFIC_QUANTITY_KINDS, "نوع إحدى الكميات العلمية غير صالح."),
+    label: requireText(record.label, "وصف إحدى الكميات العلمية غير صالح.", 100),
+    value: Number(numeric.toFixed(4)),
+    unit: normalizedUnit,
+    direction: requireEnum(record.direction, SCIENTIFIC_DIRECTIONS, "اتجاه إحدى الكميات العلمية غير صالح."),
+  };
+}
+
+function sanitizeScientificItem(value: unknown, requested: GenerationItem): ModelGeneratedScientificItem {
+  const record = asRecord(value);
+  if (!record || record.version !== "scientific-item-v1") throw retryableError("السؤال لا يحتوي نموذجًا علميًا موحدًا صالحًا.");
+  const expectedKind = scientificItemKindForRequest(requested);
+  const kind = requireEnum(record.kind, [expectedKind] as const, "نوع النموذج العلمي لا يطابق المفردة.");
+  const quantities = Array.isArray(record.quantities) ? record.quantities.map(sanitizeScientificQuantity) : [];
+  const resultValue = typeof record.resultValue === "number" && Number.isFinite(record.resultValue) ? Number(record.resultValue.toFixed(4)) : NaN;
+  if (!Number.isFinite(resultValue) || resultValue < 0) throw retryableError("نتيجة النموذج العلمي العددية غير صالحة.");
+  const model: ModelGeneratedScientificItem = {
+    version: "scientific-item-v1",
+    kind,
+    phenomenon: requireText(record.phenomenon, "الظاهرة العلمية غير محددة.", 220),
+    primaryEntity: requireText(record.primaryEntity, "الكيان العلمي الأساسي غير محدد.", 120),
+    secondaryEntity: typeof record.secondaryEntity === "string" ? record.secondaryEntity.trim().slice(0, 120) : "",
+    visualObject: requireText(record.visualObject, "الكائن البصري للمفردة غير محدد.", 120),
+    relationship: requireEnum(record.relationship, SCIENTIFIC_RELATIONSHIPS, "العلاقة العلمية غير صالحة."),
+    primaryCharge: requireEnum(record.primaryCharge, SCIENTIFIC_CHARGES, "شحنة الكيان الأول غير صالحة."),
+    secondaryCharge: requireEnum(record.secondaryCharge, SCIENTIFIC_CHARGES, "شحنة الكيان الثاني غير صالحة."),
+    transferredParticle: typeof record.transferredParticle === "string" ? record.transferredParticle.trim().slice(0, 80) : "",
+    quantities,
+    resultValue,
+    resultUnit: typeof record.resultUnit === "string" ? record.resultUnit.trim().slice(0, 30) : "",
+    resultDirection: requireEnum(record.resultDirection, SCIENTIFIC_DIRECTIONS, "اتجاه النتيجة العلمية غير صالح."),
+    expectedResult: requireText(record.expectedResult, "النتيجة العلمية المتوقعة غير محددة.", 260),
+  };
+  if (kind === "force_system" && quantities.length < 2) throw retryableError("نموذج القوى لا يحتوي قوتين على الأقل.");
+  return model;
+}
+
+function normalizeScientificDigits(value: string): string {
+  const map: Record<string, string> = { "٠":"0", "١":"1", "٢":"2", "٣":"3", "٤":"4", "٥":"5", "٦":"6", "٧":"7", "٨":"8", "٩":"9", "٫":".", "٬":"" };
+  return value.replace(/[٠-٩٫٬]/g, (character) => map[character] ?? character);
+}
+
+function materialContainsScientificNumber(material: string, value: number, unit: string): boolean {
+  const normalized = normalizeScientificDigits(material).replace(/,/g, ".");
+  const candidates = new Set([String(value), Number(value.toFixed(2)).toString(), Number(value.toFixed(1)).toString()]);
+  const numberPresent = [...candidates].some((candidate) => new RegExp(`(^|[^0-9.])${candidate.replace(".", "\\.")}([^0-9.]|$)`, "u").test(normalized));
+  if (!numberPresent) return false;
+  if (!unit) return true;
+  if (unit === "N") return /(?:\bN\b|نيوتن)/iu.test(material);
+  return normalizeForEvidence(material).includes(normalizeForEvidence(unit));
+}
+
+function directionComponents(direction: ScientificDirection, magnitude: number): { x: number; y: number } {
+  if (direction === "right") return { x: magnitude, y: 0 };
+  if (direction === "left") return { x: -magnitude, y: 0 };
+  if (direction === "up") return { x: 0, y: magnitude };
+  if (direction === "down") return { x: 0, y: -magnitude };
+  return { x: 0, y: 0 };
+}
+
+function resultantDirection(x: number, y: number): ScientificDirection {
+  if (Math.abs(x) < 0.01 && Math.abs(y) < 0.01) return "balanced";
+  if (Math.abs(x) >= Math.abs(y)) return x > 0 ? "right" : "left";
+  return y > 0 ? "up" : "down";
+}
+
+function directionArabic(direction: ScientificDirection): string[] {
+  if (direction === "right") return ["اليمين", "يمين", "اتجاه القوه المؤثره", "اتجاه الدفع"];
+  if (direction === "left") return ["اليسار", "يسار", "اتجاه الاحتكاك"];
+  if (direction === "up") return ["اعلى", "لأعلى", "الى اعلى"];
+  if (direction === "down") return ["اسفل", "لأسفل", "الى اسفل"];
+  if (direction === "balanced") return ["متزنه", "متوازنه", "صفر", "لا توجد محصله"];
+  return [];
+}
+
+function validateScientificItemConsistency(
+  alternative: ModelGeneratedAlternative,
+  markScheme: string[],
+  model: ModelGeneratedScientificItem,
+): void {
+  const promptMaterial = `${alternative.stimulus} ${alternative.text}`;
+  const answerMaterial = `${alternative.answer} ${alternative.rationale} ${markScheme.join(" ")} ${model.expectedResult}`;
+  const entityCorpus = `${model.primaryEntity} ${model.secondaryEntity} ${model.visualObject}`;
+  if (semanticOverlap(semanticTokens(`${promptMaterial} ${answerMaterial}`), semanticTokens(entityCorpus)) < 1) {
+    throw retryableError("النموذج العلمي لا يطابق الكيانات المذكورة في السؤال والإجابة.");
+  }
+
+  if (model.kind === "force_system") {
+    if (model.relationship !== "resultant_force") throw retryableError("نموذج القوى لا يحدد علاقة القوة المحصلة.");
+    const kinds = new Set(model.quantities.map((quantity) => quantity.kind));
+    if (!kinds.has("applied_force") || !kinds.has("friction_force")) {
+      throw retryableError("نموذج القوى يجب أن يحتوي القوة المؤثرة وقوة الاحتكاك.");
+    }
+    if (new Set(model.quantities.map((quantity) => quantity.kind)).size !== model.quantities.length) {
+      throw retryableError("نموذج القوى يكرر نوع القوة نفسها.");
+    }
+    for (const quantity of model.quantities) {
+      if (quantity.unit !== "N" || quantity.value <= 0 || !["left", "right", "up", "down"].includes(quantity.direction)) {
+        throw retryableError("إحدى قوى النموذج العلمي تفتقد قيمة أو وحدة أو اتجاهًا صالحًا.");
+      }
+      if (!materialContainsScientificNumber(promptMaterial, quantity.value, quantity.unit)) {
+        throw retryableError(`القوة ${quantity.label} في الرسم لا تظهر بالقيمة نفسها في متن السؤال.`);
+      }
+    }
+    let x = 0;
+    let y = 0;
+    for (const quantity of model.quantities) {
+      const component = directionComponents(quantity.direction, quantity.value);
+      x += component.x;
+      y += component.y;
+    }
+    const magnitude = Number(Math.hypot(x, y).toFixed(2));
+    const direction = resultantDirection(x, y);
+    if (Math.abs(model.resultValue - magnitude) > 0.01 || model.resultUnit !== "N" || model.resultDirection !== direction) {
+      throw retryableError("القوة المحصلة في النموذج العلمي لا تساوي محصلة القوى المدرجة فيه.");
+    }
+    if (!materialContainsScientificNumber(answerMaterial, model.resultValue, "N")) {
+      throw retryableError("الإجابة ونموذج التصحيح لا يحتويان قيمة القوة المحصلة المطابقة للنموذج العلمي.");
+    }
+    const normalizedAnswer = normalizeForEvidence(answerMaterial);
+    const allowedDirectionWords = directionArabic(direction).map(normalizeForEvidence);
+    if (allowedDirectionWords.length && !allowedDirectionWords.some((word) => normalizedAnswer.includes(word))) {
+      throw retryableError("اتجاه القوة المحصلة في الإجابة لا يطابق اتجاهها في النموذج العلمي.");
+    }
+    return;
+  }
+
+  if (model.kind === "electrostatic_system") {
+    if (model.relationship === "attraction" || model.relationship === "repulsion") {
+      if (model.primaryCharge === "unknown" || model.secondaryCharge === "unknown") {
+        throw retryableError("نموذج التفاعل الكهربائي لا يحدد نوع شحنتي الجسمين.");
+      }
+      const sameCharge = model.primaryCharge === model.secondaryCharge;
+      if ((sameCharge && model.relationship !== "repulsion") || (!sameCharge && model.relationship !== "attraction")) {
+        throw retryableError("نوع الشحنات وعلاقة التجاذب أو التنافر غير متسقين علميًا.");
+      }
+      const expectedWord = model.relationship === "attraction" ? "تجاذب" : "تنافر";
+      if (!normalizeForEvidence(answerMaterial).includes(normalizeForEvidence(expectedWord))) {
+        throw retryableError("الإجابة لا تصرح بعلاقة التجاذب أو التنافر المطابقة للنموذج العلمي.");
+      }
+      return;
+    }
+    if (model.relationship === "charge_transfer") {
+      if (!/(electron|إلكترون|الكترون)/iu.test(model.transferredParticle)) {
+        throw retryableError("نموذج الشحن بالدلك لا يحدد انتقال الإلكترونات.");
+      }
+      if (model.primaryCharge === "unknown" || model.secondaryCharge === "unknown" || model.primaryCharge === model.secondaryCharge) {
+        throw retryableError("شحن الجسمين بالدلك يجب أن ينتج شحنتين متعاكستين.");
+      }
+      return;
+    }
+    if (model.relationship === "electrostatic_discharge") {
+      const normalized = normalizeForEvidence(`${promptMaterial} ${answerMaterial}`);
+      if (!/(سلسله|تأريض|تفريغ|تلامس الارض|شاحنه وقود)/u.test(normalized)) {
+        throw retryableError("نموذج التفريغ الكهروستاتيكي لا يظهر مسار التأريض أو التفريغ في السؤال.");
+      }
+      return;
+    }
+    throw retryableError("العلاقة في النموذج الكهروستاتيكي لا تناسب المفردة.");
+  }
+}
+
+function vectorFromScientificQuantity(quantity: ModelGeneratedScientificQuantity): QuestionVisualVector {
+  const positions: Record<"left" | "right" | "up" | "down", { x: number; y: number; dx: number; dy: number }> = {
+    left: { x: -55, y: 0, dx: -70, dy: 0 },
+    right: { x: 55, y: 0, dx: 90, dy: 0 },
+    up: { x: 0, y: -10, dx: 0, dy: -90 },
+    down: { x: 0, y: 10, dx: 0, dy: 90 },
+  };
+  const position = positions[quantity.direction as keyof typeof positions] ?? positions.right;
+  return { label: quantity.label, ...position, magnitude: quantity.value };
+}
+
+function hydrateVisualFromScientificItem(base: QuestionVisualSpec, model: ModelGeneratedScientificItem): QuestionVisualSpec {
+  if (model.kind === "force_system") {
+    return {
+      ...base,
+      type: "force_diagram",
+      variant: "free_body",
+      role: "calculate",
+      purpose: `تحليل القوى المؤثرة على ${model.visualObject} من النموذج العلمي الموحد`,
+      title: `مخطط القوى المؤثرة على ${model.visualObject}`,
+      altText: `${model.visualObject} تظهر عليه القوى بالقيم والاتجاهات نفسها المذكورة في السؤال`,
+      labels: [model.visualObject],
+      annotations: [model.expectedResult],
+      vectors: model.quantities.map(vectorFromScientificQuantity),
+    };
+  }
+  if (model.kind === "electrostatic_system") {
+    if (model.relationship === "electrostatic_discharge") {
+      return {
+        ...emptyVisualSpec(),
+        type: "context_scene",
+        visualId: base.visualId,
+        variant: "road_safety",
+        role: "interpret",
+        purpose: "توضيح التفريغ الآمن للشحنات الساكنة إلى الأرض",
+        title: "التفريغ الكهروستاتيكي الآمن",
+        altText: `${model.visualObject} مع مسار تأريض معدني يلامس الأرض`,
+        labels: [model.visualObject, model.secondaryEntity || "مسار التأريض"],
+        annotations: [model.expectedResult],
+      };
+    }
+    if (model.relationship === "attraction" || model.relationship === "repulsion") {
+      const attraction = model.relationship === "attraction";
+      return {
+        ...base,
+        type: "electrostatic_diagram",
+        variant: "attraction_repulsion",
+        purpose: "تمثيل نوع الشحنتين واتجاه القوة بينهما من النموذج العلمي الموحد",
+        title: "تفاعل جسمين مشحونين",
+        altText: `${model.primaryEntity} و${model.secondaryEntity} في حالة ${attraction ? "تجاذب" : "تنافر"}`,
+        labels: [model.primaryEntity, model.secondaryEntity],
+        values: [attraction ? 1 : 0],
+        annotations: [attraction ? "تجاذب" : "تنافر", model.primaryCharge, model.secondaryCharge],
+      };
+    }
+    if (model.relationship === "charge_transfer") {
+      return {
+        ...base,
+        type: "electrostatic_diagram",
+        variant: "charge_transfer",
+        purpose: "تمثيل انتقال الإلكترونات بين جسمين عند الدلك",
+        title: "شحن جسم بالدلك",
+        altText: `${model.primaryEntity} يُدلك بـ${model.secondaryEntity} فتنتقل الإلكترونات بينهما`,
+        labels: [model.primaryEntity, model.secondaryEntity],
+        annotations: ["انتقال الإلكترونات", model.expectedResult],
+      };
+    }
+  }
+  return {
+    ...base,
+    labels: base.labels.length ? base.labels : [model.primaryEntity, model.secondaryEntity].filter(Boolean),
+    purpose: base.purpose || model.phenomenon,
+    altText: base.altText || model.expectedResult,
+  };
+}
+
+function legacyScientificItemFromVisual(
+  base: QuestionVisualSpec,
+  alternative: ModelGeneratedAlternative,
+): ModelGeneratedScientificItem {
+  if (base.type === "force_diagram") {
+    let x = 0;
+    let y = 0;
+    const quantities: ModelGeneratedScientificQuantity[] = base.vectors.map((vector, index) => {
+      const direction: ScientificDirection = Math.abs(vector.dx) >= Math.abs(vector.dy)
+        ? vector.dx >= 0 ? "right" : "left"
+        : vector.dy <= 0 ? "up" : "down";
+      const kind: ScientificQuantityKind = /احتكاك/u.test(vector.label)
+        ? "friction_force"
+        : /وزن/u.test(vector.label)
+          ? "weight"
+          : /رد الفعل|عمودي/u.test(vector.label)
+            ? "normal_force"
+            : index === 0 ? "applied_force" : "other";
+      const component = directionComponents(direction, vector.magnitude);
+      x += component.x;
+      y += component.y;
+      return { kind, label: vector.label, value: vector.magnitude, unit: "N", direction };
+    });
+    return {
+      version: "scientific-item-v1",
+      kind: "force_system",
+      phenomenon: "تحليل القوى والقوة المحصلة",
+      primaryEntity: base.labels[0] || "الجسم",
+      secondaryEntity: "",
+      visualObject: base.labels[0] || "الجسم",
+      relationship: "resultant_force",
+      primaryCharge: "unknown",
+      secondaryCharge: "unknown",
+      transferredParticle: "",
+      quantities,
+      resultValue: Number(Math.hypot(x, y).toFixed(2)),
+      resultUnit: "N",
+      resultDirection: resultantDirection(x, y),
+      expectedResult: alternative.answer || "حساب القوة المحصلة",
+    };
+  }
+  if (base.type === "electrostatic_diagram") {
+    const attraction = base.variant === "attraction_repulsion" && (base.values[0] ?? 0) >= 0.5;
+    const relationship: ScientificRelationship = base.variant === "charge_transfer"
+      ? "charge_transfer"
+      : attraction ? "attraction" : "repulsion";
+    return {
+      version: "scientific-item-v1",
+      kind: "electrostatic_system",
+      phenomenon: base.purpose || "الكهرباء الساكنة",
+      primaryEntity: base.labels[0] || "الجسم الأول",
+      secondaryEntity: base.labels[1] || "الجسم الثاني",
+      visualObject: base.labels[0] || "جسم مشحون",
+      relationship,
+      primaryCharge: relationship === "charge_transfer" ? "negative" : "positive",
+      secondaryCharge: relationship === "attraction" || relationship === "charge_transfer" ? "negative" : "positive",
+      transferredParticle: relationship === "charge_transfer" ? "الإلكترونات" : "",
+      quantities: [],
+      resultValue: 0,
+      resultUnit: "",
+      resultDirection: relationship === "attraction" ? "toward" : relationship === "repulsion" ? "away" : "none",
+      expectedResult: alternative.answer || base.altText,
+    };
+  }
+  return {
+    version: "scientific-item-v1",
+    kind: "generic",
+    phenomenon: base.purpose || alternative.rationale || "مفهوم علمي",
+    primaryEntity: base.labels[0] || "المفهوم العلمي",
+    secondaryEntity: base.labels[1] || "",
+    visualObject: base.labels[0] || "المشهد العلمي",
+    relationship: "none",
+    primaryCharge: "unknown",
+    secondaryCharge: "unknown",
+    transferredParticle: "",
+    quantities: [],
+    resultValue: 0,
+    resultUnit: "",
+    resultDirection: "none",
+    expectedResult: alternative.answer || "الإجابة العلمية",
+  };
+}
+
 function hydrateGeneratedItem(
   generatedItem: ModelGeneratedItem,
   requested: GenerationItem,
@@ -2389,18 +2874,26 @@ function hydrateGeneratedItem(
       ? "محرك الاختبار الكامل لم يلتزم بسؤال نهائي واحد للمفردة."
       : "مولد الأسئلة لم يلتزم بثلاثة بدائل للمفردة.");
   }
-  const visual = buildServerOwnedVisualSpec(requested, request);
-  const alternatives = generatedItem.alternatives.map((alternative) =>
-    validateAndHydrateAlternative(
+  const baseVisual = buildServerOwnedVisualSpec(requested, request);
+  const unifiedScientificRequired = request.generationVersion === "source-grounded-policy-ai-20-unified-scientific-item";
+  const hydrated = generatedItem.alternatives.map((alternative) => {
+    const scientificItem = alternative.scientificItem
+      ? sanitizeScientificItem(alternative.scientificItem, requested)
+      : unifiedScientificRequired
+        ? (() => { throw retryableError("السؤال لا يحتوي نموذجًا علميًا موحدًا صالحًا."); })()
+        : legacyScientificItemFromVisual(baseVisual, alternative);
+    const visual = unifiedScientificRequired ? hydrateVisualFromScientificItem(baseVisual, scientificItem) : baseVisual;
+    const hydratedAlternative = validateAndHydrateAlternative(
       alternative,
       requested.questionType,
       requested.sourceReferenceId,
       evidenceCatalog,
       requested.styleTarget,
-      requested.visualTarget,
+      visual.type,
       requested.marks,
       requested.lessonLabel,
       requested.outcomeLabel,
+      scientificItem,
       requested.regenerationAnchor,
       enrichment,
       visual,
@@ -2408,11 +2901,25 @@ function hydrateGeneratedItem(
       requested.stimulusTarget,
       requested.skillTarget,
       requested.diversityKey,
-      request.generationVersion === "source-grounded-policy-ai-19-structured-scenario-repair",
-    )
-  );
+      request.generationVersion === "source-grounded-policy-ai-19-structured-scenario-repair"
+        || request.generationVersion === "source-grounded-policy-ai-20-unified-scientific-item",
+      unifiedScientificRequired,
+    );
+    return { visual, alternative: hydratedAlternative };
+  });
+  const visualSignatures = new Set(hydrated.map(({ visual }) => JSON.stringify({
+    type: visual.type,
+    variant: visual.variant,
+    labels: visual.labels,
+    values: visual.values,
+    vectors: visual.vectors,
+  })));
+  if (visualSignatures.size !== 1) {
+    throw retryableError("بدائل المفردة لا تشترك في نموذج علمي ومرئي واحد.");
+  }
+  const alternatives = hydrated.map(({ alternative }) => alternative);
   if (alternatives.length > 1) validateAlternativeDiversity(alternatives, requested.diversityKey);
-  return { planItemId: requested.planItemId, visual, alternatives };
+  return { planItemId: requested.planItemId, visual: hydrated[0]!.visual, alternatives };
 }
 
 function validateGeneratedItemsIndividually(
@@ -3593,6 +4100,7 @@ function validateAndHydrateAlternative(
   marks: number,
   lessonLabel: string,
   outcomeLabel: string,
+  scientificItem: ModelGeneratedScientificItem,
   regenerationAnchor?: RegenerationAnchor,
   enrichment: TrustedEnrichmentContext = { segments: [], attempted: false },
   fixedVisual: QuestionVisualSpec = emptyVisualSpec(),
@@ -3601,6 +4109,7 @@ function validateAndHydrateAlternative(
   skillTarget: QuestionSkillTarget = "recognize",
   diversityKey = "legacy:item",
   structuredScenarioRequired = false,
+  unifiedScientificRequired = false,
 ): GeneratedAlternative {
   if (!alternative || typeof alternative !== "object") throw retryableError("أحد بدائل الأسئلة غير صالح.");
   for (const field of ["text", "answer", "rationale", "sourceEvidenceId"] as const) {
@@ -3644,6 +4153,7 @@ function validateAndHydrateAlternative(
     text: visualReference.text,
   };
   const markScheme = normalizeModelMarkScheme(alternative.markScheme, marks);
+  if (unifiedScientificRequired) validateScientificItemConsistency(alternative, markScheme, scientificItem);
   if (!hasSufficientQuestionContext(
     alternative.stimulus,
     alternative.text,
@@ -3718,6 +4228,7 @@ function validateAndHydrateAlternative(
     enrichmentSupport: enrichmentSegment?.text ?? "",
     enrichmentSourceTitle: enrichmentSegment?.sourceTitle ?? "",
     enrichmentSourceUrl: enrichmentSegment?.sourceUrl ?? "",
+    scientificItem,
     needsReview: alternative.needsReview || weakAffinity || commandReview,
   };
 }

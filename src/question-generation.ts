@@ -17,6 +17,7 @@ import type { WathiqRuntimeConfig } from "./runtime-config.js";
 import type { LessonCatalogOption } from "./lesson-catalog.js";
 import { SCIENCE_ASSESSMENT_POLICY_ID } from "./assessment-policy.js";
 import { parseQuestionVisualIllustration, parseQuestionVisualSpec } from "./question-visual.js";
+import { parseScientificItemModel } from "./scientific-item.js";
 
 export const SOURCE_GENERATION_VERSION = "source-grounded-policy-ai-16-assessment-quality-context-diversity";
 export const GENERATION_BATCH_SIZE = 2;
@@ -93,6 +94,7 @@ export interface GeneratedAlternative {
   enrichmentSourceTitle: string;
   enrichmentSourceUrl: string;
   needsReview: boolean;
+  scientificItem?: import("./types.js").ScientificItemModel;
 }
 
 export interface GeneratedQuestionItem {
@@ -118,6 +120,7 @@ export interface VisualIllustrationRequest {
   questionText: string;
   sourceSupport: string;
   previousAssetPath?: string;
+  scientificItem: import("./types.js").ScientificItemModel;
   visual: QuestionVisualSpec;
 }
 
@@ -209,6 +212,7 @@ function parseAlternative(value: unknown, expected: QuestionGenerationItem): Gen
   const enrichmentSourceTitle = typeof record.enrichmentSourceTitle === "string" ? record.enrichmentSourceTitle.trim() : "";
   const enrichmentSourceUrl = safeExternalUrl(typeof record.enrichmentSourceUrl === "string" ? record.enrichmentSourceUrl.trim() : "");
   const needsReview = record.needsReview === true;
+  const scientificItem = parseScientificItemModel(record.scientificItem);
 
   if (!text || !answer || !rationale || !sourceSupport || !questionForm) {
     throw new Error("استجابة مولد الأسئلة ناقصة ولا تصلح للعرض.");
@@ -239,7 +243,7 @@ function parseAlternative(value: unknown, expected: QuestionGenerationItem): Gen
     throw new Error("سؤال غير موضوعي أعاد بدائل اختيار من متعدد على نحو غير صالح.");
   }
 
-  return { stimulus, text, options, answer, rationale, markScheme, questionForm, workingRequired, sourceSupport, enrichmentSupport, enrichmentSourceTitle, enrichmentSourceUrl, needsReview };
+  return { stimulus, text, options, answer, rationale, markScheme, questionForm, workingRequired, sourceSupport, enrichmentSupport, enrichmentSourceTitle, enrichmentSourceUrl, needsReview, ...(scientificItem ? { scientificItem } : {}) };
 }
 
 export function parseQuestionGenerationResponse(
@@ -668,6 +672,7 @@ export function applyGeneratedQuestions(
       ...(alternative.enrichmentSourceTitle ? { enrichmentSourceTitle: alternative.enrichmentSourceTitle } : {}),
       ...(alternative.enrichmentSourceUrl ? { enrichmentSourceUrl: alternative.enrichmentSourceUrl } : {}),
       needsReview: alternative.needsReview,
+      ...(alternative.scientificItem ? { scientificItem: alternative.scientificItem } : {}),
     }));
     return { ...item, visual: generated.visual, proposals };
   });

@@ -19,8 +19,9 @@ import {
   sanitizeGeneratedQuestionText,
 } from "./question-generation.js";
 import { parseQuestionVisualSpec } from "./question-visual.js";
+import { parseScientificItemModel } from "./scientific-item.js";
 
-export const ASSESSMENT_GENERATION_V2_VERSION = "source-grounded-policy-ai-19-structured-scenario-repair";
+export const ASSESSMENT_GENERATION_V2_VERSION = "source-grounded-policy-ai-20-unified-scientific-item";
 export type AssessmentGenerationMode = "whole_exam_v2" | "legacy_items";
 
 export interface LessonCardV2 {
@@ -284,6 +285,7 @@ function parseProposal(value: unknown, expected: QuestionGenerationItem): Questi
   const markScheme = Array.isArray(record.markScheme)
     ? record.markScheme.filter((item): item is string => typeof item === "string").map((item) => sanitizeGeneratedQuestionText(item)).filter(Boolean)
     : [];
+  const scientificItem = parseScientificItemModel(record.scientificItem);
   if (!text || !answer || !rationale || !sourceSupport) throw new Error("محرك الاختبار الكامل أعاد سؤالًا ناقصًا.");
   if (markScheme.length !== expected.marks) throw new Error("نموذج التصحيح في الاختبار الكامل لا يطابق درجة السؤال.");
   if (expected.questionType === "اختيار من متعدد") {
@@ -308,6 +310,7 @@ function parseProposal(value: unknown, expected: QuestionGenerationItem): Questi
     enrichmentSourceTitle: typeof record.enrichmentSourceTitle === "string" ? record.enrichmentSourceTitle.trim() : "",
     enrichmentSourceUrl: safeUrl(record.enrichmentSourceUrl),
     needsReview: record.needsReview === true,
+    ...(scientificItem ? { scientificItem } : {}),
   };
 }
 
@@ -367,6 +370,7 @@ export function parseWholeExamGenerationResponseV2(
         enrichmentSourceTitle: proposal.enrichmentSourceTitle ?? "",
         enrichmentSourceUrl: proposal.enrichmentSourceUrl ?? "",
         needsReview: proposal.needsReview === true,
+        ...(proposal.scientificItem ? { scientificItem: proposal.scientificItem } : {}),
       }],
     };
   });

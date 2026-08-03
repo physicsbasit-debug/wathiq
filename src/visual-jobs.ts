@@ -3,11 +3,13 @@ import type {
   PlanItem,
   QuestionVisualIllustration,
   QuestionVisualJobSnapshot,
+  ScientificItemModel,
   VisualJobRequiredMode,
   VisualJobStatus,
 } from "./types.js";
 import type { WathiqRuntimeConfig } from "./runtime-config.js";
 import { questionVisualAssetRequirement, stripQuestionVisualIllustration } from "./question-visual.js";
+import { scientificItemMatchesVisual } from "./scientific-item.js";
 
 interface OwnerSessionLike { accessToken: string }
 type SessionProvider = () => Promise<OwnerSessionLike>;
@@ -22,6 +24,7 @@ interface VisualJobInput {
   sourceSupport: string;
   previousAssetPath: string;
   requiredMode: VisualJobRequiredMode;
+  scientificItem: ScientificItemModel;
   visual: Record<string, unknown>;
 }
 
@@ -41,7 +44,7 @@ export function requiredVisualJobItems(draft: ExamDraft, subject: string): Visua
     const requirement = questionVisualAssetRequirement(item.visual);
     if (!requirement.required || !requirement.mode) return [];
     const proposal = selectedProposalForVisual(draft, item);
-    if (!proposal) return [];
+    if (!proposal?.scientificItem || !scientificItemMatchesVisual(proposal.scientificItem, item.visual)) return [];
     return [{
       planItemId: item.id,
       grade: draft.grade!,
@@ -51,6 +54,7 @@ export function requiredVisualJobItems(draft: ExamDraft, subject: string): Visua
       sourceSupport: proposal.sourceSupport || item.outcomeLabel || item.lessonLabel,
       previousAssetPath: item.visual.illustration?.assetPath ?? "",
       requiredMode: requirement.mode,
+      scientificItem: proposal.scientificItem,
       visual: stripQuestionVisualIllustration(item.visual) as unknown as Record<string, unknown>,
     }];
   });

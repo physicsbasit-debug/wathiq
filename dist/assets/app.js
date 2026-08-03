@@ -2,7 +2,7 @@ import { MOCK_LIBRARY, MOCK_SOURCES, SUBJECTS } from "./data.js";
 import { applyOfficialAssessmentTemplate, approveExamDraft, buildPlan, createEmptyDraft, MAX_LESSON_TOPICS, MIN_LESSON_TOPICS, normalizeLessonTopics, reopenExamDraft, isPlanComplete, selectedProposal, setExamTitle, syncDraftTopicFromLessons, validateExamSetup, } from "./domain.js";
 import { clearDraft, loadDraft, loadDraftResumeContext, loadDrafts, loadProfile, loadSources, saveDraft, saveDraftResumeContext, saveProfile, saveSources, setActiveDraftId } from "./storage.js";
 import { escapeHtml, formatArabicDate, icon } from "./ui.js";
-import { isAiIllustrationEligible, questionVisualTypeLabel, renderQuestionVisualSvg, stripQuestionVisualIllustration, validateQuestionVisualSpec } from "./question-visual.js";
+import { questionVisualAssetRequirement, questionVisualTypeLabel, renderQuestionVisualSvg, stripQuestionVisualIllustration, validateQuestionVisualSpec } from "./question-visual.js";
 import { buildStandaloneExamDocument, downloadWordHtml, interleaveAssessmentItems, printHtmlDocument, safeExportFileName } from "./exam-export.js";
 import { buildSourceDrivePath, changeSourceStatus, createEmptySourceDraft, createManagedSource, findDuplicateContentSource, findDuplicateSource, sourceSubjectLabel, SOURCE_KINDS, SOURCE_SEMESTERS, validateSourceDraft } from "./source-domain.js";
 import { createRegistryBackup, mergeSourceRegistry, parseRegistryBackup } from "./source-registry.js";
@@ -18,6 +18,8 @@ import { buildLessonCatalog } from "./lesson-catalog.js";
 import { buildCuratedBookStructure } from "./book-content-tree.js";
 import { applyGeneratedQuestions, buildQuestionGenerationRequest, QuestionGenerationService, SOURCE_GENERATION_VERSION, splitQuestionGenerationBatches, } from "./question-generation.js";
 import { ASSESSMENT_GENERATION_V2_VERSION, applyWholeExamQuestionsV2, buildWholeExamGenerationRequestV2, parseWholeExamGenerationResponseV2, } from "./assessment-generation-v2.js";
+import { VisualJobService, isVisualJobPending, requiredVisualJobItems } from "./visual-jobs.js";
+import { scientificItemIsComplete, scientificItemMatchesVisual } from "./scientific-item.js";
 import { ASSESSMENT_ITEM_WRITING_RULES, INTERNATIONAL_SCIENCE_QUESTION_STYLE_PRINCIPLES, SCIENCE_ASSESSMENT_POLICY_DOCUMENT_PATH, SCIENCE_ASSESSMENT_POLICY_PUBLISHED, SCIENCE_ASSESSMENT_POLICY_TITLE, SCIENCE_ASSESSMENT_POLICY_VERSION, EXAM_TITLE_OPTIONS, getOfficialAssessmentSpec, getOfficialFinalExamSpec, getOfficialShortTestSpec, } from "./assessment-policy.js";
 const appRoot = document.querySelector("#app");
 if (!appRoot)
@@ -33,6 +35,9 @@ const googleDriveService = centralSourceStore && isGoogleDriveConfigured(runtime
     : null;
 const questionGenerationService = centralSourceStore
     ? new QuestionGenerationService(runtimeConfig, () => centralSourceStore.getActiveSession())
+    : null;
+const visualJobService = centralSourceStore
+    ? new VisualJobService(runtimeConfig, () => centralSourceStore.getActiveSession())
     : null;
 const savedDraft = loadDraft();
 const savedProfile = loadProfile();
@@ -84,13 +89,13 @@ const state = {
     lessonCatalogBusy: false,
     lessonCatalogMessage: "",
     lessonCatalogActiveUnitKey: "",
-    visualEnhancementBusyIds: new Set(),
-    visualEnhancementMessages: {},
-    visualEnhancementAutoStarted: false,
+    visualJobSyncBusy: false,
 };
 if (savedDraft)
     restoreDraftRuntimeContext(savedDraft);
 let saveTimer;
+let visualJobPollTimer;
+const VISUAL_JOB_POLL_INTERVAL_MS = 3_500;
 function persistDraftCheckpoint(showFailure = true) {
     if (saveTimer) {
         window.clearTimeout(saveTimer);
@@ -197,6 +202,8 @@ function setStep(step) {
 function invalidateGeneratedQuestions() {
     state.draft.plan = [];
     state.draft.selectedProposalByPlanItem = {};
+    state.draft.visualJobs = {};
+    stopVisualJobPolling();
     state.draft.generationVersion = "";
     state.draft.generationModel = "";
     state.draft.generatedAt = "";
@@ -633,11 +640,10 @@ function renderSetupStep() {
       <span><strong>الإثراء من مصادر علمية رسمية وموثوقة</strong><small>يبقى الكتاب المدرسي المرجع الحاكم، ويستخدم واثق البحث الموثق فقط لتنويع السياقات والبيانات والرسوم دون إضافة معرفة مطلوبة خارج المنهج.</small></span>
     </label>
 
-    <label class="trusted-enrichment-card visual-enhancement-card ${state.draft.visualEnhancementEnabled ? "enabled" : ""}">
-      <input id="visual-enhancement-toggle" type="checkbox" ${state.draft.visualEnhancementEnabled ? "checked" : ""}/>
-      <span class="trusted-enrichment-check">${state.draft.visualEnhancementEnabled ? icon("check") : ""}</span>
-      <span><strong>المرئيات التعليمية ثنائية الأبعاد</strong><small>يولّد واثق تلقائيًا صور 2D واضحة للمشاهد السياقية والكهرباء الساكنة الآمنة، ثم يفحصها علميًا قبل اعتمادها. تبقى القيم والأسهم والمخططات الحسابية حتمية، وعند تعذر الصورة يستخدم رسمًا ثنائي الأبعاد مصقولًا بدل الخطوط البدائية.</small></span>
-    </label>
+    <div class="trusted-enrichment-card visual-enhancement-card enabled durable-visual-policy">
+      <span class="trusted-enrichment-check">${icon("check")}</span>
+      <span><strong>منظومة الأصول البصرية الدائمة</strong><small>المشاهد المؤهلة ومخططات القوى لا تُعامل كزينة اختيارية: ينشئ واثق لها مهامًا محفوظة في Supabase، ويستأنفها بعد الانقطاع، ولا يسمح باعتماد الاختبار أو تصديره قبل اكتمال الصورة المطلوبة وفحصها علميًا.</small></span>
+    </div>
 
     ${officialSettings}
     ${renderCompliance(validation)}
@@ -685,25 +691,50 @@ function renderMarkScheme(points) {
         return "";
     return `<div class="proposal-mark-scheme"><strong>نقاط التصحيح (${points.length})</strong><ol>${points.map((point) => `<li>${escapeHtml(point)}</li>`).join("")}</ol></div>`;
 }
+function visualJobMessage(job) {
+    if (!job)
+        return "لم تُنشأ مهمة الصورة بعد.";
+    if (job.status === "queued")
+        return "الصورة في طابور التنفيذ الدائم.";
+    if (job.status === "generating")
+        return `يجري توليد الأصل البصري 2D، المحاولة ${job.attemptCount} من ${job.maxAttempts}.`;
+    if (job.status === "validating")
+        return "تم توليد الصورة ويجري الآن فحصها علميًا وبصريًا.";
+    if (job.status === "retry_pending")
+        return job.errorMessage || "سيعيد واثق محاولة الصورة تلقائيًا.";
+    if (job.status === "ready")
+        return "اكتمل الأصل البصري واعتمد علميًا، وهو المستخدم في المعاينة وWord وPDF.";
+    if (job.status === "failed")
+        return job.errorMessage || "فشلت مهمة الصورة بعد استنفاد المحاولات.";
+    return "أُلغيت مهمة الصورة.";
+}
 function renderPlanVisual(item, compact = false) {
     if (!item.visual || item.visual.type === "none")
         return "";
-    const eligible = isAiIllustrationEligible(item.visual);
-    const hasIllustration = Boolean(item.visual.illustration?.validated && eligible);
-    const busy = state.visualEnhancementBusyIds.has(item.id);
-    const modeLabel = hasIllustration
-        ? "صورة تعليمية 2D مولدة ومدققة علميًا"
-        : eligible
-            ? "رسم 2D مصقول مع محاولة تلقائية لتوليد صورة مدققة"
-            : "مخطط علمي دقيق ومصقول قابل للتحقق";
-    const controls = !compact && eligible && state.draft.visualEnhancementEnabled ? `<div class="visual-action-row">
-    <button class="secondary-btn compact" data-action="${hasIllustration ? "regenerate-visual" : "enhance-visual"}" data-plan-id="${escapeHtml(item.id)}" ${(busy || state.draft.status === "معتمد") ? "disabled" : ""}>${icon("spark")} ${busy ? "جارٍ تحسين الصورة…" : hasIllustration ? "إعادة توليد الصورة" : "تحسين الصورة ثنائية الأبعاد"}</button>
-    ${hasIllustration ? `<button class="text-btn" data-action="restore-deterministic-visual" data-plan-id="${escapeHtml(item.id)}" ${(busy || state.draft.status === "معتمد") ? "disabled" : ""}>استخدام الرسم الحتمي فقط</button>` : ""}
+    const requirement = questionVisualAssetRequirement(item.visual);
+    const job = state.draft.visualJobs[item.id];
+    const ready = Boolean(job?.status === "ready" && job.asset?.validated && item.visual.illustration?.validated);
+    const pending = Boolean(job && isVisualJobPending(job.status));
+    const failed = job?.status === "failed" || job?.status === "cancelled";
+    const modeLabel = !requirement.required
+        ? "مخطط علمي حتمي دقيق"
+        : ready
+            ? requirement.mode === "overlay" ? "أصل 2D مع طبقة شرح علمية" : "صورة تعليمية 2D معتمدة"
+            : pending
+                ? "مهمة بصرية دائمة قيد التنفيذ"
+                : failed
+                    ? "فشل الأصل البصري المطلوب"
+                    : "أصل بصري مطلوب قبل الاعتماد";
+    const controls = !compact && requirement.required ? `<div class="visual-action-row">
+    <button class="secondary-btn compact" data-action="${ready ? "regenerate-visual-job" : failed ? "retry-visual-job" : "sync-visual-job"}" data-plan-id="${escapeHtml(item.id)}" ${(pending || state.draft.status === "معتمد" || state.visualJobSyncBusy) ? "disabled" : ""}>${icon("spark")} ${pending ? "جارٍ التنفيذ…" : ready ? "إعادة توليد الأصل" : failed ? "إعادة المحاولة" : "إنشاء الأصل 2D"}</button>
   </div>` : "";
-    const message = !compact && state.visualEnhancementMessages[item.id]
-        ? `<p class="visual-enhancement-message" aria-live="polite">${escapeHtml(state.visualEnhancementMessages[item.id])}</p>`
+    const message = !compact && requirement.required
+        ? `<p class="visual-enhancement-message ${failed ? "error" : ready ? "success" : ""}" aria-live="polite">${escapeHtml(visualJobMessage(job))}</p>`
         : "";
-    return `<section class="plan-shared-visual ${compact ? "compact" : ""}"><div class="visual-heading"><strong>${escapeHtml(questionVisualTypeLabel(item.visual.type))}</strong><span>${escapeHtml(modeLabel)}</span></div>${renderQuestionVisualSvg(item.visual)}${controls}${message}</section>`;
+    const fallbackNotice = requirement.required && !ready
+        ? `<div class="visual-fallback-warning">المعروض حاليًا مخطط احتياطي للمراجعة فقط، ولا يُعد أصلًا بصريًا نهائيًا.</div>`
+        : "";
+    return `<section class="plan-shared-visual ${compact ? "compact" : ""}"><div class="visual-heading"><strong>${escapeHtml(questionVisualTypeLabel(item.visual.type))}</strong><span>${escapeHtml(modeLabel)}</span></div>${renderQuestionVisualSvg(item.visual)}${fallbackNotice}${controls}${message}</section>`;
 }
 function renderPlanItem(item, index) {
     const chosen = state.draft.selectedProposalByPlanItem[item.id];
@@ -806,9 +837,13 @@ function visualSignature(item) {
 function reviewReadiness(selected) {
     const setupValid = validateExamSetup(state.draft).valid;
     const markTotal = state.draft.plan.reduce((sum, item) => sum + item.marks, 0);
-    const groundedGeneration = state.draft.generationVersion === SOURCE_GENERATION_VERSION;
+    const groundedGeneration = state.draft.generationVersion === SOURCE_GENERATION_VERSION
+        || state.draft.generationVersion === ASSESSMENT_GENERATION_V2_VERSION;
     const markSchemesComplete = selected.length === state.draft.plan.length
         && selected.every(({ item, proposal }) => proposal.markScheme?.length === item.marks);
+    const scientificModelsComplete = selected.length === state.draft.plan.length
+        && selected.every(({ item, proposal }) => scientificItemIsComplete(proposal.scientificItem)
+            && scientificItemMatchesVisual(proposal.scientificItem, item.visual));
     const visualItems = state.draft.plan.filter((item) => item.visual && item.visual.type !== "none");
     const visualValidity = visualItems.every((item) => {
         try {
@@ -821,13 +856,27 @@ function reviewReadiness(selected) {
     });
     const signatures = visualItems.map(visualSignature).filter(Boolean);
     const visualsUnique = signatures.length === new Set(signatures).size;
+    const requiredVisualItems = visualItems.filter((item) => questionVisualAssetRequirement(item.visual).required);
+    const requiredVisualsReady = requiredVisualItems.every((item) => {
+        const requirement = questionVisualAssetRequirement(item.visual);
+        const job = state.draft.visualJobs[item.id];
+        const illustration = item.visual?.illustration;
+        return job?.status === "ready"
+            && job.requiredMode === requirement.mode
+            && Boolean(job.asset?.validated)
+            && job.asset?.renderMode === requirement.mode
+            && Boolean(illustration?.validated)
+            && job.asset?.assetPath === illustration?.assetPath;
+    });
     const checks = [
         { label: "ارتباط الدروس بالمصدر", okay: state.draft.sourceReferences.length > 0 },
         { label: "مجموع الدرجات", okay: markTotal === state.draft.totalMarks },
         { label: "اختيار مفردات الخطة", okay: isPlanComplete(state.draft) },
         { label: "توليد الأسئلة من المصدر", okay: groundedGeneration },
         { label: "نموذج تصحيح لكل درجة", okay: markSchemesComplete },
-        { label: `العناصر البصرية (${visualItems.length})`, okay: visualValidity && visualsUnique },
+        { label: "النموذج العلمي الموحد لكل مفردة", okay: scientificModelsComplete },
+        { label: `العناصر البصرية الحتمية (${visualItems.length})`, okay: visualValidity && visualsUnique },
+        { label: `الأصول البصرية المطلوبة (${requiredVisualItems.length})`, okay: requiredVisualsReady },
         { label: "بيانات الاختبار والمواصفة", okay: setupValid },
     ];
     return { ready: checks.every((check) => check.okay), checks };
@@ -840,6 +889,43 @@ function renderStudentPaper(subject, paperLayout) {
     <div class="paper-questions">${paperLayout.html}</div>
     <footer class="paper-footer">انتهت الأسئلة</footer>
   </section>`;
+}
+async function verifyRequiredVisualAssetsForExport() {
+    const selected = selectedPaperItems();
+    if (selected.some(({ item, proposal }) => !scientificItemIsComplete(proposal.scientificItem)
+        || !scientificItemMatchesVisual(proposal.scientificItem, item.visual))) {
+        throw new Error("تعذر التصدير لأن إحدى المفردات لا تطابق نموذجها العلمي الموحد أو مرئيها المشتق منه.");
+    }
+    const required = state.draft.plan.filter((item) => item.visual && questionVisualAssetRequirement(item.visual).required);
+    const urls = required.map((item) => item.visual?.illustration?.url ?? "");
+    if (urls.some((url) => !url))
+        throw new Error("تعذر التصدير لأن أحد الأصول البصرية المطلوبة غير مرتبط بالمفردة.");
+    await Promise.all([...new Set(urls)].map(async (url) => {
+        const response = await fetch(url, { mode: "cors", credentials: "omit" });
+        if (!response.ok)
+            throw new Error(`تعذر الوصول إلى أحد الأصول البصرية (${response.status}).`);
+        const blob = await response.blob();
+        if (!blob.type.startsWith("image/") || blob.size === 0)
+            throw new Error("أحد الأصول البصرية المحفوظة ليس صورة صالحة للتصدير.");
+    }));
+}
+async function executeExamExport(action, approved) {
+    try {
+        await verifyRequiredVisualAssetsForExport();
+        const kind = action.includes("answer") ? "answer" : "student";
+        const document = exportDocumentHtml(kind);
+        if (action.endsWith("word")) {
+            await downloadWordHtml(document.fileName, document.html);
+            showToast(approved ? "تم تجهيز ملف Word للتنزيل بعد التحقق من جميع الأصول البصرية." : "تم تجهيز نسخة مسودة غير معتمدة للمراجعة.");
+            return;
+        }
+        if (!printHtmlDocument(document.fileName, document.html)) {
+            showToast("تعذر فتح نافذة الطباعة. اسمح بالنوافذ المنبثقة ثم أعد المحاولة.");
+        }
+    }
+    catch (error) {
+        showToast(error instanceof Error ? error.message : "تعذر تجهيز التصدير.");
+    }
 }
 function exportDocumentHtml(kind) {
     const selected = selectedPaperItems();
@@ -1350,9 +1436,7 @@ function handleAction(action, element) {
         state.questionGenerationBusy = false;
         state.questionGenerationMessage = "";
         state.sourceRetrievalMessage = "";
-        state.visualEnhancementBusyIds.clear();
-        state.visualEnhancementMessages = {};
-        state.visualEnhancementAutoStarted = false;
+        stopVisualJobPolling();
         if (profile) {
             state.draft.school = profile.school;
             state.draft.directorate = profile.directorate;
@@ -1373,13 +1457,9 @@ function handleAction(action, element) {
         restoreDraftRuntimeContext(loaded);
         // ثبّت الترقية غير المتلفة فورًا حتى لا تعود المسودة إلى خطوة المحتوى في الزيارة التالية.
         persistDraftCheckpoint(false);
-        state.visualEnhancementBusyIds.clear();
-        state.visualEnhancementMessages = {};
-        state.visualEnhancementAutoStarted = false;
         navigate("wizard");
-        if (loaded.currentStep >= 3 && loaded.status !== "معتمد") {
-            window.setTimeout(() => { void enhanceEligibleVisuals(); }, 0);
-        }
+        if (loaded.currentStep >= 3)
+            window.setTimeout(() => { void syncVisualJobs(true); }, 0);
         return;
     }
     if (action === "preview-library-exam") {
@@ -1389,11 +1469,9 @@ function handleAction(action, element) {
         state.draft = loaded;
         setActiveDraftId(loaded.id);
         restoreDraftRuntimeContext(loaded);
-        state.visualEnhancementBusyIds.clear();
-        state.visualEnhancementMessages = {};
-        state.visualEnhancementAutoStarted = false;
         state.draft.currentStep = 4;
         navigate("wizard");
+        window.setTimeout(() => { void syncVisualJobs(false); }, 0);
         return;
     }
     if (["library-export-student-word", "library-export-student-pdf", "library-export-answer-word", "library-export-answer-pdf"].includes(action)) {
@@ -1401,28 +1479,15 @@ function handleAction(action, element) {
         if (!loaded || loaded.currentStep < 4 || !isPlanComplete(loaded))
             return showToast("لا يوجد اختبار مكتمل قابل للتصدير.");
         state.draft = loaded;
-        const kind = action.includes("answer") ? "answer" : "student";
-        const document = exportDocumentHtml(kind);
-        if (action.endsWith("word")) {
-            void downloadWordHtml(document.fileName, document.html)
-                .then(() => showToast(loaded.status === "معتمد" ? "تم تجهيز ملف Word للتنزيل." : "تم تجهيز نسخة مسودة غير معتمدة للمراجعة."))
-                .catch((error) => showToast(error instanceof Error ? error.message : "تعذر تجهيز ملف Word."));
-        }
-        else if (!printHtmlDocument(document.fileName, document.html)) {
-            showToast("تعذر فتح نافذة الطباعة. اسمح بالنوافذ المنبثقة ثم أعد المحاولة.");
-        }
+        if (!reviewReadiness(selectedPaperItems()).ready)
+            return showToast("لا يمكن التصدير قبل اكتمال الأصول البصرية وجميع فحوص المراجعة.");
+        void executeExamExport(action, loaded.status === "معتمد");
         return;
     }
-    if (action === "enhance-visual" || action === "regenerate-visual") {
+    if (["sync-visual-job", "retry-visual-job", "regenerate-visual-job"].includes(action)) {
         const planItemId = element.dataset.planId ?? "";
         if (planItemId)
-            void enhancePlanVisual(planItemId);
-        return;
-    }
-    if (action === "restore-deterministic-visual") {
-        const planItemId = element.dataset.planId ?? "";
-        if (planItemId)
-            restoreDeterministicVisual(planItemId);
+            void retryVisualJob(planItemId);
         return;
     }
     if (action === "save-now")
@@ -1451,16 +1516,11 @@ function handleAction(action, element) {
             showToast("أكمل اختيار مفردات الاختبار قبل التصدير.");
             return;
         }
-        const kind = action.includes("answer") ? "answer" : "student";
-        const document = exportDocumentHtml(kind);
-        if (action.endsWith("word")) {
-            void downloadWordHtml(document.fileName, document.html)
-                .then(() => showToast(state.draft.status === "معتمد" ? "تم تجهيز ملف Word للتنزيل مع تحويل الرسومات إلى صور واضحة." : "تم تجهيز نسخة مسودة غير معتمدة للمراجعة."))
-                .catch((error) => showToast(error instanceof Error ? error.message : "تعذر تجهيز ملف Word."));
+        if (!reviewReadiness(selectedPaperItems()).ready) {
+            showToast("لا يمكن التصدير قبل اكتمال الأصول البصرية وجميع فحوص المراجعة.");
+            return;
         }
-        else if (!printHtmlDocument(document.fileName, document.html)) {
-            showToast("تعذر فتح نافذة الطباعة. اسمح بالنوافذ المنبثقة ثم أعد المحاولة.");
-        }
+        void executeExamExport(action, state.draft.status === "معتمد");
         return;
     }
     if (action === "previous-step")
@@ -1486,9 +1546,7 @@ function handleAction(action, element) {
         state.questionGenerationBusy = false;
         state.questionGenerationMessage = "";
         state.sourceRetrievalMessage = "";
-        state.visualEnhancementBusyIds.clear();
-        state.visualEnhancementMessages = {};
-        state.visualEnhancementAutoStarted = false;
+        stopVisualJobPolling();
         showToast("تم حذف المسودة المحلية.");
         return;
     }
@@ -1602,115 +1660,110 @@ function handleAction(action, element) {
         return;
     }
 }
-const MAX_AUTO_VISUAL_ENHANCEMENTS = 4;
-function visualEnhancementProposal(item) {
-    return selectedProposal(state.draft, item) ?? item.proposals[0];
+function visualJobSubject() {
+    return SUBJECTS.find((entry) => entry.id === state.draft.subjectId)?.label ?? state.draft.subjectId;
 }
-async function enhancePlanVisual(planItemId, automatic = false) {
+function invalidateVisualJobForPlanItem(planItemId) {
+    delete state.draft.visualJobs[planItemId];
     const item = state.draft.plan.find((entry) => entry.id === planItemId);
-    if (!item?.visual || item.visual.type === "none" || !isAiIllustrationEligible(item.visual)) {
-        if (!automatic)
-            showToast("هذا الرسم يجب أن يبقى حتميًا لحماية دقته العلمية.");
-        return false;
-    }
-    if (!state.draft.visualEnhancementEnabled) {
-        if (!automatic)
-            showToast("فعّل خيار الرسوم الهجينة أولًا؛ بقي الرسم العلمي الحتمي مستخدمًا.");
-        return false;
-    }
-    if (state.draft.status === "معتمد" || state.visualEnhancementBusyIds.has(planItemId))
-        return false;
-    if (!questionGenerationService || !centralSourceStore?.currentSession || state.sourceStorageStatus !== "متصل") {
-        const message = "يلزم تسجيل دخول مالك المنصة لتوليد الصورة؛ بقي الرسم العلمي الحتمي محفوظًا.";
-        state.visualEnhancementMessages[planItemId] = message;
-        if (!automatic)
-            showToast(message);
-        render();
-        return false;
-    }
-    const proposal = visualEnhancementProposal(item);
-    if (!proposal || state.draft.grade === null)
-        return false;
-    const subject = SUBJECTS.find((entry) => entry.id === state.draft.subjectId)?.label ?? state.draft.subjectId;
-    const previousAssetPath = item.visual.illustration?.assetPath ?? "";
-    const startedDraftId = state.draft.id;
-    state.visualEnhancementBusyIds.add(planItemId);
-    state.visualEnhancementMessages[planItemId] = "جارٍ إنشاء صورة 2D ثم فحصها علميًا؛ الرسم الحتمي باقٍ كخطة رجوع.";
-    render();
-    try {
-        const result = await questionGenerationService.generateIllustration({
-            action: "generate_visual_illustration",
-            draftId: state.draft.id,
-            planItemId: item.id,
-            grade: state.draft.grade,
-            subject,
-            lessonLabel: item.lessonLabel,
-            questionText: `${proposal.stimulus ? `${proposal.stimulus} ` : ""}${proposal.text}`.trim(),
-            sourceSupport: proposal.sourceSupport || item.outcomeLabel || item.lessonLabel,
-            ...(previousAssetPath ? { previousAssetPath } : {}),
-            visual: stripQuestionVisualIllustration(item.visual),
-        });
-        if (state.draft.id !== startedDraftId)
-            return false;
-        if (result.status === "ready" && result.illustration) {
-            item.visual = { ...stripQuestionVisualIllustration(item.visual), illustration: result.illustration };
-            state.visualEnhancementMessages[planItemId] = "تم اعتماد صورة 2D بعد الفحص العلمي، مع الاحتفاظ بالرسم الحتمي خلفها.";
-            scheduleSave();
-            if (!automatic)
-                showToast("تم تحسين الرسم بصريًا واعتماده علميًا.");
-            return true;
+    if (item?.visual?.illustration)
+        item.visual = stripQuestionVisualIllustration(item.visual);
+}
+function applyVisualJobSnapshots(jobs) {
+    let changed = false;
+    for (const job of jobs) {
+        const previous = state.draft.visualJobs[job.planItemId];
+        if (!previous || JSON.stringify(previous) !== JSON.stringify(job)) {
+            state.draft.visualJobs[job.planItemId] = job;
+            changed = true;
         }
-        state.visualEnhancementMessages[planItemId] = result.reason || "لم تجتز الصورة الفحص؛ استخدم واثق الرسم الحتمي دون تعطيل الاختبار.";
-        if (!automatic)
-            showToast("لم تعتمد الصورة الجديدة؛ بقي الرسم الحتمي الآمن.");
-        return false;
+        const item = state.draft.plan.find((entry) => entry.id === job.planItemId);
+        if (!item?.visual)
+            continue;
+        if (job.status === "ready" && job.asset) {
+            if (item.visual.illustration?.assetPath !== job.asset.assetPath) {
+                item.visual = { ...stripQuestionVisualIllustration(item.visual), illustration: job.asset };
+                changed = true;
+            }
+        }
+        else if (item.visual.illustration) {
+            item.visual = stripQuestionVisualIllustration(item.visual);
+            changed = true;
+        }
+    }
+    if (changed)
+        persistDraftCheckpoint(false);
+    return changed;
+}
+function hasPendingVisualJobs() {
+    return Object.values(state.draft.visualJobs).some((job) => isVisualJobPending(job.status));
+}
+function stopVisualJobPolling() {
+    if (visualJobPollTimer)
+        window.clearTimeout(visualJobPollTimer);
+    visualJobPollTimer = undefined;
+}
+function scheduleVisualJobPolling() {
+    stopVisualJobPolling();
+    if (!hasPendingVisualJobs() || !visualJobService || state.sourceStorageStatus !== "متصل")
+        return;
+    const draftId = state.draft.id;
+    visualJobPollTimer = window.setTimeout(() => {
+        visualJobPollTimer = undefined;
+        if (state.draft.id !== draftId)
+            return;
+        void syncVisualJobs(false);
+    }, VISUAL_JOB_POLL_INTERVAL_MS);
+}
+async function syncVisualJobs(enqueueRequired) {
+    if (!visualJobService || !centralSourceStore?.currentSession || state.sourceStorageStatus !== "متصل" || state.draft.grade === null)
+        return;
+    if (state.visualJobSyncBusy)
+        return;
+    state.visualJobSyncBusy = true;
+    try {
+        const jobs = enqueueRequired
+            ? await visualJobService.enqueue(state.draft.id, requiredVisualJobItems(state.draft, visualJobSubject()))
+            : await visualJobService.list(state.draft.id);
+        applyVisualJobSnapshots(jobs);
+        state.questionGenerationMessage = jobs.some((job) => isVisualJobPending(job.status))
+            ? "تم حفظ مهام المرئيات في Supabase، ويستمر تنفيذها حتى لو غادرت الصفحة."
+            : jobs.some((job) => job.status === "failed")
+                ? "اكتملت بعض المرئيات وتعذر بعضها؛ افتح المفردة لإعادة المحاولة قبل الاعتماد."
+                : jobs.length ? "اكتملت الأصول البصرية المطلوبة واعتمدت علميًا." : state.questionGenerationMessage;
     }
     catch (error) {
-        if (state.draft.id !== startedDraftId)
-            return false;
-        const message = error instanceof Error ? error.message : "تعذر تحسين الصورة.";
-        state.visualEnhancementMessages[planItemId] = `${message} بقي الرسم الحتمي محفوظًا.`;
-        if (!automatic)
-            showToast(state.visualEnhancementMessages[planItemId]);
-        return false;
+        state.questionGenerationMessage = error instanceof Error ? error.message : "تعذر مزامنة مهام المرئيات.";
     }
     finally {
-        state.visualEnhancementBusyIds.delete(planItemId);
-        if (state.draft.id === startedDraftId)
-            render();
+        state.visualJobSyncBusy = false;
+        render();
+        scheduleVisualJobPolling();
     }
 }
-async function enhanceEligibleVisuals() {
-    if (state.visualEnhancementAutoStarted || !state.draft.visualEnhancementEnabled || state.draft.status === "معتمد")
+async function retryVisualJob(planItemId) {
+    if (!visualJobService || state.draft.status === "معتمد")
         return;
-    state.visualEnhancementAutoStarted = true;
-    const candidates = state.draft.plan
-        .filter((item) => item.visual && item.visual.type !== "none" && isAiIllustrationEligible(item.visual) && !item.visual.illustration?.validated)
-        .slice(0, MAX_AUTO_VISUAL_ENHANCEMENTS);
-    if (!candidates.length)
+    const job = state.draft.visualJobs[planItemId];
+    if (!job) {
+        await syncVisualJobs(true);
         return;
-    state.questionGenerationMessage = `تم بناء الاختبار، ويجري الآن تجهيز ${candidates.length} من المرئيات التعليمية ثنائية الأبعاد وفحصها علميًا.`;
-    render();
-    let approved = 0;
-    for (const item of candidates) {
-        if (await enhancePlanVisual(item.id, true))
-            approved += 1;
     }
-    state.questionGenerationMessage = approved === candidates.length
-        ? `اكتمل تصميم الاختبار واعتماد ${approved} من المرئيات التعليمية ثنائية الأبعاد علميًا.`
-        : `اكتمل تصميم الاختبار. اعتُمدت ${approved} من ${candidates.length} صور 2D، واستُخدمت رسوم ثنائية الأبعاد مصقولة للبقية.`;
-    scheduleSave();
+    state.visualJobSyncBusy = true;
     render();
-}
-function restoreDeterministicVisual(planItemId) {
-    const item = state.draft.plan.find((entry) => entry.id === planItemId);
-    if (!item?.visual || state.draft.status === "معتمد")
-        return;
-    item.visual = stripQuestionVisualIllustration(item.visual);
-    state.visualEnhancementMessages[planItemId] = "تمت العودة إلى الرسم العلمي الحتمي فقط.";
-    scheduleSave();
-    render();
-    showToast("تم استخدام الرسم الحتمي فقط.");
+    try {
+        const jobs = await visualJobService.retry(job.id);
+        applyVisualJobSnapshots(jobs);
+        showToast("أعيدت مهمة الصورة إلى طابور التنفيذ الدائم.");
+    }
+    catch (error) {
+        showToast(error instanceof Error ? error.message : "تعذر إعادة مهمة الصورة.");
+    }
+    finally {
+        state.visualJobSyncBusy = false;
+        render();
+        scheduleVisualJobPolling();
+    }
 }
 function mergeReusablePlan(expected, existing) {
     const existingById = new Map(existing.map((item) => [item.id, item]));
@@ -1751,13 +1804,14 @@ async function nextStep() {
         state.draft.plan = mergeReusablePlan(expectedPlan, state.draft.plan);
         const validPlanIds = new Set(state.draft.plan.map((item) => item.id));
         state.draft.selectedProposalByPlanItem = Object.fromEntries(Object.entries(state.draft.selectedProposalByPlanItem).filter(([planItemId]) => validPlanIds.has(planItemId)));
+        state.draft.visualJobs = Object.fromEntries(Object.entries(state.draft.visualJobs).filter(([planItemId]) => validPlanIds.has(planItemId)));
         if (!persistDraftCheckpoint())
             return;
         const generated = await generateQuestionsForPlan(state.draft.plan);
         if (!generated)
             return;
         setStep(3);
-        await enhanceEligibleVisuals();
+        await syncVisualJobs(true);
         return;
     }
     if (step === 3) {
@@ -1921,6 +1975,7 @@ async function regeneratePlanItem(item) {
             delete state.draft.selectedProposalByPlanItem[item.id];
             state.draft.generationVersion = SOURCE_GENERATION_VERSION;
         }
+        invalidateVisualJobForPlanItem(item.id);
         state.draft.generationModel = response.model;
         state.draft.generatedAt = response.generatedAt;
         state.questionGenerationBusy = false;
@@ -1929,6 +1984,7 @@ async function regeneratePlanItem(item) {
             : "تم توليد ثلاثة بدائل مشابهة لهذه المفردة.";
         scheduleSave();
         render();
+        window.setTimeout(() => { void syncVisualJobs(true); }, 0);
         showToast(state.questionGenerationMessage);
     }
     catch (error) {
@@ -2233,15 +2289,6 @@ function bindSetupStep() {
         scheduleSave();
         render();
     });
-    document.querySelector("#visual-enhancement-toggle")?.addEventListener("change", (event) => {
-        state.draft.visualEnhancementEnabled = event.target.checked;
-        state.visualEnhancementAutoStarted = false;
-        state.questionGenerationMessage = state.draft.visualEnhancementEnabled
-            ? "سيحافظ واثق على الرسوم الحتمية، ويضيف صورًا ثنائية الأبعاد مدققة للمشاهد المؤهلة فقط."
-            : "تم إيقاف تحسين الصور الجديدة؛ وتبقى الرسوم الحالية والأسئلة المكتملة محفوظة.";
-        scheduleSave();
-        render();
-    });
     document.querySelector("#duration-input")?.addEventListener("change", (event) => {
         state.draft.durationMinutes = Number(event.target.value);
         scheduleSave();
@@ -2305,8 +2352,10 @@ function bindPlanStep() {
             if (!planId)
                 return;
             state.draft.selectedProposalByPlanItem[planId] = input.value;
+            invalidateVisualJobForPlanItem(planId);
             scheduleSave();
             render();
+            window.setTimeout(() => { void syncVisualJobs(true); }, 0);
         });
     });
     document.querySelectorAll("[data-regenerate]").forEach((button) => {
@@ -2754,6 +2803,8 @@ async function loadAndSyncCentralSources() {
         render();
         showToast("تمت مزامنة سجل المصادر المركزي.");
         void loadGoogleDriveStatus();
+        if (state.draft.currentStep >= 3)
+            void syncVisualJobs(true);
     }
     catch (error) {
         markCentralStorageError(error);

@@ -7,6 +7,49 @@ import { VisualJobService, requiredVisualJobItems } from "../dist/assets/visual-
 
 const text = async (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
+function electrostaticScientificItem() {
+  return {
+    version: "scientific-item-v1",
+    kind: "electrostatic_system",
+    phenomenon: "الشحن بالدلك",
+    primaryEntity: "المسطرة البلاستيكية",
+    secondaryEntity: "قطعة القماش",
+    visualObject: "مسطرة بلاستيكية",
+    relationship: "charge_transfer",
+    primaryCharge: "negative",
+    secondaryCharge: "positive",
+    transferredParticle: "الإلكترونات",
+    quantities: [],
+    resultValue: 0,
+    resultUnit: "",
+    resultDirection: "none",
+    expectedResult: "انتقال الإلكترونات وتكون شحنتين متعاكستين",
+  };
+}
+
+function forceScientificItem() {
+  return {
+    version: "scientific-item-v1",
+    kind: "force_system",
+    phenomenon: "القوة المحصلة",
+    primaryEntity: "عربة التسوق",
+    secondaryEntity: "سطح أفقي",
+    visualObject: "عربة تسوق",
+    relationship: "resultant_force",
+    primaryCharge: "unknown",
+    secondaryCharge: "unknown",
+    transferredParticle: "",
+    quantities: [
+      { kind: "applied_force", label: "الدفع", value: 8, unit: "N", direction: "right" },
+      { kind: "friction_force", label: "الاحتكاك", value: 6, unit: "N", direction: "left" },
+    ],
+    resultValue: 2,
+    resultUnit: "N",
+    resultDirection: "right",
+    expectedResult: "2 N إلى اليمين",
+  };
+}
+
 function generatedDraft() {
   const draft = createEmptyDraft(new Date("2026-08-02T12:00:00Z"));
   draft.grade = 10;
@@ -21,7 +64,7 @@ function generatedDraft() {
       cognitiveLevel: "تطبيق",
       questionType: "إجابة قصيرة",
       marks: 2,
-      proposals: [{ id: "A", stimulus: "دلك طالب مسطرة بقطعة قماش.", text: "فسر انجذاب الورق.", answer: "انتقال إلكترونات.", sourceSupport: "الشحن بالدلك" }],
+      proposals: [{ id: "A", stimulus: "دلك طالب مسطرة بقطعة قماش.", text: "فسر انجذاب الورق.", answer: "انتقال إلكترونات.", sourceSupport: "الشحن بالدلك", scientificItem: electrostaticScientificItem() }],
       visual: {
         ...emptyQuestionVisualSpec(),
         type: "electrostatic_diagram",
@@ -41,7 +84,7 @@ function generatedDraft() {
       cognitiveLevel: "تطبيق",
       questionType: "إجابة طويلة",
       marks: 3,
-      proposals: [{ id: "B", text: "احسب محصلة القوى.", answer: "2 N", sourceSupport: "القوة المحصلة" }],
+      proposals: [{ id: "B", stimulus: "تؤثر قوة دفع 8 N إلى اليمين وقوة احتكاك 6 N إلى اليسار.", text: "احسب محصلة القوى.", answer: "2 N إلى اليمين", sourceSupport: "القوة المحصلة", scientificItem: forceScientificItem() }],
       visual: {
         ...emptyQuestionVisualSpec(),
         type: "force_diagram",
@@ -67,6 +110,8 @@ test("يبني مهمة replace للمشهد ومهمة overlay لمخطط ال�
   assert.equal(items[0].requiredMode, "replace");
   assert.equal(items[1].requiredMode, "overlay");
   assert.equal(items[1].visual.illustration, undefined);
+  assert.equal(items[0].scientificItem.relationship, "charge_transfer");
+  assert.equal(items[1].scientificItem.quantities[0].value, 8);
 });
 
 test("يقسم VisualJobService الاختبارات الكبيرة إلى دفعات دون إسقاط أي أصل مطلوب", async () => {
