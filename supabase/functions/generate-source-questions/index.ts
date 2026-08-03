@@ -1902,17 +1902,102 @@ function buildUserPrompt(request: GenerationRequest, evidenceCatalog: EvidenceCa
   });
 }
 
-function generationItemHasMomentConcept(item: GenerationItem): boolean {
-  const concept = normalizeForEvidence(`${item.lessonLabel} ${item.outcomeLabel}`);
-  return /(عزم|اتزان دوراني|محور دوران|ذراع القوه|نقطه ارتكاز)/u.test(concept);
+const MOMENT_SCENARIO_TARGETS = new Set<QuestionScenarioTarget>([
+  "door_handle",
+  "playground_seesaw",
+  "wrench_tool",
+  "bicycle_brake",
+  "shopping_trolley",
+]);
+
+function generationItemMomentCorpus(item: GenerationItem, request?: GenerationRequest): string {
+  const reference = request?.references?.find((candidate) => candidate.id === item.sourceReferenceId);
+  const lessonCard = request?.lessonCards?.find((candidate) => normalizeForEvidence(candidate.lessonLabel) === normalizeForEvidence(item.lessonLabel));
+  return normalizeForEvidence([
+    item.lessonLabel,
+    item.outcomeLabel,
+    request?.topic ?? "",
+    reference?.lessonTopic ?? "",
+    reference?.content ?? "",
+    lessonCard?.sourceSummary ?? "",
+    ...(lessonCard?.concepts ?? []),
+  ].join(" "));
 }
 
-function generationItemUsesMoment(item: GenerationItem): boolean {
-  return generationItemHasMomentConcept(item) && item.visualTarget === "force_diagram";
+function generationItemHasMomentConcept(item: GenerationItem, request?: GenerationRequest): boolean {
+  const concept = generationItemMomentCorpus(item, request);
+  return /(عزم|اتزان دوراني|محور دوران|ذراع القوه|نقطه ارتكاز|موضع تاثير القوه|اثر موضع القوه)/u.test(concept);
 }
 
-function scientificItemKindForRequest(item: GenerationItem): ScientificItemModelKind {
-  if (generationItemUsesMoment(item)) return "moment_system";
+function generationItemRequiresEssentialMomentVisual(item: GenerationItem, request?: GenerationRequest): boolean {
+  if (!MOMENT_SCENARIO_TARGETS.has(item.scenarioTarget) || !generationItemHasMomentConcept(item, request)) return false;
+  return item.styleTarget === "سياقي"
+    || item.styleTarget === "حسابي"
+    || item.styleTarget === "بيانات"
+    || item.stimulusTarget === "real_life_scene"
+    || item.skillTarget !== "recognize"
+    || item.cognitiveLevel !== "معرفة";
+}
+
+function requiredMomentVisualTarget(item: GenerationItem): QuestionVisualType {
+  if (item.visualTarget !== "none") return item.visualTarget;
+  if (item.styleTarget === "حسابي" || item.skillTarget === "calculate") return "force_diagram";
+  if (item.styleTarget === "بيانات") return "data_table";
+  return "context_scene";
+}
+
+function stimulusTargetForServerVisual(item: GenerationItem, visualTarget: QuestionVisualType): QuestionStimulusTarget {
+  if (visualTarget === "context_scene") return "real_life_scene";
+  if (visualTarget === "data_table") return "data_table";
+  if (visualTarget === "line_graph" || visualTarget === "bar_chart") return "graph";
+  if (visualTarget === "instrument_scale") return "instrument";
+  if (visualTarget !== "none") return "scientific_diagram";
+  return item.stimulusTarget;
+}
+
+function enforceEssentialMomentVisual(item: GenerationItem, request: GenerationRequest): GenerationItem {
+  if (!generationItemRequiresEssentialMomentVisual(item, request)) return item;
+  const visualTarget = requiredMomentVisualTarget(item);
+  if (visualTarget === item.visualTarget) return item;
+  return {
+    ...item,
+    visualTarget,
+    stimulusTarget: stimulusTargetForServerVisual(item, visualTarget),
+    diversityKey: `${item.styleTarget}|${visualTarget}|${item.scenarioTarget}|${item.skillTarget}|${item.planItemId}`,
+  };
+}
+
+function enforceServerOwnedScientificVisualContract(request: GenerationRequest): GenerationRequest {
+  if (request.generationVersion !== "source-grounded-policy-ai-25-essential-scientific-visual-contract") return request;
+  const officialPlanItems = request.officialPlanItems.map((item) => enforceEssentialMomentVisual(item, request));
+  const officialById = new Map(officialPlanItems.map((item) => [item.planItemId, item]));
+  const items = request.items.map((item) => {
+    const normalized = enforceEssentialMomentVisual(item, request);
+    const official = officialById.get(item.planItemId);
+    return official ? { ...normalized, visualTarget: official.visualTarget, stimulusTarget: official.stimulusTarget, diversityKey: official.diversityKey } : normalized;
+  });
+  const normalizedById = new Map(items.map((item) => [item.planItemId, item]));
+  const blueprint = request.blueprint ? {
+    ...request.blueprint,
+    items: request.blueprint.items.map((item) => {
+      const normalized = normalizedById.get(item.planItemId) ?? officialById.get(item.planItemId);
+      return normalized ? {
+        ...item,
+        visualTarget: normalized.visualTarget,
+        stimulusTarget: normalized.stimulusTarget,
+        diversityKey: normalized.diversityKey,
+      } : item;
+    }),
+  } : null;
+  return { ...request, officialPlanItems, items, blueprint };
+}
+
+function generationItemUsesMoment(item: GenerationItem, request?: GenerationRequest): boolean {
+  return generationItemHasMomentConcept(item, request) && item.visualTarget === "force_diagram";
+}
+
+function scientificItemKindForRequest(item: GenerationItem, request?: GenerationRequest): ScientificItemModelKind {
+  if (generationItemUsesMoment(item, request)) return "moment_system";
   if (item.visualTarget === "force_diagram") return "force_system";
   if (item.visualTarget === "electrostatic_diagram") return "electrostatic_system";
   return "generic";
@@ -2211,6 +2296,7 @@ function parseGenerationRequest(value: unknown): GenerationRequest {
     "source-grounded-policy-ai-22-server-owned-question-pattern",
     "source-grounded-policy-ai-23-server-owned-assessment-contract",
     "source-grounded-policy-ai-24-context-aware-moment-contract",
+    "source-grounded-policy-ai-25-essential-scientific-visual-contract",
   ]);
   if (generationMode === "whole_exam_v2" && !compatibleWholeExamVersions.has(generationVersion)) {
     throw httpError("إصدار محرك الاختبار الكامل غير متوافق.", 400);
@@ -2444,7 +2530,7 @@ function parseGenerationRequest(value: unknown): GenerationRequest {
       }).slice(0, 6)
     : [];
 
-  return {
+  return enforceServerOwnedScientificVisualContract({
     generationMode,
     generationVersion,
     assessmentType,
@@ -2461,7 +2547,7 @@ function parseGenerationRequest(value: unknown): GenerationRequest {
     lessonCards,
     blueprint,
     globalAssessmentReferences,
-  };
+  });
 }
 
 function validateOfficialAssessmentDiversity(assessmentType: AssessmentType, items: GenerationItem[]): void {
@@ -3111,7 +3197,8 @@ function hydrateGeneratedItem(
     || request.generationVersion === "source-grounded-policy-ai-21-server-owned-scientific-item"
     || request.generationVersion === "source-grounded-policy-ai-22-server-owned-question-pattern"
     || request.generationVersion === "source-grounded-policy-ai-23-server-owned-assessment-contract"
-    || request.generationVersion === "source-grounded-policy-ai-24-context-aware-moment-contract";
+    || request.generationVersion === "source-grounded-policy-ai-24-context-aware-moment-contract"
+    || request.generationVersion === "source-grounded-policy-ai-25-essential-scientific-visual-contract";
   const serverScientificItem = serverOwnedScientificRequired
     ? buildServerOwnedScientificItem(requested, request, baseVisual)
     : null;
@@ -3144,7 +3231,8 @@ function hydrateGeneratedItem(
         || request.generationVersion === "source-grounded-policy-ai-21-server-owned-scientific-item"
         || request.generationVersion === "source-grounded-policy-ai-22-server-owned-question-pattern"
         || request.generationVersion === "source-grounded-policy-ai-23-server-owned-assessment-contract"
-        || request.generationVersion === "source-grounded-policy-ai-24-context-aware-moment-contract",
+        || request.generationVersion === "source-grounded-policy-ai-24-context-aware-moment-contract"
+        || request.generationVersion === "source-grounded-policy-ai-25-essential-scientific-visual-contract",
       serverOwnedScientificRequired,
     );
     return { visual, alternative: hydratedAlternative };
@@ -3570,7 +3658,7 @@ function buildServerOwnedVisualSpec(item: GenerationItem, request: GenerationReq
       laboratory_setup: ["التجربة المدرسية", "أداة القياس"],
       road_safety: ["موقف الطريق", "عنصر السلامة"],
     };
-    const momentHint = generationItemHasMomentConcept(item) ? momentScenarioHintText(item.scenarioTarget) : "";
+    const momentHint = generationItemHasMomentConcept(item, request) ? momentScenarioHintText(item.scenarioTarget) : "";
     const labels = momentHint ? momentScenarioVisualLabels(item.scenarioTarget) : sceneLabels[item.scenarioTarget];
     return {
       ...emptyVisualSpec(),

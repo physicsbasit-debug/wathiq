@@ -6,6 +6,6 @@ const storage = await readFile(new URL("../src/storage.ts", import.meta.url), "u
 const retrieval = await readFile(new URL("../src/source-retrieval.ts", import.meta.url), "utf8");
 const edge = await readFile(new URL("../supabase/functions/generate-source-questions/index.ts", import.meta.url), "utf8");
 const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
-test("يثبت إصدار النطاق الصارم وإعادة مطابقة المسودات القديمة", () => { assert.match(pkg.version, /^0\.0\.(?:38|39|40|41|42|43|44|45|46|47|48|49|50|51|52|53|54|55|56|57|58|59|60|61|62)$/); assert.match(retrieval, /strict-lesson-scope-3-pdf-pages/); assert.match(storage, /sourceRetrievalVersion !== SOURCE_RETRIEVAL_VERSION/); });
+test("يثبت إصدار النطاق الصارم وإعادة مطابقة المسودات القديمة", () => { assert.match(pkg.version, /^0\.0\.(?:38|39|40|41|42|43|44|45|46|47|48|49|50|51|52|53|54|55|56|57|58|59|60|61|62|63)$/); assert.match(retrieval, /strict-lesson-scope-3-pdf-pages/); assert.match(storage, /sourceRetrievalVersion !== SOURCE_RETRIEVAL_VERSION/); });
 test("تستخدم إعادة التوليد السؤال المختار مرساة", () => { assert.match(app, /regenerationAnchor/); assert.match(app, /بدائل مشابهة/); assert.match(edge, /لا تنتقل إلى مفهوم آخر/); });
 test("يعرض اختباراتي المعاينة والتصدير للمسودة المكتملة والمعتمدة", () => { assert.match(app, /preview-library-exam/); assert.match(app, /معاينة المسودة/); assert.match(app, /library-export-student-word/); assert.match(app, /library-export-answer-pdf/); assert.match(app, /نسخة مسودة غير معتمدة/); });

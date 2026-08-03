@@ -1,7 +1,7 @@
 import { applyGeneratedQuestions, buildQuestionGenerationRequest, shouldRequireCalculationWorking, sanitizeGeneratedQuestionText, } from "./question-generation.js";
 import { parseQuestionVisualSpec } from "./question-visual.js";
 import { parseScientificItemModel } from "./scientific-item.js";
-export const ASSESSMENT_GENERATION_V2_VERSION = "source-grounded-policy-ai-24-context-aware-moment-contract";
+export const ASSESSMENT_GENERATION_V2_VERSION = "source-grounded-policy-ai-25-essential-scientific-visual-contract";
 function normalizeArabic(value) {
     return value
         .normalize("NFKC")
@@ -87,6 +87,62 @@ function fallbackStimulusTarget(item) {
         return "decision_case";
     return "concise_text";
 }
+const MOMENT_SCENARIOS = new Set([
+    "door_handle",
+    "playground_seesaw",
+    "wrench_tool",
+    "bicycle_brake",
+    "shopping_trolley",
+]);
+function itemHasMomentConcept(item, referenceContent = "") {
+    const concept = normalizeArabic(`${item.lessonLabel} ${item.outcomeLabel} ${referenceContent}`);
+    return /(عزم|اتزان دوراني|محور دوران|ذراع القوه|نقطه ارتكاز|موضع تاثير القوه|اثر موضع القوه)/u.test(concept);
+}
+export function isScientificallyEssentialVisual(item, referenceContent = "") {
+    if (!MOMENT_SCENARIOS.has(item.scenarioTarget) || !itemHasMomentConcept(item, referenceContent))
+        return false;
+    return item.styleTarget === "سياقي"
+        || item.styleTarget === "حسابي"
+        || item.styleTarget === "بيانات"
+        || item.stimulusTarget === "real_life_scene"
+        || item.skillTarget !== "recognize"
+        || item.cognitiveLevel !== "معرفة";
+}
+function essentialVisualTarget(item) {
+    if (item.visualTarget !== "none")
+        return item.visualTarget;
+    if (item.styleTarget === "حسابي" || item.skillTarget === "calculate")
+        return "force_diagram";
+    if (item.styleTarget === "بيانات")
+        return "data_table";
+    return "context_scene";
+}
+function stimulusTargetForVisual(visualTarget, item) {
+    if (visualTarget === "context_scene")
+        return "real_life_scene";
+    if (visualTarget === "data_table")
+        return "data_table";
+    if (visualTarget === "line_graph" || visualTarget === "bar_chart")
+        return "graph";
+    if (visualTarget === "instrument_scale")
+        return "instrument";
+    if (visualTarget !== "none")
+        return "scientific_diagram";
+    return fallbackStimulusTarget(item);
+}
+export function ensureScientificallyEssentialVisual(item, referenceContent = "") {
+    if (!isScientificallyEssentialVisual(item, referenceContent))
+        return item;
+    const visualTarget = essentialVisualTarget(item);
+    if (visualTarget === item.visualTarget)
+        return item;
+    return {
+        ...item,
+        visualTarget,
+        stimulusTarget: stimulusTargetForVisual(visualTarget, item),
+        diversityKey: `${item.styleTarget}|${visualTarget}|${item.scenarioTarget}|${item.skillTarget}|${item.planItemId}`,
+    };
+}
 function visualPriority(item) {
     if (item.visualTarget === "none")
         return 0;
@@ -103,15 +159,27 @@ function visualPriority(item) {
         score += 8;
     return score;
 }
-export function applyWholeExamVisualBudget(items) {
-    const maxVisuals = items.length <= 6 ? 4 : items.length <= 10 ? 5 : 6;
-    const selected = new Set(items
-        .map((item, index) => ({ index, score: visualPriority(item) }))
+export function applyWholeExamVisualBudget(items, references = []) {
+    const referenceContentById = new Map(references.map((reference) => [
+        reference.id,
+        `${reference.lessonTopic ?? ""} ${reference.context ?? reference.excerpt ?? ""}`.trim(),
+    ]));
+    const contentFor = (item) => referenceContentById.get(item.sourceReferenceId) ?? "";
+    const protectedItems = items.map((item) => ensureScientificallyEssentialVisual(item, contentFor(item)));
+    const maxVisuals = protectedItems.length <= 6 ? 4 : protectedItems.length <= 10 ? 5 : 6;
+    const essential = new Set(protectedItems
+        .map((item, index) => ({ item, index }))
+        .filter(({ item }) => isScientificallyEssentialVisual(item, contentFor(item)))
+        .map(({ index }) => index));
+    const remainingSlots = Math.max(0, maxVisuals - essential.size);
+    const discretionary = protectedItems
+        .map((item, index) => ({ index, score: essential.has(index) ? 0 : visualPriority(item) }))
         .filter((entry) => entry.score > 0)
         .sort((left, right) => right.score - left.score || left.index - right.index)
-        .slice(0, maxVisuals)
-        .map((entry) => entry.index));
-    return items.map((item, index) => {
+        .slice(0, remainingSlots)
+        .map((entry) => entry.index);
+    const selected = new Set([...essential, ...discretionary]);
+    return protectedItems.map((item, index) => {
         if (item.visualTarget === "none" || selected.has(index))
             return item;
         return {
@@ -124,7 +192,7 @@ export function applyWholeExamVisualBudget(items) {
 }
 export function buildWholeExamGenerationRequestV2(assessmentType, topic, lessons, grade, subject, difficulty, references, plan, lessonCatalog = [], trustedEnrichmentEnabled = true) {
     const base = buildQuestionGenerationRequest(assessmentType, topic, lessons, grade, subject, difficulty, references, plan, plan, lessonCatalog, trustedEnrichmentEnabled);
-    const optimizedOfficialPlanItems = applyWholeExamVisualBudget(base.officialPlanItems);
+    const optimizedOfficialPlanItems = applyWholeExamVisualBudget(base.officialPlanItems, references);
     const optimizedById = new Map(optimizedOfficialPlanItems.map((item) => [item.planItemId, item]));
     const optimizedItems = base.items.map((item) => optimizedById.get(item.planItemId) ?? item);
     const globalAssessmentReferences = references

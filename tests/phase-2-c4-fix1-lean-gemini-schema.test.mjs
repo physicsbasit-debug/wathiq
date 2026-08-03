@@ -6,7 +6,7 @@ const edge = await readFile(new URL("../supabase/functions/generate-source-quest
 const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 
 test("يحافظ C4 Fix 2 على مخطط النقل الخفيف مع ملكية الخادم", () => {
-  assert.match(pkg.version, /^0\.0\.(?:61|62)$/);
+  assert.match(pkg.version, /^0\.0\.(?:61|62|63)$/);
   assert.match(pkg.description, /مخطط النقل.*خفيف/);
 });
 

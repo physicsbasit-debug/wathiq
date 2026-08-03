@@ -63,6 +63,8 @@ async function loadEdgeHelpers() {
     validateAssessmentQuality,
     buildMomentValidationCorpus,
     generationItemHasMomentConcept,
+    generationItemRequiresEssentialMomentVisual,
+    enforceServerOwnedScientificVisualContract,
   };\n`;
 
   const javascript = ts.transpileModule(source, {
@@ -1403,4 +1405,94 @@ test("يثبت المشهد السياقي للعزم المحور وذراع ا
     visual,
     scientificItem,
   ));
+});
+
+
+test("يعيد الخادم فرض مرئي العزم الضروري قبل مخاطبة Gemini حتى لو وصل visualTarget=none", () => {
+  const item = {
+    planItemId: "plan-moment-protected",
+    questionType: "إجابة قصيرة",
+    cognitiveLevel: "تطبيق",
+    marks: 2,
+    sourceReferenceId: "ref-moment",
+    lessonLabel: "تطبيقات القوة في الحياة اليومية",
+    outcomeLabel: "يفسر أثر مكان دفع الباب في سهولة فتحه",
+    styleTarget: "سياقي",
+    visualTarget: "none",
+    scenarioTarget: "door_handle",
+    stimulusTarget: "real_life_scene",
+    skillTarget: "apply",
+    diversityKey: "سياقي|none|door_handle|apply|2",
+  };
+  const request = {
+    generationMode: "whole_exam_v2",
+    generationVersion: "source-grounded-policy-ai-25-essential-scientific-visual-contract",
+    assessmentType: "اختبار قصير رسمي",
+    assessmentPolicyId: "oman-science-assessment-2025-2026",
+    topic: "تأثير القوى",
+    lessons: ["تطبيقات القوة في الحياة اليومية"],
+    grade: 10,
+    subject: "الفيزياء",
+    difficulty: "متوسط",
+    trustedEnrichmentEnabled: false,
+    references: [{
+      id: "ref-moment",
+      sourceId: "physics-book",
+      sourceTitle: "كتاب الطالب",
+      sourceKind: "كتاب الطالب",
+      pageFrom: 58,
+      pageTo: 60,
+      content: "يعتمد عزم القوة على مقدار القوة والبعد العمودي عن محور الدوران، ويزداد تأثير القوة عند زيادة ذراعها.",
+      lessonTopic: "تطبيقات القوة في الحياة اليومية",
+      lessonScopeMode: "page-range",
+      lessonPageFrom: 58,
+      lessonPageTo: 60,
+    }],
+    officialPlanItems: [item],
+    items: [item],
+    lessonCards: [{
+      lessonLabel: item.lessonLabel,
+      learningOutcomes: [item.outcomeLabel],
+      concepts: ["القوة", "الدوران"],
+      sourceReferenceIds: ["ref-moment"],
+      sourceSummary: "عزم القوة وذراع القوة ومحور الدوران.",
+    }],
+    blueprint: {
+      version: "whole-exam-blueprint-v1",
+      totalMarks: 2,
+      itemCount: 1,
+      lessons: [item.lessonLabel],
+      items: [{
+        order: 1,
+        planItemId: item.planItemId,
+        lessonLabel: item.lessonLabel,
+        learningOutcome: item.outcomeLabel,
+        questionType: item.questionType,
+        cognitiveLevel: item.cognitiveLevel,
+        marks: item.marks,
+        styleTarget: item.styleTarget,
+        visualTarget: item.visualTarget,
+        scenarioTarget: item.scenarioTarget,
+        stimulusTarget: item.stimulusTarget,
+        skillTarget: item.skillTarget,
+        diversityKey: item.diversityKey,
+      }],
+      globalReviewRules: [],
+    },
+    globalAssessmentReferences: [],
+  };
+
+  assert.equal(helpers.generationItemHasMomentConcept(item, request), true);
+  assert.equal(helpers.generationItemRequiresEssentialMomentVisual(item, request), true);
+  const normalized = helpers.enforceServerOwnedScientificVisualContract(request);
+  assert.equal(normalized.items[0].visualTarget, "context_scene");
+  assert.equal(normalized.officialPlanItems[0].visualTarget, "context_scene");
+  assert.equal(normalized.blueprint.items[0].visualTarget, "context_scene");
+  assert.match(normalized.items[0].diversityKey, /context_scene/);
+
+  const visual = helpers.buildServerOwnedVisualSpec(normalized.items[0], normalized);
+  assert.equal(visual.type, "context_scene");
+  assert.match(visual.purpose, /محور الدوران/);
+  assert.match(visual.labels.join(" "), /موضع تأثير القوة/);
+  assert.match(visual.altText, /ذراع القوة/);
 });

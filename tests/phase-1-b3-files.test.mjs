@@ -38,5 +38,5 @@ test("تقوي قراءة JSON من Gemini وتبقي النشر من محرر S
   assert.match(deployment, /محرر Supabase/);
   assert.match(deployment, /GEMINI_API_KEY/);
   assert.doesNotMatch(`${edge}\n${deployment}`, /OPENAI_API_KEY|api\.openai\.com/);
-  assert.match(pkg.version, /^0\.0\.(?:32|33|34|35|36|37|38|39|40|41|42|43|44|45|46|47|48|49|50|51|52|53|54|55|56|57|58|59|60|61|62)$/);
+  assert.match(pkg.version, /^0\.0\.(?:32|33|34|35|36|37|38|39|40|41|42|43|44|45|46|47|48|49|50|51|52|53|54|55|56|57|58|59|60|61|62|63)$/);
 });
