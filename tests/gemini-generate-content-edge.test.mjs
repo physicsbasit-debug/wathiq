@@ -58,6 +58,8 @@ async function loadEdgeHelpers() {
     normalizeVisualQuestionReference,
     sanitizeGeneratedDisplayText,
     validateVisualSemanticBinding,
+    validateAssessmentQuality,
+    buildMomentValidationCorpus,
   };\n`;
 
   const javascript = ts.transpileModule(source, {
@@ -996,6 +998,106 @@ test("يشترط مسافة الدوران في سؤال العزم حتى لو 
   };
   assert.equal(helpers.calculationPromptContainsRequiredData({ stimulus: "", text: "احسب العزم حول نقطة الارتكاز." }, visual), false);
   assert.equal(helpers.calculationPromptContainsRequiredData({ stimulus: "تبعد القوة الأولى 2.0 m عن نقطة الارتكاز.", text: "احسب العزم حول نقطة الارتكاز." }, visual), true);
+});
+
+
+test("يقبل سؤال العزم الحياتي عندما يوفر الشكل المرفق دليل الارتكاز وذراع القوة دون تكراره حرفيًا في النص", () => {
+  const visual = {
+    ...noVisual(),
+    type: "force_diagram",
+    variant: "moments",
+    role: "calculate",
+    title: "قوتان حول نقطة ارتكاز",
+    purpose: "حساب ومقارنة عزوم قوتين حول نقطة ارتكاز",
+    altText: "عارضة حول نقطة ارتكاز تظهر عليها قوتان مع مقدار كل قوة والمسافة العمودية عن محور الدوران",
+    annotations: ["بعد القوة 1 عن الارتكاز = 1.5 m", "بعد القوة 2 عن الارتكاز = 1.0 m"],
+    labels: ["الجسم"],
+    tableColumns: [], tableRows: [], tableCells: [], hiddenCells: [], values: [1.5, 1.0],
+    vectors: [
+      { label: "قوة 1", magnitude: 120, dx: 0, dy: -85 },
+      { label: "قوة 2", magnitude: 80, dx: 0, dy: -65 },
+    ],
+  };
+  const scientificItem = {
+    version: "scientific-item-v1",
+    kind: "force_system",
+    phenomenon: "القوى والعزم",
+    primaryEntity: "باب بمقبض",
+    secondaryEntity: "سطح ثابت",
+    visualObject: "باب بمقبض",
+    relationship: "resultant_force",
+    primaryCharge: "unknown",
+    secondaryCharge: "unknown",
+    transferredParticle: "",
+    quantities: [
+      { kind: "applied_force", label: "قوة 1", value: 120, unit: "N", direction: "up" },
+      { kind: "applied_force", label: "قوة 2", value: 80, unit: "N", direction: "up" },
+    ],
+    resultValue: 0,
+    resultUnit: "N m",
+    resultDirection: "none",
+    expectedResult: "يزداد عزم الدوران عندما تؤثر القوة أبعد عن مفصل الباب.",
+  };
+  assert.doesNotThrow(() => helpers.validateAssessmentQuality(
+    {
+      stimulus: "يحاول طالب فتح باب المدرسة من خلال الضغط على المقبض كما في الشكل المرفق.",
+      text: "باستخدام الشكل المرفق، برر لماذا يكون عزم الدوران أكبر عندما تؤثر القوة على المقبض البعيد.",
+      options: [], answer: "لأن ذراع القوة أكبر.", rationale: "زيادة البعد عن المفصل تزيد العزم.",
+      markScheme: ["ربط زيادة العزم بزيادة ذراع القوة."], sourceEvidenceId: "", enrichmentEvidenceId: "", needsReview: false,
+    },
+    "door_handle",
+    "real_life_scene",
+    "evaluate",
+    "modern:moment-side-view",
+    visual,
+    scientificItem,
+  ));
+});
+
+test("يبقي سؤال العزم مرفوضًا عندما يغيب الدعم من النص والشكل معًا", () => {
+  const visual = {
+    ...noVisual(),
+    type: "force_diagram",
+    variant: "free_body",
+    role: "calculate",
+    title: "مخطط قوى",
+    purpose: "تحليل قوى عامة",
+    altText: "جسم تظهر عليه أسهم قوى عامة",
+    annotations: ["اتجاه السهم يبين اتجاه القوة"],
+    labels: ["الجسم"],
+    tableColumns: [], tableRows: [], tableCells: [], hiddenCells: [], values: [],
+    vectors: [{ label: "القوة المؤثرة", magnitude: 5, dx: 1, dy: 0 }],
+  };
+  const scientificItem = {
+    version: "scientific-item-v1",
+    kind: "generic",
+    phenomenon: "العزم",
+    primaryEntity: "باب",
+    secondaryEntity: "",
+    visualObject: "باب",
+    relationship: "none",
+    primaryCharge: "unknown",
+    secondaryCharge: "unknown",
+    transferredParticle: "",
+    quantities: [],
+    resultValue: 0,
+    resultUnit: "",
+    resultDirection: "none",
+    expectedResult: "",
+  };
+  assert.throws(() => helpers.validateAssessmentQuality(
+    {
+      stimulus: "في موقف يومي عند استخدام باب.",
+      text: "فسر أثر العزم في هذا الموقف.",
+      options: [], answer: "", rationale: "", markScheme: [""], sourceEvidenceId: "", enrichmentEvidenceId: "", needsReview: false,
+    },
+    "door_handle",
+    "real_life_scene",
+    "evaluate",
+    "modern:moment-bad",
+    visual,
+    scientificItem,
+  ), /سؤال العزم في الموقف الحياتي لا يحدد محور الدوران/);
 });
 
 test("يصحح الخادم workingRequired تلقائيًا للسؤال الحسابي متعدد الدرجات", () => {

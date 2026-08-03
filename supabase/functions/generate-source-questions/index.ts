@@ -1745,6 +1745,7 @@ function buildSystemInstructions(request: GenerationRequest): string {
     "أعد scenarioContract منظمًا لكل بديل: target مطابق حرفيًا لـscenarioTarget، وevidencePhrases عبارتان إلى أربع عبارات قصيرة منسوخة حرفيًا من stimulus أو text تثبت عناصر السياق، وscientificLink يشرح كيف يخدم السياق هدف التعلم، وcontextIsEssential=true عندما يكون السياق الحياتي أو حالة القرار جزءًا من الحل.",
     "لكل مفردة يرسل الخادم serverScientificItem بوصفه المصدر العلمي الوحيد وغير القابل للاستبدال. لا تُعد scientificItem في JSON ولا تنشئ نموذجًا بديلًا؛ صغ stimulus وtext وanswer وmarkScheme بحيث تتطابق حرفيًا مع كيانات serverScientificItem وعلاقاته وكمياته ووحداته واتجاهاته ونتيجته المتوقعة.",
     "في force_system: استخدم فقط القوى والقيم والاتجاهات الموجودة في serverScientificItem، واذكرها في متن السؤال عند الحاجة للحل. في electrostatic_system: التزم بنوع الشحنتين والعلاقة attraction/repulsion أو charge_transfer أو electrostatic_discharge كما ثبتها الخادم، ولا تعكسها أو تستبدلها.",
+    "في مسائل العزم المرتبطة بموقف حياتي، إذا كان fixedVisual أو serverScientificItem يوضحان نقطة الارتكاز وموضع تأثير القوة والبعد أو ذراع القوة، فيكفي أن يشير السؤال إلى الشكل بوضوح ولا حاجة لتكرار جميع هذه العناصر نصيًا حرفيًا ما دام الحل يعتمد عليها من الشكل.",
     "لا تخلط بين الدروس؛ كل مفردة مرتبطة باسم درس ومرجع صفحة محددين في الخطة.",
     "يُمنع إنشاء أسئلة عن اسم الوحدة أو رقمها أو اسم الكتاب أو الصفحة أو موضع الدرس في المنهج؛ المطلوب قياس المحتوى العلمي للدرس فقط.",
     "إذا وُجد regenerationAnchor فأنشئ البدائل الجديدة مشابهة له في المفهوم العلمي ونمط السؤال ومستوى العمق، مع تغيير الصياغة أو القيم فقط عندما يدعم المرجع ذلك. لا تنتقل إلى مفهوم آخر داخل الكتاب.",
@@ -4086,12 +4087,54 @@ function validateStructuredScenarioContract(
   }
 }
 
+function momentScenarioHintText(scenarioTarget: QuestionScenarioTarget): string {
+  const hints: Partial<Record<QuestionScenarioTarget, string>> = {
+    door_handle: "محور الدوران عند مفصل الباب وموضع تأثير القوة عند المقبض وذراع القوة هو المسافة بين المفصل والمقبض",
+    playground_seesaw: "محور الدوران عند نقطة الارتكاز الوسطى وموضع تأثير القوة عند المقعد وذراع القوة هو المسافة عن نقطة الارتكاز",
+    wrench_tool: "محور الدوران عند الصامولة أو البرغي وموضع تأثير القوة عند طرف مفتاح الربط وذراع القوة هو المسافة من الصامولة إلى موضع تأثير القوة",
+    bicycle_brake: "محور الدوران عند مفصل ذراع المكبح أو محور العجلة وموضع تأثير القوة عند المقبض أو الذراع وذراع القوة هو المسافة العمودية المناسبة",
+    shopping_trolley: "محور الدوران عند العجلات وموضع تأثير القوة عند المقبض وذراع القوة هو المسافة بين المقبض ومحور العجلات عند مناقشة العزم",
+  };
+  return hints[scenarioTarget] ?? "";
+}
+
+function buildMomentValidationCorpus(
+  alternative: ModelGeneratedAlternative,
+  fixedVisual: QuestionVisualSpec,
+  scientificItem: ModelGeneratedScientificItem,
+  scenarioTarget: QuestionScenarioTarget,
+): string {
+  const visualText = [
+    fixedVisual.title,
+    fixedVisual.purpose,
+    fixedVisual.altText,
+    ...fixedVisual.labels,
+    ...fixedVisual.annotations,
+    ...fixedVisual.vectors.map((vector) => `${vector.label} ${vector.magnitude}`),
+    ...fixedVisual.values.map((value, index) => `القيمة ${index + 1} ${value}`),
+  ].join(" ");
+  const scientificText = [
+    scientificItem.phenomenon,
+    scientificItem.primaryEntity,
+    scientificItem.secondaryEntity,
+    scientificItem.visualObject,
+    scientificItem.expectedResult,
+    ...scientificItem.quantities.map((quantity) => `${quantity.label} ${quantity.value} ${quantity.unit} ${quantity.direction}`),
+  ].join(" ");
+  const scenarioHints = fixedVisual.variant === "moments" || /(محور|ارتكاز|المسافة|المسافه|ذراع|عمودي)/u.test(visualText)
+    ? momentScenarioHintText(scenarioTarget)
+    : "";
+  return normalizeForEvidence(`${alternative.stimulus} ${alternative.text} ${visualText} ${scientificText} ${scenarioHints}`);
+}
+
 function validateAssessmentQuality(
   alternative: ModelGeneratedAlternative,
   scenarioTarget: QuestionScenarioTarget,
   stimulusTarget: QuestionStimulusTarget,
   skillTarget: QuestionSkillTarget,
   diversityKey: string,
+  fixedVisual: QuestionVisualSpec,
+  scientificItem: ModelGeneratedScientificItem,
 ): void {
   if (!diversityKey || diversityKey.startsWith("legacy:")) return;
   const material = normalizeForEvidence(`${alternative.stimulus} ${alternative.text}`);
@@ -4115,9 +4158,14 @@ function validateAssessmentQuality(
   }
   const usesMomentConcept = /(عزم|دوران)/u.test(material);
   const momentScenario = ["door_handle", "wrench_tool", "bicycle_brake", "shopping_trolley", "playground_seesaw"].includes(scenarioTarget);
-  if (usesMomentConcept && momentScenario
-    && !/(محور|ارتكاز|مقبض|ذراع|المسافه|المسافة|البعد|نقطه تاثير|نقطة تأثير|عجلات|دواسه|دواسة)/u.test(material)) {
-    throw retryableError("سؤال العزم في الموقف الحياتي لا يحدد محور الدوران أو ذراع القوة أو موضع تأثيرها بصورة تسمح بتبرير الإجابة علميًا.");
+  if (usesMomentConcept && momentScenario) {
+    const momentCorpus = buildMomentValidationCorpus(alternative, fixedVisual, scientificItem, scenarioTarget);
+    const hasAxisOrPivot = /(محور|ارتكاز|مفصل|صامول|عجلات|عجلات)/u.test(momentCorpus);
+    const hasLeverArm = /(ذراع|المسافه|المسافة|البعد|عمودي)/u.test(momentCorpus);
+    const hasApplicationPoint = /(مقبض|نقطه تاثير|نقطة تأثير|طرف مفتاح|موضع تأثير|المقعد|ذراع المكبح|القوه 1|القوة 1|القوه 2|القوة 2)/u.test(momentCorpus);
+    if (!(hasAxisOrPivot && hasLeverArm && hasApplicationPoint)) {
+      throw retryableError("سؤال العزم في الموقف الحياتي لا يحدد محور الدوران أو ذراع القوة أو موضع تأثيرها بصورة تسمح بتبرير الإجابة علميًا.");
+    }
   }
   if (skillTarget === "investigate" && !/(تجرب|متغير|قياس|تحكم|ثابت|موثوق|دقه|دقة|خطوات)/u.test(material)) {
     throw retryableError("السؤال لا يقيس مهارة استقصائية كما تحددها الخطة.");
@@ -4230,7 +4278,7 @@ function validateAndHydrateAlternative(
   if (structuredScenarioRequired) {
     validateStructuredScenarioContract(alternative, scenarioTarget, stimulusTarget, skillTarget, outcomeLabel, fixedVisual);
   }
-  validateAssessmentQuality(alternative, scenarioTarget, stimulusTarget, skillTarget, diversityKey);
+  validateAssessmentQuality(alternative, scenarioTarget, stimulusTarget, skillTarget, diversityKey, fixedVisual, scientificItem);
   if (questionType === "اختيار من متعدد") {
     const options = alternative.options.map((option) => typeof option === "string" ? option.trim() : "");
     if (options.some((option) => !option) || options.length !== 4 || new Set(options).size !== 4) {

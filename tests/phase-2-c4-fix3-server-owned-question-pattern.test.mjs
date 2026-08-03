@@ -29,5 +29,5 @@ test("يحقن الخادم النمط الرسمي قبل التحقق الدل
   assert.match(edge, /questionForm: requestedStyleTarget/);
   assert.match(edge, /workingRequired: serverWorkingRequired/);
   assert.doesNotMatch(edge, /مولد الأسئلة لم يلتزم بنمط السؤال المحدد في الخطة/);
-  assert.match(edge, /validateAssessmentQuality\(alternative, scenarioTarget, stimulusTarget, skillTarget, diversityKey\)/);
+  assert.match(edge, /validateAssessmentQuality\(alternative, scenarioTarget, stimulusTarget, skillTarget, diversityKey, fixedVisual, scientificItem\)/);
 });
