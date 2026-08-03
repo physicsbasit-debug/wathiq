@@ -385,8 +385,8 @@ interface ModelGeneratedAlternative {
   answer: string;
   rationale: string;
   markScheme: ModelGeneratedMarkSchemeSlots | string[];
-  questionForm: QuestionDesignPattern;
-  workingRequired: boolean;
+  questionForm?: QuestionDesignPattern;
+  workingRequired?: boolean;
   sourceEvidenceId: string;
   enrichmentEvidenceId: string;
   scenarioContract?: ModelGeneratedScenarioContract;
@@ -1405,7 +1405,7 @@ async function repairGeneratedPayloadMarkSchemes(
     } catch (error) {
       for (const alternativeIndex of invalidIndexes) {
         const alternative = generatedItem.alternatives[alternativeIndex];
-        alternative.markScheme = buildFallbackMarkScheme(alternative, requestedItem.marks);
+        alternative.markScheme = buildFallbackMarkScheme(alternative, requestedItem.marks, requestedItem.styleTarget);
         alternative.needsReview = true;
       }
       logStage(requestId, "mark_scheme_repair_fallback_used", {
@@ -1556,14 +1556,14 @@ function hasExactMarkScheme(value: unknown, marks: number): boolean {
   return points.slice(0, marks).length === marks && points.slice(0, marks).every(Boolean);
 }
 
-function buildFallbackMarkScheme(alternative: ModelGeneratedAlternative, marks: number): string[] {
+function buildFallbackMarkScheme(alternative: ModelGeneratedAlternative, marks: number, fallbackQuestionForm?: QuestionDesignPattern): string[] {
   const existing = markSchemePoints(alternative?.markScheme).filter(Boolean);
   const clauses = [alternative?.answer, alternative?.rationale]
     .filter((value): value is string => typeof value === "string" && Boolean(value.trim()))
     .flatMap((value) => value.split(/[.؛\n]+|،\s*/u))
     .map((value) => value.trim())
     .filter((value) => value.length >= 4);
-  const templates = fallbackMarkSchemeTemplates(alternative?.questionForm);
+  const templates = fallbackMarkSchemeTemplates(alternative?.questionForm ?? fallbackQuestionForm);
   const candidates = [...existing, ...clauses, ...templates];
   const unique: string[] = [];
   const seen = new Set<string>();
@@ -1859,6 +1859,10 @@ function buildUserPrompt(request: GenerationRequest, evidenceCatalog: EvidenceCa
         ...item,
         scientificModelKind: serverScientificItem.kind,
         serverScientificItem,
+        serverQuestionPattern: {
+          questionForm: item.styleTarget,
+          workingRequired: shouldRequireCalculationWorking(item.styleTarget, item.marks),
+        },
         fixedVisual: hydrateVisualFromScientificItem(fixedVisual, serverScientificItem),
         allowedEvidenceIds: (evidenceCatalog.byReferenceId.get(item.sourceReferenceId) ?? []).map((fragment) => fragment.id),
         allowedEnrichmentIds: enrichment.segments.map((segment) => segment.id),
@@ -1871,7 +1875,7 @@ function buildUserPrompt(request: GenerationRequest, evidenceCatalog: EvidenceCa
       alternativesPerItem: request.generationMode === "whole_exam_v2" ? 1 : 3,
       exactPlanItemIds: request.items.map((item) => item.planItemId),
       evidenceRule: "أعد sourceEvidenceId من allowedEvidenceIds الخاصة بالمفردة فقط. أعد enrichmentEvidenceId من allowedEnrichmentIds عند استخدام إثراء خارجي، وإلا فأعد سلسلة فارغة. أعد scenarioContract المنظم، ولا تعد scientificItem ولا تعتمد على كلمات مفتاحية منفردة لإثبات السياق.",
-      styleRule: "اجعل questionForm مطابقًا حرفيًا لـ styleTarget، ونفذ scenarioTarget وstimulusTarget وskillTarget. استخدم serverScientificItem المرفق بوصفه المرجع الوحيد للأرقام والعلاقات والكيانات والنتيجة، ويجب أن تتطابق صياغة السؤال والإجابة ونموذج التصحيح معه. أعد markScheme كمصفوفة طولها يساوي marks تمامًا، وكل عنصر فيها معيار مستقل غير فارغ لدرجة واحدة. في السؤال الحسابي أعد workingRequired=true فقط عندما تكون marks درجتين أو أكثر، وfalse عندما تكون درجة واحدة. في الأسئلة غير المفهومية اجعل stimulus غير فارغ، إلا إذا كان fixedVisual يحمل السياق أو البيانات ويشير text إليه صراحة، أو كان text نفسه يتضمن السياق كاملًا.",
+      styleRule: "نفذ styleTarget وscenarioTarget وstimulusTarget وskillTarget في صياغة السؤال نفسها. لا تعد questionForm أو workingRequired في JSON؛ خادم واثق يثبتهما من الخطة الرسمية. استخدم serverScientificItem المرفق بوصفه المرجع الوحيد للأرقام والعلاقات والكيانات والنتيجة، ويجب أن تتطابق صياغة السؤال والإجابة ونموذج التصحيح معه. أعد markScheme كمصفوفة طولها يساوي marks تمامًا، وكل عنصر فيها معيار مستقل غير فارغ لدرجة واحدة. في الأسئلة غير المفهومية اجعل stimulus غير فارغ، إلا إذا كان fixedVisual يحمل السياق أو البيانات ويشير text إليه صراحة، أو كان text نفسه يتضمن السياق كاملًا.",
       visualRule: request.generationMode === "whole_exam_v2"
         ? "لا تعد visual في JSON. إذا كان fixedVisual.type لا يساوي none، يجب أن يعتمد السؤال النهائي عليه اعتمادًا جوهريًا ويذكره صراحة."
         : "لا تعد visual في JSON. إذا كان fixedVisual.type لا يساوي none، يجب أن تعتمد جميع البدائل الثلاثة على الشكل نفسه اعتمادًا جوهريًا وتذكر الشكل أو الرسم أو الجدول أو التدريج في نص السؤال؛ وإلا فستُرفض المفردة.",
@@ -2079,8 +2083,6 @@ function generationSchema(_requestedItems: GenerationItem[], _evidenceSource: Ev
       answer: { type: "string" },
       rationale: { type: "string" },
       markScheme: { type: "array", items: { type: "string" } },
-      questionForm: { type: "string" },
-      workingRequired: { type: "boolean" },
       sourceEvidenceId: { type: "string" },
       enrichmentEvidenceId: { type: "string" },
       scenarioContract: {
@@ -2095,7 +2097,7 @@ function generationSchema(_requestedItems: GenerationItem[], _evidenceSource: Ev
       },
       needsReview: { type: "boolean" },
     },
-    required: ["stimulus", "text", "options", "answer", "rationale", "markScheme", "questionForm", "workingRequired", "sourceEvidenceId", "enrichmentEvidenceId", "scenarioContract", "needsReview"],
+    required: ["stimulus", "text", "options", "answer", "rationale", "markScheme", "sourceEvidenceId", "enrichmentEvidenceId", "scenarioContract", "needsReview"],
   };
   return {
     type: "object",
@@ -2130,6 +2132,7 @@ function parseGenerationRequest(value: unknown): GenerationRequest {
     "source-grounded-policy-ai-19-structured-scenario-repair",
     "source-grounded-policy-ai-20-unified-scientific-item",
     "source-grounded-policy-ai-21-server-owned-scientific-item",
+    "source-grounded-policy-ai-22-server-owned-question-pattern",
   ]);
   if (generationMode === "whole_exam_v2" && !compatibleWholeExamVersions.has(generationVersion)) {
     throw httpError("إصدار محرك الاختبار الكامل غير متوافق.", 400);
@@ -2928,7 +2931,8 @@ function hydrateGeneratedItem(
   }
   const baseVisual = buildServerOwnedVisualSpec(requested, request);
   const serverOwnedScientificRequired = request.generationVersion === "source-grounded-policy-ai-20-unified-scientific-item"
-    || request.generationVersion === "source-grounded-policy-ai-21-server-owned-scientific-item";
+    || request.generationVersion === "source-grounded-policy-ai-21-server-owned-scientific-item"
+    || request.generationVersion === "source-grounded-policy-ai-22-server-owned-question-pattern";
   const serverScientificItem = serverOwnedScientificRequired
     ? buildServerOwnedScientificItem(requested, request, baseVisual)
     : null;
@@ -2958,7 +2962,8 @@ function hydrateGeneratedItem(
       requested.diversityKey,
       request.generationVersion === "source-grounded-policy-ai-19-structured-scenario-repair"
         || request.generationVersion === "source-grounded-policy-ai-20-unified-scientific-item"
-        || request.generationVersion === "source-grounded-policy-ai-21-server-owned-scientific-item",
+        || request.generationVersion === "source-grounded-policy-ai-21-server-owned-scientific-item"
+        || request.generationVersion === "source-grounded-policy-ai-22-server-owned-question-pattern",
       serverOwnedScientificRequired,
     );
     return { visual, alternative: hydratedAlternative };
@@ -4176,15 +4181,14 @@ function validateAndHydrateAlternative(
   if (typeof alternative.stimulus !== "string"
     || !Array.isArray(alternative.options)
     || (!Array.isArray(alternative.markScheme) && !asRecord(alternative.markScheme))
-    || typeof alternative.workingRequired !== "boolean"
     || typeof alternative.needsReview !== "boolean") {
     throw retryableError("أحد بدائل الأسئلة لا يطابق البنية المطلوبة.");
   }
-  if (alternative.questionForm !== requestedStyleTarget) {
-    throw retryableError("مولد الأسئلة لم يلتزم بنمط السؤال المحدد في الخطة.");
-  }
+  const serverWorkingRequired = shouldRequireCalculationWorking(requestedStyleTarget, marks);
   alternative = {
     ...alternative,
+    questionForm: requestedStyleTarget,
+    workingRequired: serverWorkingRequired,
     stimulus: sanitizeGeneratedDisplayText(alternative.stimulus),
     text: sanitizeGeneratedDisplayText(alternative.text),
     options: alternative.options.map((option) => sanitizeGeneratedDisplayText(typeof option === "string" ? option : "")),
@@ -4213,13 +4217,13 @@ function validateAndHydrateAlternative(
   if (!hasSufficientQuestionContext(
     alternative.stimulus,
     alternative.text,
-    alternative.questionForm,
+    requestedStyleTarget,
     requestedVisualTarget,
   )) {
     throw retryableError("أحد الأسئلة السياقية لا يحتوي متنًا أو بيانات كافية.");
   }
-  const workingRequired = shouldRequireCalculationWorking(alternative.questionForm, marks);
-  if (alternative.questionForm === "حسابي" && !calculationPromptContainsRequiredData(alternative, fixedVisual)) {
+  const workingRequired = serverWorkingRequired;
+  if (requestedStyleTarget === "حسابي" && !calculationPromptContainsRequiredData(alternative, fixedVisual)) {
     throw retryableError("السؤال الحسابي ومثيره لا يحتويان جميع القيم والوحدات اللازمة للحل.");
   }
   validateVisualSemanticBinding(alternative, markScheme, fixedVisual);
@@ -4278,7 +4282,7 @@ function validateAndHydrateAlternative(
     answer: alternative.answer.trim(),
     rationale: alternative.rationale.trim(),
     markScheme,
-    questionForm: alternative.questionForm,
+    questionForm: requestedStyleTarget,
     workingRequired,
     sourceSupport: evidence.text,
     enrichmentSupport: enrichmentSegment?.text ?? "",

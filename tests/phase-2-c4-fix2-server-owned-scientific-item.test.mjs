@@ -13,8 +13,8 @@ function blockBetween(startToken, endToken) {
 }
 
 test("يثبت إصدار C4 Fix 2 وعقد ai-21 المملوك للخادم", () => {
-  assert.equal(pkg.version, "0.0.59");
-  assert.equal(ASSESSMENT_GENERATION_V2_VERSION, "source-grounded-policy-ai-21-server-owned-scientific-item");
+  assert.equal(pkg.version, "0.0.60");
+  assert.equal(ASSESSMENT_GENERATION_V2_VERSION, "source-grounded-policy-ai-22-server-owned-question-pattern");
   assert.match(pkg.description, /ملكية النموذج العلمي بالكامل إلى خادم واثق/);
 });
 
@@ -35,7 +35,7 @@ test("يرسل الخادم serverScientificItem نفسه في التوليد ا
 test("يستخدم hydrateGeneratedItem النموذج الخادمي حتى لمسودات ai-20 الحالية", () => {
   const hydrate = blockBetween("function hydrateGeneratedItem", "function validateGeneratedItemsIndividually");
   assert.match(hydrate, /source-grounded-policy-ai-20-unified-scientific-item/);
-  assert.match(hydrate, /source-grounded-policy-ai-21-server-owned-scientific-item/);
+  assert.match(hydrate, /source-grounded-policy-ai-22-server-owned-question-pattern/);
   assert.match(hydrate, /buildServerOwnedScientificItem\(requested, request, baseVisual\)/);
   assert.doesNotMatch(hydrate, /throw retryableError\("السؤال لا يحتوي نموذجًا علميًا موحدًا صالحًا/);
 });
