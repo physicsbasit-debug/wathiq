@@ -4,14 +4,14 @@ import { readFile } from "node:fs/promises";
 
 const edge = await readFile(new URL("../supabase/functions/generate-source-questions/index.ts", import.meta.url), "utf8");
 
-test("يقيد مخطط JSON دليل كل مفردة بمقاطع مرجعها فقط", () => {
+test("يقيد الخادم دليل كل مفردة بمقاطع مرجعها فقط دون تضخيم مخطط Gemini", () => {
   assert.match(edge, /generationSchema\(\s*request\.items,\s*evidenceCatalog,/s);
-  assert.match(edge, /function generationSchema\(requestedItems: GenerationItem\[\], evidenceSource: EvidenceCatalog \| string\[\],/);
-  assert.match(edge, /evidenceSource\.byReferenceId\.get\(requestedItem\.sourceReferenceId\)/);
-  assert.match(edge, /enum: allowedEvidenceIds/);
-  assert.doesNotMatch(edge, /responseJsonSchema: generationSchema\([\s\S]{0,180}evidenceCatalog\.fragments\.map/);
+  assert.match(edge, /const evidence = evidenceCatalog\.byId\.get\(alternative\.sourceEvidenceId\.trim\(\)\)/);
+  assert.match(edge, /evidence\.referenceId !== sourceReferenceId/);
+  assert.doesNotMatch(edge, /enum: allowedEvidenceIds/);
 });
 
-test("يفشل مبكرًا إذا لم توجد مقاطع مرتبطة بمرجع المفردة", () => {
-  assert.match(edge, /لا توجد مقاطع دليل مرتبطة بمرجع إحدى مفردات الاختبار/);
+test("يرفض الدليل المفقود أو التابع لمرجع آخر أثناء التحقق الخادمي", () => {
+  assert.match(edge, /اختار مولد الأسئلة دليلًا لا ينتمي إلى مرجع المفردة/);
+  assert.match(edge, /المرجع المختار لا يثبت ارتباط السؤال بالدرس المحدد/);
 });

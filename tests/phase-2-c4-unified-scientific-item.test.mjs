@@ -112,7 +112,7 @@ function electrostaticVisual(attractionFlag = 0, withIllustration = false) {
 }
 
 test("يثبت Phase 2-C4 وعقد ai-20 للنموذج العلمي الموحد", () => {
-  assert.equal(pkg.version, "0.0.57");
+  assert.equal(pkg.version, "0.0.58");
   assert.equal(ASSESSMENT_GENERATION_V2_VERSION, "source-grounded-policy-ai-20-unified-scientific-item");
   assert.match(pkg.description, /نموذج علمي موحد/);
 });
@@ -174,4 +174,14 @@ test("يمنع الاعتماد والتصدير عند اختلاف النمو�
   assert.match(app, /scientificItemMatchesVisual/);
   assert.match(app, /النموذج العلمي الموحد لكل مفردة/);
   assert.match(app, /لا تطابق نموذجها العلمي الموحد أو مرئيها المشتق منه/);
+});
+
+
+test("يفصل مخطط النقل الخفيف عن قواعد المجال الدقيقة", () => {
+  assert.match(edge, /غلاف نقل خفيف فقط/);
+  assert.doesNotMatch(edge, /prefixItems:\s*requestedItems\.map/);
+  assert.doesNotMatch(edge, /minItems:\s*kind === "force_system"/);
+  assert.match(edge, /sanitizeScientificItem/);
+  assert.match(edge, /validateScientificItemConsistency/);
+  assert.match(edge, /validateGeneratedItemsIndividually/);
 });

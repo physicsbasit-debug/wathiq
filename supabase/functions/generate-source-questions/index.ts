@@ -1285,7 +1285,8 @@ async function callGemini(
         ? { thinkingBudget: 1_024 }
         : legacyThinkingConfig,
       responseMimeType: "application/json",
-      responseJsonSchema: generationSchema(
+      // مخطط النقل خفيف عمدًا؛ جميع قيود المجال الدقيقة تطبقها دوال التحقق الخادمية بعد الاستلام.
+          responseJsonSchema: generationSchema(
         request.items,
         evidenceCatalog,
         enrichment.segments.map((segment) => segment.id),
@@ -1515,35 +1516,26 @@ async function callGeminiMarkSchemeRepair(
   }
 }
 
-function markSchemeRepairSchema(marks: number, alternativeIndexes: number[]): Record<string, unknown> {
+function markSchemeRepairSchema(_marks: number, _alternativeIndexes: number[]): Record<string, unknown> {
   return {
     type: "object",
     properties: {
       schemes: {
         type: "array",
-        minItems: alternativeIndexes.length,
-        maxItems: alternativeIndexes.length,
-        prefixItems: alternativeIndexes.map((alternativeIndex) => ({
+        items: {
           type: "object",
           properties: {
-            alternativeIndex: { type: "integer", enum: [alternativeIndex] },
+            alternativeIndex: { type: "integer" },
             markScheme: {
               type: "array",
-              minItems: marks,
-              maxItems: marks,
-              items: {
-                type: "string",
-                description: "معيار تصحيح مستقل ومحدد وغير فارغ لدرجة واحدة.",
-              },
+              items: { type: "string" },
             },
           },
           required: ["alternativeIndex", "markScheme"],
-          additionalProperties: false,
-        })),
+        },
       },
     },
     required: ["schemes"],
-    additionalProperties: false,
   };
 }
 
@@ -1888,184 +1880,94 @@ function scientificItemKindForRequest(item: GenerationItem): ScientificItemModel
   return "generic";
 }
 
-function scientificItemSchema(item: GenerationItem): Record<string, unknown> {
-  const kind = scientificItemKindForRequest(item);
+function scientificItemSchema(_item: GenerationItem): Record<string, unknown> {
   const quantityItems = {
     type: "object",
     properties: {
-      kind: { type: "string", enum: ["applied_force", "friction_force", "weight", "normal_force", "charge", "other"] },
+      kind: { type: "string" },
       label: { type: "string" },
       value: { type: "number" },
       unit: { type: "string" },
-      direction: { type: "string", enum: ["left", "right", "up", "down", "toward", "away", "balanced", "none"] },
+      direction: { type: "string" },
     },
     required: ["kind", "label", "value", "unit", "direction"],
-    additionalProperties: false,
   };
   return {
     type: "object",
-    description: "النموذج العلمي الموحد للمفردة. هو المصدر الوحيد للكيانات والعلاقات والأرقام والنتيجة التي تستخدمها صياغة السؤال والرسم والإجابة.",
+    description: "النموذج العلمي الموحد للمفردة وهو المصدر الوحيد للكيانات والعلاقات والأرقام والنتيجة. يتحقق الخادم لاحقًا من النوع والعلاقات والقيم والاتجاهات وجميع قواعد الاتساق.",
     properties: {
-      version: { type: "string", enum: ["scientific-item-v1"] },
-      kind: { type: "string", enum: [kind] },
+      version: { type: "string" },
+      kind: { type: "string" },
       phenomenon: { type: "string" },
       primaryEntity: { type: "string" },
       secondaryEntity: { type: "string" },
       visualObject: { type: "string" },
-      relationship: {
-        type: "string",
-        enum: kind === "force_system"
-          ? ["resultant_force"]
-          : kind === "electrostatic_system"
-            ? ["attraction", "repulsion", "charge_transfer", "electrostatic_discharge"]
-            : ["conduction", "insulation", "none"],
-      },
-      primaryCharge: { type: "string", enum: ["positive", "negative", "neutral", "unknown"] },
-      secondaryCharge: { type: "string", enum: ["positive", "negative", "neutral", "unknown"] },
+      relationship: { type: "string" },
+      primaryCharge: { type: "string" },
+      secondaryCharge: { type: "string" },
       transferredParticle: { type: "string" },
       quantities: {
         type: "array",
-        minItems: kind === "force_system" ? 2 : 0,
-        maxItems: kind === "force_system" ? 4 : 8,
         items: quantityItems,
       },
       resultValue: { type: "number" },
       resultUnit: { type: "string" },
-      resultDirection: { type: "string", enum: ["left", "right", "up", "down", "toward", "away", "balanced", "none"] },
+      resultDirection: { type: "string" },
       expectedResult: { type: "string" },
     },
     required: ["version", "kind", "phenomenon", "primaryEntity", "secondaryEntity", "visualObject", "relationship", "primaryCharge", "secondaryCharge", "transferredParticle", "quantities", "resultValue", "resultUnit", "resultDirection", "expectedResult"],
-    additionalProperties: false,
   };
 }
 
-function generationSchema(requestedItems: GenerationItem[], evidenceSource: EvidenceCatalog | string[], enrichmentIds: string[] = [], alternativesPerItem = 3): Record<string, unknown> {
+function generationSchema(_requestedItems: GenerationItem[], _evidenceSource: EvidenceCatalog | string[], _enrichmentIds: string[] = [], _alternativesPerItem = 3): Record<string, unknown> {
+  const alternativeSchema = {
+    type: "object",
+    properties: {
+      stimulus: { type: "string" },
+      text: { type: "string" },
+      options: { type: "array", items: { type: "string" } },
+      answer: { type: "string" },
+      rationale: { type: "string" },
+      markScheme: { type: "array", items: { type: "string" } },
+      questionForm: { type: "string" },
+      workingRequired: { type: "boolean" },
+      sourceEvidenceId: { type: "string" },
+      enrichmentEvidenceId: { type: "string" },
+      scenarioContract: {
+        type: "object",
+        properties: {
+          target: { type: "string" },
+          evidencePhrases: { type: "array", items: { type: "string" } },
+          scientificLink: { type: "string" },
+          contextIsEssential: { type: "boolean" },
+        },
+        required: ["target", "evidencePhrases", "scientificLink", "contextIsEssential"],
+      },
+      scientificItem: scientificItemSchema({} as GenerationItem),
+      needsReview: { type: "boolean" },
+    },
+    required: ["stimulus", "text", "options", "answer", "rationale", "markScheme", "questionForm", "workingRequired", "sourceEvidenceId", "enrichmentEvidenceId", "scenarioContract", "scientificItem", "needsReview"],
+  };
   return {
     type: "object",
-    description: "النتيجة النهائية لتوليد مفردات الاختبار، ويجب أن تحتوي المفتاح items فقط.",
+    description: "غلاف نقل خفيف فقط. يطبق خادم واثق بعد الاستلام جميع قواعد العدد والترتيب والمعرفات والأدلة والدرجات والنموذج العلمي.",
     properties: {
       items: {
         type: "array",
-        description: "مفردة مولدة واحدة لكل planItemId مطلوب وبالترتيب نفسه.",
-        minItems: requestedItems.length,
-        maxItems: requestedItems.length,
-        prefixItems: requestedItems.map((requestedItem) => {
-          const markCount = Number.isInteger(requestedItem.marks) && requestedItem.marks > 0
-            ? requestedItem.marks
-            : 1;
-          const allowedEvidenceIds = Array.isArray(evidenceSource)
-            ? evidenceSource
-            : (evidenceSource.byReferenceId.get(requestedItem.sourceReferenceId) ?? []).map((fragment) => fragment.id);
-          if (!allowedEvidenceIds.length) {
-            throw httpError("لا توجد مقاطع دليل مرتبطة بمرجع إحدى مفردات الاختبار.", 400);
-          }
-          return ({
-            type: "object",
-            properties: {
-              planItemId: {
-                type: "string",
-                enum: [requestedItem.planItemId],
-                description: "المعرف المطابق حرفيًا لمفردة هذا الموضع في الدفعة.",
-              },
-              alternatives: {
-                type: "array",
-                description: alternativesPerItem === 1 ? "سؤال نهائي واحد للمفردة ضمن الاختبار الكامل." : "ثلاث صيغ بديلة مختلفة للمفردة نفسها.",
-                minItems: alternativesPerItem,
-                maxItems: alternativesPerItem,
-                items: {
-                  type: "object",
-                  properties: {
-                    stimulus: {
-                      type: "string",
-                      description: requestedItem.styleTarget === "مفهومي"
-                        ? "متن اختياري للسؤال المفهومي المباشر."
-                        : requestedItem.visualTarget !== "none"
-                          ? "متن نصي إضافي اختياري؛ يجوز أن يكون فارغًا إذا كان fixedVisual نفسه يحمل السياق أو البيانات ويشير نص السؤال إليه صراحة."
-                          : "متن أو سياق أو بيانات السؤال. يجب ألا يكون فارغًا إلا إذا تضمّن نص السؤال نفسه السياق أو المعطيات كاملة.",
-                    },
-                    text: { type: "string", description: "نص المطلوب بصياغة عربية واضحة وفعل أمر مناسب." },
-                    options: {
-                      type: "array",
-                      description: "أربعة خيارات للاختيار من متعدد، ومصفوفة فارغة لبقية الأنواع.",
-                      items: { type: "string" },
-                    },
-                    answer: { type: "string", description: "الإجابة النموذجية الدقيقة." },
-                    rationale: { type: "string", description: "تفسير موجز لصحة الإجابة." },
-                    markScheme: {
-                      type: "array",
-                      description: `نقاط التصحيح للمفردة. يجب أن تحتوي ${markCount} عناصر غير فارغة بالضبط، وكل عنصر يستحق درجة واحدة مستقلة.`,
-                      minItems: markCount,
-                      maxItems: markCount,
-                      items: {
-                        type: "string",
-                        description: "معيار تصحيح محدد ومستقل وغير فارغ لدرجة واحدة.",
-                      },
-                    },
-                    questionForm: {
-                      type: "string",
-                      enum: ["مفهومي", "سياقي", "حسابي", "بيانات", "استقصائي", "مقارنة"],
-                      description: "يجب أن يطابق styleTarget الخاص بالمفردة.",
-                    },
-                    workingRequired: {
-                      type: "boolean",
-                      description: "قيمة مساعدة: true للسؤال الحسابي ذي درجتين أو أكثر، وfalse للسؤال الحسابي ذي الدرجة الواحدة ولغير الحسابي. يثبت الخادم القيمة النهائية تلقائيًا.",
-                    },
-                    sourceEvidenceId: {
-                      type: "string",
-                      enum: allowedEvidenceIds,
-                      description: "معرف مقطع الدليل المختار من allowedEvidenceIds الخاصة بهذه المفردة فقط.",
-                    },
-                    enrichmentEvidenceId: {
-                      type: "string",
-                      enum: ["", ...enrichmentIds],
-                      description: "معرف إثراء رسمي مستخدم في السياق، أو سلسلة فارغة عند عدم استخدام إثراء خارجي.",
-                    },
-                    scenarioContract: {
-                      type: "object",
-                      description: "إثبات منظم لاستخدام السياق المخصص للمفردة، بدل الاعتماد على مطابقة كلمة واحدة.",
-                      properties: {
-                        target: {
-                          type: "string",
-                          enum: [requestedItem.scenarioTarget],
-                          description: "السياق المستهدف للمفردة كما أرسله الخادم حرفيًا.",
-                        },
-                        evidencePhrases: {
-                          type: "array",
-                          minItems: requestedItem.scenarioTarget === "scientific_abstract" ? 0 : 2,
-                          maxItems: 4,
-                          items: {
-                            type: "string",
-                            description: "عبارة قصيرة منسوخة حرفيًا من stimulus أو text تثبت عنصرًا فعليًا من السياق.",
-                          },
-                        },
-                        scientificLink: {
-                          type: "string",
-                          description: "شرح موجز للعلاقة بين السياق وهدف التعلم أو المهارة العلمية.",
-                        },
-                        contextIsEssential: {
-                          type: "boolean",
-                          description: "true عندما يتغير السؤال أو طريقة التفكير بحذف السياق.",
-                        },
-                      },
-                      required: ["target", "evidencePhrases", "scientificLink", "contextIsEssential"],
-                      additionalProperties: false,
-                    },
-                    scientificItem: scientificItemSchema(requestedItem),
-                    needsReview: { type: "boolean" },
-                  },
-                  required: ["stimulus", "text", "options", "answer", "rationale", "markScheme", "questionForm", "workingRequired", "sourceEvidenceId", "enrichmentEvidenceId", "scenarioContract", "scientificItem", "needsReview"],
-                  additionalProperties: false,
-                },
-              },
+        items: {
+          type: "object",
+          properties: {
+            planItemId: { type: "string" },
+            alternatives: {
+              type: "array",
+              items: alternativeSchema,
             },
-            required: ["planItemId", "alternatives"],
-            additionalProperties: false,
-          });
-        }),
+          },
+          required: ["planItemId", "alternatives"],
+        },
       },
     },
     required: ["items"],
-    additionalProperties: false,
   };
 }
 

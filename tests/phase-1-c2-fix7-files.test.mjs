@@ -11,7 +11,7 @@ const edge = await readFile(new URL("../supabase/functions/generate-source-quest
 const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 
 test("يثبت Fix 7 الإصدار وعقد التوليد البصري الجديد", () => {
-  assert.match(pkg.version, /^0\.0\.(?:44|45|46|47|48|49|50|51|52|53|54|55|56|57)$/);
+  assert.match(pkg.version, /^0\.0\.(?:44|45|46|47|48|49|50|51|52|53|54|55|56|57|58)$/);
   assert.match(generator, /source-grounded-policy-ai-(?:12-advanced-visuals|13-trusted-enrichment|14-contextual-stimulus-alignment|15-controlled-hybrid-visuals|16-assessment-quality-context-diversity)/);
   assert.match(generator, /electrostatic_diagram/);
   assert.match(edge, /normalizeVisualQuestionReference/);

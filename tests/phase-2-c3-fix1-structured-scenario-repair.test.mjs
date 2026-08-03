@@ -8,7 +8,7 @@ const edge = await text("supabase/functions/generate-source-questions/index.ts")
 const pkg = JSON.parse(await text("package.json"));
 
 test("يحافظ على عقد إصلاح السياق ai-19 داخل الإصدار العلمي الموحد الأحدث", () => {
-  assert.match(pkg.version, /^0\.0\.(?:56|57)$/);
+  assert.match(pkg.version, /^0\.0\.(?:56|57|58)$/);
   assert.match(ASSESSMENT_GENERATION_V2_VERSION, /source-grounded-policy-ai-(?:19-structured-scenario-repair|20-unified-scientific-item)/);
   assert.match(edge, /source-grounded-policy-ai-19-structured-scenario-repair/);
 });

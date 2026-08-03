@@ -6,10 +6,10 @@ const edge = await readFile(new URL("../supabase/functions/generate-source-quest
 const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 
 test("يثبت Fix 5 عقد نقاط التصحيح الدقيق والإصدار الجديد", () => {
-  assert.match(pkg.version, /^0\.0\.(?:41|42|43|44|45|46|47|48|49|50|51|52|53|54|55|56|57)$/);
-  assert.match(edge, /prefixItems:\s*requestedItems\.map/);
-  assert.match(edge, /minItems:\s*markCount/);
-  assert.match(edge, /maxItems:\s*markCount/);
+  assert.match(pkg.version, /^0\.0\.(?:41|42|43|44|45|46|47|48|49|50|51|52|53|54|55|56|57|58)$/);
+  assert.doesNotMatch(edge, /prefixItems:\s*requestedItems\.map/);
+  assert.match(edge, /hasExactMarkScheme/);
+  assert.match(edge, /normalizeModelMarkScheme/);
   assert.match(edge, /markScheme كمصفوفة نصية طولها يساوي marks تمامًا/);
 });
 

@@ -29,16 +29,16 @@ test("تقرأ candidates content parts وتتحقق من finishReason", () => {
   assert.match(edge, /whole_exam_global_review_failed/);
 });
 
-test("يقيد مخطط JSON بمعرفات الدفعة وبالمفتاح items", () => {
+test("يستخدم مخطط نقل خفيف ويطبق قيود الدفعة خادميًا", () => {
   assert.match(edge, /requiredTopLevelKey:\s*"items"/);
-  assert.match(edge, /prefixItems:\s*requestedItems\.map/);
-  assert.match(edge, /enum:\s*\[requestedItem\.planItemId\]/);
-  assert.match(edge, /required:\s*\["items"\]/);
-  assert.match(edge, /minItems:\s*requestedItems\.length/);
-  assert.match(edge, /maxItems:\s*requestedItems\.length/);
+  assert.match(edge, /function generationSchema/);
+  assert.doesNotMatch(edge, /prefixItems:\s*requestedItems\.map/);
+  assert.match(edge, /validateGeneratedItemsIndividually/);
+  assert.match(edge, /generatedById/);
+  assert.match(edge, /candidates\.length !== 1/);
 });
 
 test("يرفع إصدار مولد الأسئلة بعد الإصلاح", () => {
   assert.match(generator, /source-grounded-policy-ai-(?:6-generate-content|7-evidence-anchors|8-cambridge-style|9-visual-svg|10-strict-lesson-scope|11-visual-enforced|12-advanced-visuals|13-trusted-enrichment|14-contextual-stimulus-alignment|15-controlled-hybrid-visuals|16-assessment-quality-context-diversity)/);
-  assert.match(pkg.version, /^0\.0\.(?:32|33|34|35|36|37|38|39|40|41|42|43|44|45|46|47|48|49|50|51|52|53|54|55|56|57)$/);
+  assert.match(pkg.version, /^0\.0\.(?:32|33|34|35|36|37|38|39|40|41|42|43|44|45|46|47|48|49|50|51|52|53|54|55|56|57|58)$/);
 });

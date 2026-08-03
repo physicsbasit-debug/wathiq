@@ -300,17 +300,17 @@ test("يفرض المخطط ويثبت الدليل عبر معرف مقطع م�
   const evidenceIds = catalog.fragments.map((fragment) => fragment.id);
   const schema = helpers.generationSchema([{ planItemId: "P-1", visualTarget: "none" }], evidenceIds);
   assert.deepEqual(Array.from(schema.required), ["items"]);
-  const itemSchema = schema.properties.items.prefixItems[0];
-  assert.deepEqual(Array.from(itemSchema.properties.planItemId.enum), ["P-1"]);
-  assert.equal(Array.from(itemSchema.properties.alternatives.items.properties.sourceEvidenceId.enum).join("|"), Array.from(evidenceIds).join("|"));
-  assert.equal(schema.properties.items.minItems, 1);
+  const itemSchema = schema.properties.items.items;
+  assert.equal(itemSchema.properties.planItemId.type, "string");
+  assert.equal(itemSchema.properties.alternatives.type, "array");
   assert.equal(itemSchema.properties.visual, undefined);
   assert.deepEqual(Array.from(itemSchema.required), ["planItemId", "alternatives"]);
   const markSchemeSchema = itemSchema.properties.alternatives.items.properties.markScheme;
   assert.equal(markSchemeSchema.type, "array");
-  assert.equal(markSchemeSchema.minItems, 1);
-  assert.equal(markSchemeSchema.maxItems, 1);
-  assert.equal(schema.properties.items.maxItems, 1);
+  assert.equal(markSchemeSchema.items.type, "string");
+  assert.equal(schema.properties.items.prefixItems, undefined);
+  assert.equal(schema.properties.items.minItems, undefined);
+  assert.equal(schema.properties.items.maxItems, undefined);
 
   const request = {
     items: [{
@@ -443,9 +443,11 @@ test("ينفذ مسار generateContent كاملًا باستجابة منظمة
   assert.match(capturedBody.contents[0].parts[0].text, /fixedVisual/);
   assert.equal(capturedBody.generationConfig.thinkingConfig.thinkingBudget, 0);
   assert.match(capturedBody.contents[0].parts[0].text, /EV-1-1/);
-  assert.deepEqual(Array.from(
-    capturedBody.generationConfig.responseJsonSchema.properties.items.prefixItems[0].properties.planItemId.enum,
-  ), ["P-1"]);
+  assert.equal(
+    capturedBody.generationConfig.responseJsonSchema.properties.items.items.properties.planItemId.type,
+    "string",
+  );
+  assert.equal(capturedBody.generationConfig.responseJsonSchema.properties.items.prefixItems, undefined);
 });
 
 test("يرفض معرف دليل تابعًا لمرجع آخر بدل قبول استناد مزيف", () => {
@@ -674,16 +676,14 @@ test("يبني مخططًا موضعيًا يفرض عدد نقاط التصحي
     { planItemId: "P-1", marks: 1 },
     { planItemId: "P-2", marks: 3 },
   ], ["EV-1-1"]);
-  const first = schema.properties.items.prefixItems[0];
-  const second = schema.properties.items.prefixItems[1];
-  const firstMarks = first.properties.alternatives.items.properties.markScheme;
-  const secondMarks = second.properties.alternatives.items.properties.markScheme;
-  assert.deepEqual(Array.from(first.properties.planItemId.enum), ["P-1"]);
-  assert.deepEqual(Array.from(second.properties.planItemId.enum), ["P-2"]);
-  assert.equal(firstMarks.minItems, 1);
-  assert.equal(firstMarks.maxItems, 1);
-  assert.equal(secondMarks.minItems, 3);
-  assert.equal(secondMarks.maxItems, 3);
+  const itemSchema = schema.properties.items.items;
+  const markScheme = itemSchema.properties.alternatives.items.properties.markScheme;
+  assert.equal(itemSchema.properties.planItemId.type, "string");
+  assert.equal(markScheme.type, "array");
+  assert.equal(markScheme.items.type, "string");
+  assert.equal(schema.properties.items.prefixItems, undefined);
+  assert.equal(markScheme.minItems, undefined);
+  assert.equal(markScheme.maxItems, undefined);
 });
 
 test("يصلح نقاط التصحيح بطلب صغير دون إعادة توليد السؤال الكامل", async () => {
@@ -761,7 +761,8 @@ test("يصلح نقاط التصحيح بطلب صغير دون إعادة تو�
     "ربط انجذاب قصاصات الورق بوجود الشحنة.",
   ]);
   assert.equal(repairBody.generationConfig.thinkingConfig.thinkingBudget, 0);
-  assert.equal(repairBody.generationConfig.responseJsonSchema.properties.schemes.prefixItems[0].properties.markScheme.minItems, 3);
+  assert.equal(repairBody.generationConfig.responseJsonSchema.properties.schemes.items.properties.markScheme.items.type, "string");
+  assert.equal(repairBody.generationConfig.responseJsonSchema.properties.schemes.prefixItems, undefined);
   assert.doesNotMatch(repairBody.contents[0].parts[0].text, /evidenceFragments|officialPlanSummary/);
 });
 
