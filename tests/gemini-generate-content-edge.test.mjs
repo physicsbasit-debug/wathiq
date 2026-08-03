@@ -62,6 +62,7 @@ async function loadEdgeHelpers() {
     validateVisualSemanticBinding,
     validateAssessmentQuality,
     buildMomentValidationCorpus,
+    generationItemHasMomentConcept,
   };\n`;
 
   const javascript = ts.transpileModule(source, {
@@ -1338,4 +1339,68 @@ test("يضع محركًا فعليًا في دائرة سياق العربة ا�
   assert.equal(visual.type, "circuit_diagram");
   assert.equal(visual.components.includes("motor"), true);
   assert.match(visual.altText, /محرك/);
+});
+
+test("يثبت المشهد السياقي للعزم المحور وذراع القوة وموضع التأثير", () => {
+  const item = {
+    planItemId: "P-MOMENT-CONTEXT",
+    questionType: "إجابة قصيرة",
+    cognitiveLevel: "تطبيق",
+    marks: 2,
+    sourceReferenceId: "R-MOMENT-CONTEXT",
+    lessonLabel: "عزم القوة",
+    outcomeLabel: "يفسر أثر موضع تأثير القوة في عزم الدوران",
+    styleTarget: "سياقي",
+    visualTarget: "context_scene",
+    scenarioTarget: "door_handle",
+    stimulusTarget: "real_life_scene",
+    skillTarget: "apply",
+    diversityKey: "moment:door:context",
+  };
+  const request = {
+    subject: "الفيزياء",
+    topic: "عزم القوة",
+    references: [{
+      id: "R-MOMENT-CONTEXT",
+      sourceId: "student-book",
+      sourceTitle: "كتاب الطالب",
+      sourceKind: "كتاب الطالب",
+      pageFrom: 20,
+      pageTo: 20,
+      content: "يعتمد عزم القوة على مقدار القوة والمسافة العمودية عن محور الدوران.",
+      lessonTopic: "عزم القوة",
+      lessonScopeMode: "page-range",
+      lessonPageFrom: 20,
+      lessonPageTo: 20,
+    }],
+  };
+
+  assert.equal(helpers.generationItemHasMomentConcept(item), true);
+  const visual = helpers.buildServerOwnedVisualSpec(item, request);
+  assert.equal(visual.type, "context_scene");
+  assert.match(`${visual.purpose} ${visual.altText} ${visual.labels.join(" ")} ${visual.annotations.join(" ")}`, /محور الدوران|مفصل الباب/u);
+  assert.match(`${visual.purpose} ${visual.altText} ${visual.labels.join(" ")} ${visual.annotations.join(" ")}`, /ذراع القوة|المسافة/u);
+  assert.match(`${visual.purpose} ${visual.altText} ${visual.labels.join(" ")} ${visual.annotations.join(" ")}`, /موضع تأثير القوة|المقبض/u);
+
+  const scientificItem = helpers.buildServerOwnedScientificItem(item, request, visual);
+  assert.equal(scientificItem.kind, "generic");
+  assert.doesNotThrow(() => helpers.validateAssessmentQuality(
+    {
+      stimulus: "يفتح طالب باب المختبر بالضغط على المقبض كما في المشهد المرفق.",
+      text: "فسر كيف يؤثر موضع القوة في عزم دوران الباب.",
+      options: [],
+      answer: "يزداد العزم عندما يزداد ذراع القوة.",
+      rationale: "المقبض أبعد عن المفصل من النقاط القريبة منه.",
+      markScheme: ["ربط موضع القوة بذراع القوة.", "تفسير زيادة العزم بزيادة الذراع."],
+      sourceEvidenceId: "",
+      enrichmentEvidenceId: "",
+      needsReview: false,
+    },
+    "door_handle",
+    "real_life_scene",
+    "apply",
+    "modern:moment-context-contract",
+    visual,
+    scientificItem,
+  ));
 });

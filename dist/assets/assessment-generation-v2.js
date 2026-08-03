@@ -1,7 +1,7 @@
 import { applyGeneratedQuestions, buildQuestionGenerationRequest, shouldRequireCalculationWorking, sanitizeGeneratedQuestionText, } from "./question-generation.js";
 import { parseQuestionVisualSpec } from "./question-visual.js";
 import { parseScientificItemModel } from "./scientific-item.js";
-export const ASSESSMENT_GENERATION_V2_VERSION = "source-grounded-policy-ai-23-server-owned-assessment-contract";
+export const ASSESSMENT_GENERATION_V2_VERSION = "source-grounded-policy-ai-24-context-aware-moment-contract";
 function normalizeArabic(value) {
     return value
         .normalize("NFKC")

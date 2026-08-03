@@ -1902,9 +1902,13 @@ function buildUserPrompt(request: GenerationRequest, evidenceCatalog: EvidenceCa
   });
 }
 
+function generationItemHasMomentConcept(item: GenerationItem): boolean {
+  const concept = normalizeForEvidence(`${item.lessonLabel} ${item.outcomeLabel}`);
+  return /(عزم|اتزان دوراني|محور دوران|ذراع القوه|نقطه ارتكاز)/u.test(concept);
+}
+
 function generationItemUsesMoment(item: GenerationItem): boolean {
-  const context = normalizeForEvidence(`${item.lessonLabel} ${item.outcomeLabel} ${SCENARIO_GUIDANCE[item.scenarioTarget]} ${STIMULUS_GUIDANCE[item.stimulusTarget]} ${SKILL_GUIDANCE[item.skillTarget]}`);
-  return item.visualTarget === "force_diagram" && /(عزم|ارتكاز|دوران)/u.test(context);
+  return generationItemHasMomentConcept(item) && item.visualTarget === "force_diagram";
 }
 
 function scientificItemKindForRequest(item: GenerationItem): ScientificItemModelKind {
@@ -2206,6 +2210,7 @@ function parseGenerationRequest(value: unknown): GenerationRequest {
     "source-grounded-policy-ai-21-server-owned-scientific-item",
     "source-grounded-policy-ai-22-server-owned-question-pattern",
     "source-grounded-policy-ai-23-server-owned-assessment-contract",
+    "source-grounded-policy-ai-24-context-aware-moment-contract",
   ]);
   if (generationMode === "whole_exam_v2" && !compatibleWholeExamVersions.has(generationVersion)) {
     throw httpError("إصدار محرك الاختبار الكامل غير متوافق.", 400);
@@ -3105,7 +3110,8 @@ function hydrateGeneratedItem(
   const serverOwnedScientificRequired = request.generationVersion === "source-grounded-policy-ai-20-unified-scientific-item"
     || request.generationVersion === "source-grounded-policy-ai-21-server-owned-scientific-item"
     || request.generationVersion === "source-grounded-policy-ai-22-server-owned-question-pattern"
-    || request.generationVersion === "source-grounded-policy-ai-23-server-owned-assessment-contract";
+    || request.generationVersion === "source-grounded-policy-ai-23-server-owned-assessment-contract"
+    || request.generationVersion === "source-grounded-policy-ai-24-context-aware-moment-contract";
   const serverScientificItem = serverOwnedScientificRequired
     ? buildServerOwnedScientificItem(requested, request, baseVisual)
     : null;
@@ -3137,7 +3143,8 @@ function hydrateGeneratedItem(
         || request.generationVersion === "source-grounded-policy-ai-20-unified-scientific-item"
         || request.generationVersion === "source-grounded-policy-ai-21-server-owned-scientific-item"
         || request.generationVersion === "source-grounded-policy-ai-22-server-owned-question-pattern"
-        || request.generationVersion === "source-grounded-policy-ai-23-server-owned-assessment-contract",
+        || request.generationVersion === "source-grounded-policy-ai-23-server-owned-assessment-contract"
+        || request.generationVersion === "source-grounded-policy-ai-24-context-aware-moment-contract",
       serverOwnedScientificRequired,
     );
     return { visual, alternative: hydratedAlternative };
@@ -3563,17 +3570,23 @@ function buildServerOwnedVisualSpec(item: GenerationItem, request: GenerationReq
       laboratory_setup: ["التجربة المدرسية", "أداة القياس"],
       road_safety: ["موقف الطريق", "عنصر السلامة"],
     };
+    const momentHint = generationItemHasMomentConcept(item) ? momentScenarioHintText(item.scenarioTarget) : "";
+    const labels = momentHint ? momentScenarioVisualLabels(item.scenarioTarget) : sceneLabels[item.scenarioTarget];
     return {
       ...emptyVisualSpec(),
       type: "context_scene",
       visualId,
       variant,
       role: ["calculate", "complete", "draw"].includes(role) ? "interpret" : role,
-      purpose: `تطبيق المفهوم العلمي في ${SCENARIO_GUIDANCE[item.scenarioTarget]}`,
-      title: "موقف علمي من الحياة اليومية",
-      altText: `مشهد ثنائي الأبعاد يوضح ${SCENARIO_GUIDANCE[item.scenarioTarget]}`,
-      labels: sceneLabels[item.scenarioTarget],
-      annotations: [SKILL_GUIDANCE[item.skillTarget]],
+      purpose: momentHint
+        ? `تحديد محور الدوران وموضع تأثير القوة وذراع القوة في ${SCENARIO_GUIDANCE[item.scenarioTarget]}`
+        : `تطبيق المفهوم العلمي في ${SCENARIO_GUIDANCE[item.scenarioTarget]}`,
+      title: momentHint ? "عناصر العزم في الموقف الحياتي" : "موقف علمي من الحياة اليومية",
+      altText: momentHint
+        ? `مشهد ثنائي الأبعاد يوضح ${momentHint}`
+        : `مشهد ثنائي الأبعاد يوضح ${SCENARIO_GUIDANCE[item.scenarioTarget]}`,
+      labels,
+      annotations: momentHint ? [momentHint, SKILL_GUIDANCE[item.skillTarget]] : [SKILL_GUIDANCE[item.skillTarget]],
     };
   }
 
@@ -4320,6 +4333,17 @@ function momentScenarioHintText(scenarioTarget: QuestionScenarioTarget): string 
   return hints[scenarioTarget] ?? "";
 }
 
+function momentScenarioVisualLabels(scenarioTarget: QuestionScenarioTarget): [string, string] {
+  const labels: Partial<Record<QuestionScenarioTarget, [string, string]>> = {
+    door_handle: ["مفصل الباب: محور الدوران", "المقبض: موضع تأثير القوة"],
+    playground_seesaw: ["نقطة الارتكاز: محور الدوران", "المقعد: موضع تأثير القوة"],
+    wrench_tool: ["الصامولة: محور الدوران", "طرف المفتاح: موضع تأثير القوة"],
+    bicycle_brake: ["مفصل المكبح: محور الدوران", "المقبض: موضع تأثير القوة"],
+    shopping_trolley: ["محور العجلات", "المقبض: موضع تأثير القوة"],
+  };
+  return labels[scenarioTarget] ?? ["محور الدوران", "موضع تأثير القوة"];
+}
+
 function buildMomentValidationCorpus(
   alternative: ModelGeneratedAlternative,
   fixedVisual: QuestionVisualSpec,
@@ -4332,6 +4356,9 @@ function buildMomentValidationCorpus(
     fixedVisual.altText,
     ...fixedVisual.labels,
     ...fixedVisual.annotations,
+    ...fixedVisual.tableColumns,
+    ...fixedVisual.tableRows,
+    ...fixedVisual.tableCells.flat(),
     ...fixedVisual.vectors.map((vector) => `${vector.label} ${vector.magnitude}`),
     ...fixedVisual.values.map((value, index) => `القيمة ${index + 1} ${value}`),
   ].join(" ");

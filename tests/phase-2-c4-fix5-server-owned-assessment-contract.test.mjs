@@ -15,8 +15,8 @@ function blockBetween(startToken, endToken) {
 }
 
 test("يثبت Fix 5 عقد التقييم المملوك للخادم", () => {
-  assert.equal(pkg.version, "0.0.61");
-  assert.equal(ASSESSMENT_GENERATION_V2_VERSION, "source-grounded-policy-ai-23-server-owned-assessment-contract");
+  assert.match(pkg.version, /^0\.0\.(?:61|62)$/);
+  assert.match(ASSESSMENT_GENERATION_V2_VERSION, /source-grounded-policy-ai-(?:23-server-owned-assessment-contract|24-context-aware-moment-contract)/);
   assert.match(edge, /buildServerOwnedScenarioContract/);
   assert.match(edge, /moment_system/);
   assert.match(edge, /stabilizeGeneratedPayloadMarkSchemes/);
