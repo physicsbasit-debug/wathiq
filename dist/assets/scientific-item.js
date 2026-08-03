@@ -1,8 +1,8 @@
-const KINDS = ["generic", "force_system", "electrostatic_system"];
-const DIRECTIONS = ["left", "right", "up", "down", "toward", "away", "balanced", "none"];
+const KINDS = ["generic", "force_system", "moment_system", "electrostatic_system"];
+const DIRECTIONS = ["left", "right", "up", "down", "toward", "away", "clockwise", "counterclockwise", "balanced", "none"];
 const CHARGES = ["positive", "negative", "neutral", "unknown"];
-const RELATIONSHIPS = ["attraction", "repulsion", "charge_transfer", "electrostatic_discharge", "resultant_force", "conduction", "insulation", "none"];
-const QUANTITY_KINDS = ["applied_force", "friction_force", "weight", "normal_force", "charge", "other"];
+const RELATIONSHIPS = ["attraction", "repulsion", "charge_transfer", "electrostatic_discharge", "resultant_force", "moment", "conduction", "insulation", "none"];
+const QUANTITY_KINDS = ["applied_force", "friction_force", "weight", "normal_force", "moment_force", "lever_arm", "charge", "other"];
 function asRecord(value) {
     return typeof value === "object" && value !== null && !Array.isArray(value)
         ? value
@@ -61,7 +61,7 @@ export function parseScientificItemModel(value) {
     };
     if (!model.phenomenon || !model.primaryEntity || !model.visualObject || !model.expectedResult)
         return undefined;
-    if (model.kind === "force_system" && model.quantities.length < 2)
+    if ((model.kind === "force_system" || model.kind === "moment_system") && model.quantities.length < 2)
         return undefined;
     return model;
 }
@@ -117,6 +117,20 @@ function forceResult(quantities) {
         return { value, direction: x > 0 ? "right" : "left" };
     return { value, direction: y > 0 ? "up" : "down" };
 }
+function momentResult(quantities) {
+    const forces = quantities.filter((quantity) => quantity.kind === "moment_force");
+    const arms = quantities.filter((quantity) => quantity.kind === "lever_arm");
+    if (!forces.length || forces.length !== arms.length)
+        return { value: -1, direction: "none" };
+    let signed = 0;
+    for (let index = 0; index < forces.length; index += 1) {
+        const moment = forces[index].value * arms[index].value;
+        signed += forces[index].direction === "clockwise" ? -moment : moment;
+    }
+    if (Math.abs(signed) < 0.01)
+        return { value: 0, direction: "balanced" };
+    return { value: Number(Math.abs(signed).toFixed(2)), direction: signed > 0 ? "counterclockwise" : "clockwise" };
+}
 export function scientificItemIsComplete(model) {
     if (!model)
         return false;
@@ -128,6 +142,17 @@ export function scientificItemIsComplete(model) {
             && quantitiesHaveUniqueKinds(model.quantities)
             && model.relationship === "resultant_force"
             && model.resultUnit === "N"
+            && Math.abs(model.resultValue - result.value) < 0.01
+            && model.resultDirection === result.direction;
+    }
+    if (model.kind === "moment_system") {
+        const forces = model.quantities.filter((quantity) => quantity.kind === "moment_force" && quantity.value > 0 && quantity.unit === "N" && ["clockwise", "counterclockwise"].includes(quantity.direction));
+        const arms = model.quantities.filter((quantity) => quantity.kind === "lever_arm" && quantity.value > 0 && quantity.unit === "m");
+        const result = momentResult(model.quantities);
+        return forces.length >= 1
+            && forces.length === arms.length
+            && model.relationship === "moment"
+            && model.resultUnit === "N m"
             && Math.abs(model.resultValue - result.value) < 0.01
             && model.resultDirection === result.direction;
     }
@@ -166,6 +191,16 @@ export function scientificItemMatchesVisual(model, visual) {
         return model.quantities.every((quantity) => visual.vectors.some((vector) => vector.label.trim() === quantity.label.trim()
             && Math.abs(vector.magnitude - quantity.value) < 0.01
             && scientificDirectionFromVector(vector.dx, vector.dy) === quantity.direction));
+    }
+    if (model.kind === "moment_system") {
+        if (visual.type !== "force_diagram" || visual.variant !== "moments")
+            return false;
+        const forces = model.quantities.filter((quantity) => quantity.kind === "moment_force");
+        const arms = model.quantities.filter((quantity) => quantity.kind === "lever_arm");
+        if (visual.vectors.length !== forces.length || visual.values.length < arms.length)
+            return false;
+        return forces.every((quantity, index) => Math.abs((visual.vectors[index]?.magnitude ?? -1) - quantity.value) < 0.01)
+            && arms.every((quantity, index) => Math.abs((visual.values[index] ?? -1) - quantity.value) < 0.01);
     }
     if (model.kind === "electrostatic_system") {
         if (model.relationship === "attraction" || model.relationship === "repulsion") {

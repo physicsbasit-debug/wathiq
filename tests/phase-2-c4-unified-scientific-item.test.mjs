@@ -112,8 +112,8 @@ function electrostaticVisual(attractionFlag = 0, withIllustration = false) {
 }
 
 test("يثبت Phase 2-C4 Fix 2 وعقد ai-21 للنموذج العلمي المملوك للخادم", () => {
-  assert.equal(pkg.version, "0.0.60");
-  assert.equal(ASSESSMENT_GENERATION_V2_VERSION, "source-grounded-policy-ai-22-server-owned-question-pattern");
+  assert.equal(pkg.version, "0.0.61");
+  assert.equal(ASSESSMENT_GENERATION_V2_VERSION, "source-grounded-policy-ai-23-server-owned-assessment-contract");
   assert.match(pkg.description, /نموذج علمي موحد/);
 });
 

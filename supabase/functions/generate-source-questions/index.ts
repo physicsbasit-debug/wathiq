@@ -346,11 +346,11 @@ interface ModelGeneratedScenarioContract {
   contextIsEssential: boolean;
 }
 
-type ScientificItemModelKind = "generic" | "force_system" | "electrostatic_system";
-type ScientificDirection = "left" | "right" | "up" | "down" | "toward" | "away" | "balanced" | "none";
+type ScientificItemModelKind = "generic" | "force_system" | "moment_system" | "electrostatic_system";
+type ScientificDirection = "left" | "right" | "up" | "down" | "toward" | "away" | "clockwise" | "counterclockwise" | "balanced" | "none";
 type ScientificChargeState = "positive" | "negative" | "neutral" | "unknown";
-type ScientificRelationship = "attraction" | "repulsion" | "charge_transfer" | "electrostatic_discharge" | "resultant_force" | "conduction" | "insulation" | "none";
-type ScientificQuantityKind = "applied_force" | "friction_force" | "weight" | "normal_force" | "charge" | "other";
+type ScientificRelationship = "attraction" | "repulsion" | "charge_transfer" | "electrostatic_discharge" | "resultant_force" | "moment" | "conduction" | "insulation" | "none";
+type ScientificQuantityKind = "applied_force" | "friction_force" | "weight" | "normal_force" | "moment_force" | "lever_arm" | "charge" | "other";
 
 interface ModelGeneratedScientificQuantity {
   kind: ScientificQuantityKind;
@@ -1177,13 +1177,13 @@ async function generateAndValidate(request: GenerationRequest, requestId: string
   let pendingIds = new Set(request.items.map((item) => item.planItemId));
   let repairFeedback = "";
   let lastError: unknown = null;
-  const maxRounds = request.generationMode === "whole_exam_v2" ? 4 : 2;
+  const maxRounds = request.generationMode === "whole_exam_v2" ? 3 : 2;
 
   for (let round = 1; round <= maxRounds; round += 1) {
     const scopedRequest = scopedGenerationRequest(request, pendingIds);
     try {
       const payload = await callGemini(scopedRequest, evidenceCatalog, enrichment, round > 1, requestId, round, repairFeedback);
-      const markSchemeSafePayload = await repairGeneratedPayloadMarkSchemes(payload, scopedRequest, requestId);
+      const markSchemeSafePayload = stabilizeGeneratedPayloadMarkSchemes(payload, scopedRequest, requestId);
       const batch = validateGeneratedItemsIndividually(markSchemeSafePayload, scopedRequest, evidenceCatalog, enrichment);
       for (const item of batch.items) accepted.set(item.planItemId, item);
 
@@ -1365,6 +1365,31 @@ async function callGemini(
   }
 }
 
+
+function stabilizeGeneratedPayloadMarkSchemes(
+  payload: ModelGeneratedPayload,
+  request: GenerationRequest,
+  requestId: string,
+): ModelGeneratedPayload {
+  if (!payload || !Array.isArray(payload.items)) return payload;
+  const requestedById = new Map(request.items.map((item) => [item.planItemId, item]));
+  let normalizedCount = 0;
+  for (const generatedItem of payload.items) {
+    if (!generatedItem || !Array.isArray(generatedItem.alternatives)) continue;
+    const requestedItem = requestedById.get(generatedItem.planItemId);
+    if (!requestedItem) continue;
+    for (const alternative of generatedItem.alternatives) {
+      if (hasExactMarkScheme(alternative?.markScheme, requestedItem.marks)) continue;
+      alternative.markScheme = buildFallbackMarkScheme(alternative, requestedItem.marks, requestedItem.styleTarget);
+      alternative.needsReview = true;
+      normalizedCount += 1;
+    }
+  }
+  if (normalizedCount) {
+    logStage(requestId, "mark_scheme_normalized_locally", { normalizedCount });
+  }
+  return payload;
+}
 
 async function repairGeneratedPayloadMarkSchemes(
   payload: ModelGeneratedPayload,
@@ -1742,9 +1767,9 @@ function buildSystemInstructions(request: GenerationRequest): string {
       : "اجعل البدائل الثلاثة للمفردة الواحدة مختلفة في تفاصيل الموقف والقيم وطريقة التفكير، لا مجرد تبديل كلمات في السؤال نفسه.",
     "في الاختبار القصير لا تجعل أكثر من مفردة واحدة تعريفًا أو سؤال وحدة مباشرًا، واجعل بقية المفردات تطبيقًا أو تفسيرًا أو بيانات أو قرارًا أو استقصاءً وفق الخطة.",
     "السياق الحياتي يجب أن يكون ضروريًا للإجابة، قصيرًا، واقعيًا، مناسبًا لعمر الطالب، ومتصلًا مباشرة بالمفهوم العلمي؛ لا تضع قصة زخرفية يمكن حذفها دون أن يتغير السؤال.",
-    "أعد scenarioContract منظمًا لكل بديل: target مطابق حرفيًا لـscenarioTarget، وevidencePhrases عبارتان إلى أربع عبارات قصيرة منسوخة حرفيًا من stimulus أو text تثبت عناصر السياق، وscientificLink يشرح كيف يخدم السياق هدف التعلم، وcontextIsEssential=true عندما يكون السياق الحياتي أو حالة القرار جزءًا من الحل.",
+    "لا تُعد scenarioContract في JSON؛ خادم واثق يبنيه بعد التوليد من متن السؤال والخطة والمرئي المملوك له، حتى لا تصبح صحة السؤال رهينة لحقول وصفية مكررة.",
     "لكل مفردة يرسل الخادم serverScientificItem بوصفه المصدر العلمي الوحيد وغير القابل للاستبدال. لا تُعد scientificItem في JSON ولا تنشئ نموذجًا بديلًا؛ صغ stimulus وtext وanswer وmarkScheme بحيث تتطابق حرفيًا مع كيانات serverScientificItem وعلاقاته وكمياته ووحداته واتجاهاته ونتيجته المتوقعة.",
-    "في force_system: استخدم فقط القوى والقيم والاتجاهات الموجودة في serverScientificItem، واذكرها في متن السؤال عند الحاجة للحل. في electrostatic_system: التزم بنوع الشحنتين والعلاقة attraction/repulsion أو charge_transfer أو electrostatic_discharge كما ثبتها الخادم، ولا تعكسها أو تستبدلها.",
+    "في force_system: استخدم فقط القوى والقيم والاتجاهات الموجودة في serverScientificItem، واذكرها في متن السؤال عند الحاجة للحل. في moment_system: استخدم قوى العزم وأذرعها واتجاه الدوران والنتيجة كما ثبتها الخادم، ولا تضف احتكاكًا أو قوة محصلة خطية إلى سؤال العزم. في electrostatic_system: التزم بنوع الشحنتين والعلاقة attraction/repulsion أو charge_transfer أو electrostatic_discharge كما ثبتها الخادم، ولا تعكسها أو تستبدلها.",
     "في مسائل العزم المرتبطة بموقف حياتي، إذا كان fixedVisual أو serverScientificItem يوضحان نقطة الارتكاز وموضع تأثير القوة والبعد أو ذراع القوة، فيكفي أن يشير السؤال إلى الشكل بوضوح ولا حاجة لتكرار جميع هذه العناصر نصيًا حرفيًا ما دام الحل يعتمد عليها من الشكل.",
     "لا تخلط بين الدروس؛ كل مفردة مرتبطة باسم درس ومرجع صفحة محددين في الخطة.",
     "يُمنع إنشاء أسئلة عن اسم الوحدة أو رقمها أو اسم الكتاب أو الصفحة أو موضع الدرس في المنهج؛ المطلوب قياس المحتوى العلمي للدرس فقط.",
@@ -1803,7 +1828,7 @@ function buildUserPrompt(request: GenerationRequest, evidenceCatalog: EvidenceCa
   return JSON.stringify({
     task: repairAttempt
       ? (request.generationMode === "whole_exam_v2"
-          ? "صحح المفردات المرسلة في هذا الطلب فقط وفق أسباب الرفض المحددة، ولا تعِد أو تغيّر مفردات غير مرسلة. احتفظ بالخطة والدرس والدرجة والسياق المنظم وserverScientificItem كما هي، ولا تعد scientificItem في JSON."
+          ? "صحح المفردات المرسلة في هذا الطلب فقط وفق أسباب الرفض المحددة، ولا تعِد أو تغيّر مفردات غير مرسلة. احتفظ بالخطة والدرس والدرجة وserverScientificItem كما هي، ولا تعد scientificItem أو scenarioContract في JSON."
           : "أعد التوليد بدقة أكبر، وصحح سبب رفض المحاولة السابقة تحديدًا مع إبقاء الخطة والدرس والدرجة كما هي.")
       : (request.generationMode === "whole_exam_v2"
           ? "صمم اختبارًا كاملًا قابلًا للاستخدام الفعلي من بطاقات الدروس والمخطط والمراجع، ثم أعد سؤالًا نهائيًا واحدًا لكل مفردة."
@@ -1839,14 +1864,7 @@ function buildUserPrompt(request: GenerationRequest, evidenceCatalog: EvidenceCa
       visualTarget: item.visualTarget,
       scenarioTarget: item.scenarioTarget,
       scenarioGuidance: SCENARIO_GUIDANCE[item.scenarioTarget],
-      scenarioContract: {
-        target: item.scenarioTarget,
-        evidencePhraseRule: item.scenarioTarget === "scientific_abstract"
-          ? "يجوز أن تكون evidencePhrases فارغة إذا لم يكن السؤال حياتيًا."
-          : "أعد عبارتين إلى أربع عبارات منسوخة حرفيًا من متن السؤال تثبت عناصر السياق.",
-        scientificLinkRule: `اربط السياق بهدف التعلم: ${item.outcomeLabel}`,
-        contextIsEssential: item.scenarioTarget !== "scientific_abstract" || ["real_life_scene", "decision_case"].includes(item.stimulusTarget),
-      },
+      scenarioContractOwner: "server",
       stimulusTarget: item.stimulusTarget,
       stimulusGuidance: STIMULUS_GUIDANCE[item.stimulusTarget],
       skillTarget: item.skillTarget,
@@ -1875,7 +1893,7 @@ function buildUserPrompt(request: GenerationRequest, evidenceCatalog: EvidenceCa
       itemCount: request.items.length,
       alternativesPerItem: request.generationMode === "whole_exam_v2" ? 1 : 3,
       exactPlanItemIds: request.items.map((item) => item.planItemId),
-      evidenceRule: "أعد sourceEvidenceId من allowedEvidenceIds الخاصة بالمفردة فقط. أعد enrichmentEvidenceId من allowedEnrichmentIds عند استخدام إثراء خارجي، وإلا فأعد سلسلة فارغة. أعد scenarioContract المنظم، ولا تعد scientificItem ولا تعتمد على كلمات مفتاحية منفردة لإثبات السياق.",
+      evidenceRule: "أعد sourceEvidenceId من allowedEvidenceIds الخاصة بالمفردة فقط. أعد enrichmentEvidenceId من allowedEnrichmentIds عند استخدام إثراء خارجي، وإلا فأعد سلسلة فارغة. لا تعد scenarioContract أو scientificItem؛ الخادم يملك العقدين ويبنيهما بعد التوليد.",
       styleRule: "نفذ styleTarget وscenarioTarget وstimulusTarget وskillTarget في صياغة السؤال نفسها. لا تعد questionForm أو workingRequired في JSON؛ خادم واثق يثبتهما من الخطة الرسمية. استخدم serverScientificItem المرفق بوصفه المرجع الوحيد للأرقام والعلاقات والكيانات والنتيجة، ويجب أن تتطابق صياغة السؤال والإجابة ونموذج التصحيح معه. أعد markScheme كمصفوفة طولها يساوي marks تمامًا، وكل عنصر فيها معيار مستقل غير فارغ لدرجة واحدة. في الأسئلة غير المفهومية اجعل stimulus غير فارغ، إلا إذا كان fixedVisual يحمل السياق أو البيانات ويشير text إليه صراحة، أو كان text نفسه يتضمن السياق كاملًا.",
       visualRule: request.generationMode === "whole_exam_v2"
         ? "لا تعد visual في JSON. إذا كان fixedVisual.type لا يساوي none، يجب أن يعتمد السؤال النهائي عليه اعتمادًا جوهريًا ويذكره صراحة."
@@ -1884,7 +1902,13 @@ function buildUserPrompt(request: GenerationRequest, evidenceCatalog: EvidenceCa
   });
 }
 
+function generationItemUsesMoment(item: GenerationItem): boolean {
+  const context = normalizeForEvidence(`${item.lessonLabel} ${item.outcomeLabel} ${SCENARIO_GUIDANCE[item.scenarioTarget]} ${STIMULUS_GUIDANCE[item.stimulusTarget]} ${SKILL_GUIDANCE[item.skillTarget]}`);
+  return item.visualTarget === "force_diagram" && /(عزم|ارتكاز|دوران)/u.test(context);
+}
+
 function scientificItemKindForRequest(item: GenerationItem): ScientificItemModelKind {
+  if (generationItemUsesMoment(item)) return "moment_system";
   if (item.visualTarget === "force_diagram") return "force_system";
   if (item.visualTarget === "electrostatic_diagram") return "electrostatic_system";
   return "generic";
@@ -1911,13 +1935,26 @@ function scenarioScientificObject(item: GenerationItem, base: QuestionVisualSpec
     ?? item.lessonLabel;
 }
 
-function scientificQuantityKindFromVector(vector: QuestionVisualVector, index: number): ScientificQuantityKind {
+function scientificQuantityKindFromVector(vector: QuestionVisualVector, _index: number): ScientificQuantityKind {
   const label = normalizeForEvidence(vector.label);
   if (/احتكاك/u.test(label)) return "friction_force";
   if (/وزن/u.test(label)) return "weight";
-  if (/رد الفعل|عمودي/u.test(label)) return "normal_force";
-  if (/قوه مؤثره|قوة مؤثرة|دفع|سحب/u.test(label) || index === 0) return "applied_force";
+  if (/رد الفعل|رد فعل|عمودي/u.test(label)) return "normal_force";
+  if (/قوه.*(?:مؤثره|موثره)|دفع|سحب/u.test(label)) return "applied_force";
   return "other";
+}
+
+function momentDirectionForVector(vector: QuestionVisualVector): ScientificDirection {
+  const upward = vector.dy < 0;
+  const leftSide = vector.x < 0;
+  return upward === leftSide ? "clockwise" : "counterclockwise";
+}
+
+function momentDirectionLabel(direction: ScientificDirection): string {
+  if (direction === "clockwise") return "مع اتجاه عقارب الساعة";
+  if (direction === "counterclockwise") return "عكس اتجاه عقارب الساعة";
+  if (direction === "balanced") return "والعزوم متزنة";
+  return "دون اتجاه عزم محصل";
 }
 
 function scientificDirectionLabel(direction: ScientificDirection): string {
@@ -1964,6 +2001,50 @@ function buildServerOwnedScientificItem(
   base: QuestionVisualSpec = buildServerOwnedVisualSpec(item, request),
 ): ModelGeneratedScientificItem {
   const visualObject = scenarioScientificObject(item, base);
+  if (base.type === "force_diagram" && base.variant === "moments") {
+    const forces = base.vectors.map((vector) => ({
+      kind: "moment_force" as const,
+      label: vector.label,
+      value: Number(vector.magnitude.toFixed(4)),
+      unit: "N",
+      direction: momentDirectionForVector(vector),
+    }));
+    const arms = forces.map((_, index) => ({
+      kind: "lever_arm" as const,
+      label: `ذراع ${base.vectors[index]?.label || `القوة ${index + 1}`}`,
+      value: Number((base.values[index] ?? 0).toFixed(4)),
+      unit: "m",
+      direction: "none" as const,
+    }));
+    let signedMoment = 0;
+    for (let index = 0; index < forces.length; index += 1) {
+      const moment = forces[index]!.value * arms[index]!.value;
+      signedMoment += forces[index]!.direction === "clockwise" ? -moment : moment;
+    }
+    const resultValue = Number(Math.abs(signedMoment).toFixed(2));
+    const resultDirection: ScientificDirection = Math.abs(signedMoment) < 0.01
+      ? "balanced"
+      : signedMoment > 0 ? "counterclockwise" : "clockwise";
+    return {
+      version: "scientific-item-v1",
+      kind: "moment_system",
+      phenomenon: "عزم القوة والاتزان الدوراني",
+      primaryEntity: visualObject,
+      secondaryEntity: "محور الدوران أو نقطة الارتكاز",
+      visualObject,
+      relationship: "moment",
+      primaryCharge: "unknown",
+      secondaryCharge: "unknown",
+      transferredParticle: "",
+      quantities: forces.flatMap((force, index) => [force, arms[index]!]),
+      resultValue,
+      resultUnit: "N m",
+      resultDirection,
+      expectedResult: resultDirection === "balanced"
+        ? "العزم المحصل يساوي 0 N m والعزوم متزنة"
+        : `العزم المحصل يساوي ${resultValue} N m ${momentDirectionLabel(resultDirection)}`,
+    };
+  }
   if (base.type === "force_diagram" && ["free_body", "balanced_forces"].includes(base.variant)) {
     let x = 0;
     let y = 0;
@@ -2086,19 +2167,9 @@ function generationSchema(_requestedItems: GenerationItem[], _evidenceSource: Ev
       markScheme: { type: "array", items: { type: "string" } },
       sourceEvidenceId: { type: "string" },
       enrichmentEvidenceId: { type: "string" },
-      scenarioContract: {
-        type: "object",
-        properties: {
-          target: { type: "string" },
-          evidencePhrases: { type: "array", items: { type: "string" } },
-          scientificLink: { type: "string" },
-          contextIsEssential: { type: "boolean" },
-        },
-        required: ["target", "evidencePhrases", "scientificLink", "contextIsEssential"],
-      },
       needsReview: { type: "boolean" },
     },
-    required: ["stimulus", "text", "options", "answer", "rationale", "markScheme", "sourceEvidenceId", "enrichmentEvidenceId", "scenarioContract", "needsReview"],
+    required: ["stimulus", "text", "options", "answer", "rationale", "markScheme", "sourceEvidenceId", "enrichmentEvidenceId", "needsReview"],
   };
   return {
     type: "object",
@@ -2134,6 +2205,7 @@ function parseGenerationRequest(value: unknown): GenerationRequest {
     "source-grounded-policy-ai-20-unified-scientific-item",
     "source-grounded-policy-ai-21-server-owned-scientific-item",
     "source-grounded-policy-ai-22-server-owned-question-pattern",
+    "source-grounded-policy-ai-23-server-owned-assessment-contract",
   ]);
   if (generationMode === "whole_exam_v2" && !compatibleWholeExamVersions.has(generationVersion)) {
     throw httpError("إصدار محرك الاختبار الكامل غير متوافق.", 400);
@@ -2583,10 +2655,10 @@ function splitLongEvidencePiece(value: string, maxCharacters: number): string[] 
 }
 
 
-const SCIENTIFIC_DIRECTIONS: readonly ScientificDirection[] = ["left", "right", "up", "down", "toward", "away", "balanced", "none"];
+const SCIENTIFIC_DIRECTIONS: readonly ScientificDirection[] = ["left", "right", "up", "down", "toward", "away", "clockwise", "counterclockwise", "balanced", "none"];
 const SCIENTIFIC_CHARGES: readonly ScientificChargeState[] = ["positive", "negative", "neutral", "unknown"];
-const SCIENTIFIC_RELATIONSHIPS: readonly ScientificRelationship[] = ["attraction", "repulsion", "charge_transfer", "electrostatic_discharge", "resultant_force", "conduction", "insulation", "none"];
-const SCIENTIFIC_QUANTITY_KINDS: readonly ScientificQuantityKind[] = ["applied_force", "friction_force", "weight", "normal_force", "charge", "other"];
+const SCIENTIFIC_RELATIONSHIPS: readonly ScientificRelationship[] = ["attraction", "repulsion", "charge_transfer", "electrostatic_discharge", "resultant_force", "moment", "conduction", "insulation", "none"];
+const SCIENTIFIC_QUANTITY_KINDS: readonly ScientificQuantityKind[] = ["applied_force", "friction_force", "weight", "normal_force", "moment_force", "lever_arm", "charge", "other"];
 
 function sanitizeScientificQuantity(value: unknown): ModelGeneratedScientificQuantity {
   const record = asRecord(value);
@@ -2629,7 +2701,7 @@ function sanitizeScientificItem(value: unknown, requested: GenerationItem): Mode
     resultDirection: requireEnum(record.resultDirection, SCIENTIFIC_DIRECTIONS, "اتجاه النتيجة العلمية غير صالح."),
     expectedResult: requireText(record.expectedResult, "النتيجة العلمية المتوقعة غير محددة.", 260),
   };
-  if (kind === "force_system" && quantities.length < 2) throw retryableError("نموذج القوى لا يحتوي قوتين على الأقل.");
+  if ((kind === "force_system" || kind === "moment_system") && quantities.length < 2) throw retryableError("النموذج الميكانيكي لا يحتوي كميات كافية.");
   return model;
 }
 
@@ -2681,6 +2753,39 @@ function validateScientificItemConsistency(
   const entityCorpus = `${model.primaryEntity} ${model.secondaryEntity} ${model.visualObject}`;
   if (semanticOverlap(semanticTokens(`${promptMaterial} ${answerMaterial}`), semanticTokens(entityCorpus)) < 1) {
     throw retryableError("النموذج العلمي لا يطابق الكيانات المذكورة في السؤال والإجابة.");
+  }
+
+  if (model.kind === "moment_system") {
+    if (model.relationship !== "moment") throw retryableError("نموذج العزم لا يحدد علاقة العزم.");
+    const forces = model.quantities.filter((quantity) => quantity.kind === "moment_force");
+    const arms = model.quantities.filter((quantity) => quantity.kind === "lever_arm");
+    if (!forces.length || forces.length !== arms.length) {
+      throw retryableError("نموذج العزم يجب أن يحتوي قوة وذراع قوة متطابقين لكل تأثير.");
+    }
+    let signedMoment = 0;
+    for (let index = 0; index < forces.length; index += 1) {
+      const force = forces[index]!;
+      const arm = arms[index]!;
+      if (force.unit !== "N" || force.value <= 0 || !["clockwise", "counterclockwise"].includes(force.direction)) {
+        throw retryableError("إحدى قوى العزم تفتقد قيمة أو وحدة أو اتجاه دوران صالحًا.");
+      }
+      if (arm.unit !== "m" || arm.value <= 0) {
+        throw retryableError("أحد أذرع القوة في نموذج العزم يفتقد مسافة صالحة بوحدة المتر.");
+      }
+      const moment = force.value * arm.value;
+      signedMoment += force.direction === "clockwise" ? -moment : moment;
+    }
+    const magnitude = Number(Math.abs(signedMoment).toFixed(2));
+    const direction: ScientificDirection = Math.abs(signedMoment) < 0.01
+      ? "balanced"
+      : signedMoment > 0 ? "counterclockwise" : "clockwise";
+    if (Math.abs(model.resultValue - magnitude) > 0.01 || model.resultUnit !== "N m" || model.resultDirection !== direction) {
+      throw retryableError("العزم المحصل في النموذج العلمي لا يساوي محصلة عزوم القوى المدرجة فيه.");
+    }
+    if (!materialContainsScientificNumber(answerMaterial, model.resultValue, "N m")) {
+      throw retryableError("الإجابة ونموذج التصحيح لا يحتويان قيمة العزم المحصل المطابقة للنموذج العلمي.");
+    }
+    return;
   }
 
   if (model.kind === "force_system") {
@@ -2770,6 +2875,33 @@ function vectorFromScientificQuantity(quantity: ModelGeneratedScientificQuantity
 }
 
 function hydrateVisualFromScientificItem(base: QuestionVisualSpec, model: ModelGeneratedScientificItem): QuestionVisualSpec {
+  if (model.kind === "moment_system") {
+    const forces = model.quantities.filter((quantity) => quantity.kind === "moment_force");
+    const arms = model.quantities.filter((quantity) => quantity.kind === "lever_arm");
+    const positions = [-130, 130, -190, 190];
+    return {
+      ...base,
+      type: "force_diagram",
+      variant: "moments",
+      role: "calculate",
+      purpose: `حساب ومقارنة عزوم القوى حول محور الدوران في ${model.visualObject}`,
+      title: `عزوم القوى في ${model.visualObject}`,
+      altText: `${model.visualObject} حول نقطة ارتكاز مع قوى وأذرع قوة مطابقة للنموذج العلمي`,
+      labels: [model.visualObject],
+      annotations: arms.map((arm, index) => `${arm.label} = ${arm.value} m`),
+      vectors: forces.map((force, index) => ({
+        label: force.label,
+        x: positions[index] ?? (index % 2 === 0 ? -130 : 130),
+        y: 40,
+        dx: 0,
+        dy: force.direction === "clockwise"
+          ? ((positions[index] ?? -130) < 0 ? -85 : 85)
+          : ((positions[index] ?? -130) < 0 ? 85 : -85),
+        magnitude: force.value,
+      })),
+      values: arms.map((arm) => arm.value),
+    };
+  }
   if (model.kind === "force_system") {
     return {
       ...base,
@@ -2838,6 +2970,45 @@ function legacyScientificItemFromVisual(
   base: QuestionVisualSpec,
   alternative: ModelGeneratedAlternative,
 ): ModelGeneratedScientificItem {
+  if (base.type === "force_diagram" && base.variant === "moments") {
+    const forces = base.vectors.map((vector) => ({
+      kind: "moment_force" as const,
+      label: vector.label,
+      value: vector.magnitude,
+      unit: "N",
+      direction: momentDirectionForVector(vector),
+    }));
+    const arms = forces.map((_, index) => ({
+      kind: "lever_arm" as const,
+      label: `ذراع ${base.vectors[index]?.label || `القوة ${index + 1}`}`,
+      value: base.values[index] ?? 0,
+      unit: "m",
+      direction: "none" as const,
+    }));
+    let signedMoment = 0;
+    for (let index = 0; index < forces.length; index += 1) {
+      const moment = forces[index]!.value * arms[index]!.value;
+      signedMoment += forces[index]!.direction === "clockwise" ? -moment : moment;
+    }
+    const resultDirection: ScientificDirection = Math.abs(signedMoment) < 0.01 ? "balanced" : signedMoment > 0 ? "counterclockwise" : "clockwise";
+    return {
+      version: "scientific-item-v1",
+      kind: "moment_system",
+      phenomenon: "عزم القوة والاتزان الدوراني",
+      primaryEntity: base.labels[0] || "الجسم الدوار",
+      secondaryEntity: "محور الدوران",
+      visualObject: base.labels[0] || "الجسم الدوار",
+      relationship: "moment",
+      primaryCharge: "unknown",
+      secondaryCharge: "unknown",
+      transferredParticle: "",
+      quantities: forces.flatMap((force, index) => [force, arms[index]!]),
+      resultValue: Number(Math.abs(signedMoment).toFixed(2)),
+      resultUnit: "N m",
+      resultDirection,
+      expectedResult: alternative.answer || "حساب العزم المحصل",
+    };
+  }
   if (base.type === "force_diagram") {
     let x = 0;
     let y = 0;
@@ -2933,7 +3104,8 @@ function hydrateGeneratedItem(
   const baseVisual = buildServerOwnedVisualSpec(requested, request);
   const serverOwnedScientificRequired = request.generationVersion === "source-grounded-policy-ai-20-unified-scientific-item"
     || request.generationVersion === "source-grounded-policy-ai-21-server-owned-scientific-item"
-    || request.generationVersion === "source-grounded-policy-ai-22-server-owned-question-pattern";
+    || request.generationVersion === "source-grounded-policy-ai-22-server-owned-question-pattern"
+    || request.generationVersion === "source-grounded-policy-ai-23-server-owned-assessment-contract";
   const serverScientificItem = serverOwnedScientificRequired
     ? buildServerOwnedScientificItem(requested, request, baseVisual)
     : null;
@@ -2964,7 +3136,8 @@ function hydrateGeneratedItem(
       request.generationVersion === "source-grounded-policy-ai-19-structured-scenario-repair"
         || request.generationVersion === "source-grounded-policy-ai-20-unified-scientific-item"
         || request.generationVersion === "source-grounded-policy-ai-21-server-owned-scientific-item"
-        || request.generationVersion === "source-grounded-policy-ai-22-server-owned-question-pattern",
+        || request.generationVersion === "source-grounded-policy-ai-22-server-owned-question-pattern"
+        || request.generationVersion === "source-grounded-policy-ai-23-server-owned-assessment-contract",
       serverOwnedScientificRequired,
     );
     return { visual, alternative: hydratedAlternative };
@@ -4036,6 +4209,55 @@ function normalizedContainsPhrase(material: string, phrase: string): boolean {
   return normalizeForEvidence(material).includes(normalizedPhrase);
 }
 
+function exactScenarioEvidencePhrases(stimulus: string, text: string): string[] {
+  const source = `${stimulus} ${text}`.replace(/\s+/g, " ").trim();
+  if (!source) return [];
+  const candidates = source
+    .split(/[.!؟؛]+|،\s+/u)
+    .map((phrase) => phrase.trim())
+    .filter((phrase) => phrase.length >= 8 && phrase.length <= 180);
+  const unique: string[] = [];
+  const seen = new Set<string>();
+  for (const phrase of candidates) {
+    const key = normalizeForEvidence(phrase);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    unique.push(phrase);
+    if (unique.length === 3) break;
+  }
+  if (unique.length >= 2) return unique;
+  const words = source.split(/\s+/u).filter(Boolean);
+  if (words.length >= 8) {
+    const midpoint = Math.max(4, Math.floor(words.length / 2));
+    const first = words.slice(0, midpoint).join(" ");
+    const second = words.slice(midpoint).join(" ");
+    if (first.length >= 8 && !seen.has(normalizeForEvidence(first))) unique.push(first);
+    if (second.length >= 8 && !seen.has(normalizeForEvidence(second))) unique.push(second);
+  }
+  return unique.slice(0, 3);
+}
+
+function buildServerOwnedScenarioContract(
+  alternative: ModelGeneratedAlternative,
+  scenarioTarget: QuestionScenarioTarget,
+  stimulusTarget: QuestionStimulusTarget,
+  outcomeLabel: string,
+  fixedVisual: QuestionVisualSpec,
+): ModelGeneratedScenarioContract {
+  const requiresContext = scenarioTarget !== "scientific_abstract"
+    || ["real_life_scene", "decision_case"].includes(stimulusTarget);
+  const evidencePhrases = requiresContext
+    ? exactScenarioEvidencePhrases(alternative.stimulus, alternative.text)
+    : [];
+  const scientificAnchor = fixedVisual.purpose || fixedVisual.title || fixedVisual.altText || outcomeLabel;
+  return {
+    target: scenarioTarget,
+    evidencePhrases,
+    scientificLink: `يربط الموقف بهدف التعلم «${outcomeLabel}» من خلال ${scientificAnchor}.`,
+    contextIsEssential: requiresContext,
+  };
+}
+
 function validateStructuredScenarioContract(
   alternative: ModelGeneratedAlternative,
   scenarioTarget: QuestionScenarioTarget,
@@ -4243,9 +4465,7 @@ function validateAndHydrateAlternative(
     answer: sanitizeGeneratedDisplayText(alternative.answer),
     rationale: sanitizeGeneratedDisplayText(alternative.rationale),
     markScheme: sanitizeModelMarkScheme(alternative.markScheme),
-    scenarioContract: asRecord(alternative.scenarioContract)
-      ? sanitizeScenarioContract(alternative.scenarioContract)
-      : undefined,
+    scenarioContract: undefined,
   };
   const visualReference = normalizeVisualQuestionReference(
     alternative.stimulus,
@@ -4260,6 +4480,18 @@ function validateAndHydrateAlternative(
     stimulus: visualReference.stimulus,
     text: visualReference.text,
   };
+  if (structuredScenarioRequired) {
+    alternative = {
+      ...alternative,
+      scenarioContract: buildServerOwnedScenarioContract(
+        alternative,
+        scenarioTarget,
+        stimulusTarget,
+        outcomeLabel,
+        fixedVisual,
+      ),
+    };
+  }
   const markScheme = normalizeModelMarkScheme(alternative.markScheme, marks);
   if (unifiedScientificRequired) validateScientificItemConsistency(alternative, markScheme, scientificItem);
   if (!hasSufficientQuestionContext(

@@ -34,6 +34,8 @@ async function loadEdgeHelpers() {
     buildEvidenceCatalog,
     validateAndHydrateGeneratedPayload,
     buildServerOwnedVisualSpec,
+    buildServerOwnedScientificItem,
+    buildServerOwnedScenarioContract,
     generationThinkingBudget,
     generationOutputTokenLimit,
     markSchemeRepairSchema,
@@ -688,7 +690,7 @@ test("يبني مخططًا موضعيًا يفرض عدد نقاط التصحي
   assert.equal(markScheme.maxItems, undefined);
 });
 
-test("يصلح نقاط التصحيح بطلب صغير دون إعادة توليد السؤال الكامل", async () => {
+test("يطبع الخادم نقاط التصحيح محليًا دون استدعاء Gemini مرة ثانية", async () => {
   const sourceSupport = "تنتقل الإلكترونات من جسم إلى آخر عند الدلك فتتكون الشحنة الكهربائية ويصبح الجسمان مشحونين.";
   const request = {
     assessmentType: "اختبار قصير رسمي",
@@ -720,55 +722,28 @@ test("يصلح نقاط التصحيح بطلب صغير دون إعادة تو�
     answer: "تنتقل الإلكترونات من جسم إلى آخر فيصبح الجسمان مشحونين، ويظهر أثر الشحنة بانجذاب قصاصات الورق.",
     rationale: "يربط التفسير انتقال الإلكترونات بالملاحظة التجريبية.",
     markScheme: ["ذكر انتقال الإلكترونات."],
-    questionForm: "استقصائي",
-    workingRequired: false,
     sourceEvidenceId: "EV-1-1",
+    enrichmentEvidenceId: "",
     needsReview: false,
   }));
   const generated = { items: [{ planItemId: "P-3", alternatives }] };
   let fetchCount = 0;
-  let repairBody;
-  sandbox.__fetchImpl = async (_url, init) => {
+  sandbox.__fetchImpl = async () => {
     fetchCount += 1;
-    const body = JSON.parse(init.body);
-    if (fetchCount === 1) {
-      return new Response(JSON.stringify({
-        candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(generated) }] } }],
-        usageMetadata: { promptTokenCount: 300, candidatesTokenCount: 180 },
-      }), { status: 200, headers: { "Content-Type": "application/json" } });
-    }
-    repairBody = body;
-    const repaired = {
-      schemes: [0, 1, 2].map((alternativeIndex) => ({
-        alternativeIndex,
-        markScheme: [
-          "ذكر انتقال الإلكترونات بين الجسمين.",
-          "توضيح اكتساب الجسمين شحنة نتيجة الانتقال.",
-          "ربط انجذاب قصاصات الورق بوجود الشحنة.",
-        ],
-      })),
-    };
     return new Response(JSON.stringify({
-      candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(repaired) }] } }],
-      usageMetadata: { promptTokenCount: 90, candidatesTokenCount: 80 },
+      candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(generated) }] } }],
+      usageMetadata: { promptTokenCount: 300, candidatesTokenCount: 180 },
     }), { status: 200, headers: { "Content-Type": "application/json" } });
   };
 
-  const result = await helpers.generateAndValidate(request, "WQ-MARK-REPAIR");
-  assert.equal(fetchCount, 2);
+  const result = await helpers.generateAndValidate(request, "WQ-MARK-LOCAL");
+  assert.equal(fetchCount, 1);
   assert.equal(result.items[0].alternatives[0].markScheme.length, 3);
-  assert.deepEqual(Array.from(result.items[0].alternatives[0].markScheme), [
-    "ذكر انتقال الإلكترونات بين الجسمين.",
-    "توضيح اكتساب الجسمين شحنة نتيجة الانتقال.",
-    "ربط انجذاب قصاصات الورق بوجود الشحنة.",
-  ]);
-  assert.equal(repairBody.generationConfig.thinkingConfig.thinkingBudget, 0);
-  assert.equal(repairBody.generationConfig.responseJsonSchema.properties.schemes.items.properties.markScheme.items.type, "string");
-  assert.equal(repairBody.generationConfig.responseJsonSchema.properties.schemes.prefixItems, undefined);
-  assert.doesNotMatch(repairBody.contents[0].parts[0].text, /evidenceFragments|officialPlanSummary/);
+  assert.equal(result.items[0].alternatives[0].needsReview, true);
+  assert.match(result.items[0].alternatives[0].markScheme.join(" "), /الإلكترونات|الملاحظة|الشحنة/u);
 });
 
-test("يحفظ السؤال ويضعه للمراجعة إذا تعذر طلب إصلاح نقاط التصحيح", async () => {
+test("يحافظ على السؤال ويكمل نقاط التصحيح محليًا عند نقصها", async () => {
   const request = {
     assessmentType: "اختبار قصير رسمي",
     assessmentPolicyId: "oman-science-assessment-2025-2026",
@@ -799,27 +774,20 @@ test("يحفظ السؤال ويضعه للمراجعة إذا تعذر طلب �
     answer: "يزداد الضغط بزيادة القوة أو بتقليل مساحة التلامس.",
     rationale: "لأن الضغط يساوي القوة العمودية مقسومة على المساحة.",
     markScheme: ["ذكر زيادة القوة."],
-    questionForm: "سياقي",
-    workingRequired: false,
     sourceEvidenceId: "EV-1-1",
+    enrichmentEvidenceId: "",
     needsReview: false,
   })) }] };
   let fetchCount = 0;
   sandbox.__fetchImpl = async () => {
     fetchCount += 1;
-    if (fetchCount === 1) {
-      return new Response(JSON.stringify({
-        candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(generated) }] } }],
-      }), { status: 200, headers: { "Content-Type": "application/json" } });
-    }
-    return new Response(JSON.stringify({ error: { message: "temporary repair failure" } }), {
-      status: 503,
-      headers: { "Content-Type": "application/json" },
-    });
+    return new Response(JSON.stringify({
+      candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(generated) }] } }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
   };
 
   const result = await helpers.generateAndValidate(request, "WQ-MARK-FALLBACK");
-  assert.equal(fetchCount, 2);
+  assert.equal(fetchCount, 1);
   assert.equal(result.items[0].alternatives[0].markScheme.length, 2);
   assert.equal(result.items[0].alternatives[0].needsReview, true);
 });
@@ -982,6 +950,88 @@ test("يقبل القيم والوحدات الموزعة بين نص السؤا
     stimulus: "شحنة جسم تساوي 3.2 × 10^-18 C وشحنة الإلكترون 1.6 × 10^-19 C.",
     text: "احسب عدد الإلكترونات.",
   }, visual), true);
+});
+
+test("يبني الخادم نموذج القوة الحرة بقوة مؤثرة واحتكاك حقيقيين لا بتصنيف موضعي خاطئ", () => {
+  const request = { subject: "الفيزياء", topic: "القوة والاحتكاك", references: [], items: [], officialPlanItems: [] };
+  const item = {
+    planItemId: "P-FORCE",
+    questionType: "إجابة قصيرة",
+    cognitiveLevel: "تطبيق",
+    marks: 2,
+    sourceReferenceId: "R-1",
+    lessonLabel: "الاحتكاك والقوة المحصلة",
+    outcomeLabel: "يحسب القوة المحصلة في وجود الاحتكاك",
+    styleTarget: "حسابي",
+    visualTarget: "force_diagram",
+    scenarioTarget: "shopping_trolley",
+    stimulusTarget: "real_life_scene",
+    skillTarget: "calculate",
+    diversityKey: "force:trolley",
+  };
+  const visual = helpers.buildServerOwnedVisualSpec(item, request);
+  const model = helpers.buildServerOwnedScientificItem(item, request, visual);
+  assert.equal(model.kind, "force_system");
+  const kinds = model.quantities.map((quantity) => quantity.kind);
+  assert.ok(kinds.includes("applied_force"));
+  assert.ok(kinds.includes("friction_force"));
+  assert.equal(model.quantities.find((quantity) => quantity.kind === "weight")?.label, "الوزن");
+});
+
+test("يبني الخادم نموذج عزم مستقلًا ولا يخلطه بنموذج القوة والاحتكاك", () => {
+  const request = {
+    subject: "الفيزياء",
+    topic: "عزم القوة",
+    references: [],
+    items: [],
+    officialPlanItems: [],
+  };
+  const item = {
+    planItemId: "P-MOMENT",
+    questionType: "إجابة قصيرة",
+    cognitiveLevel: "تطبيق",
+    marks: 2,
+    sourceReferenceId: "R-1",
+    lessonLabel: "عزم القوة",
+    outcomeLabel: "يحسب عزم قوة حول محور دوران",
+    styleTarget: "حسابي",
+    visualTarget: "force_diagram",
+    scenarioTarget: "door_handle",
+    stimulusTarget: "real_life_scene",
+    skillTarget: "calculate",
+    diversityKey: "moment:door",
+  };
+  const visual = helpers.buildServerOwnedVisualSpec(item, request);
+  const model = helpers.buildServerOwnedScientificItem(item, request, visual);
+  assert.equal(visual.variant, "moments");
+  assert.equal(model.kind, "moment_system");
+  assert.equal(model.relationship, "moment");
+  assert.ok(model.quantities.some((quantity) => quantity.kind === "moment_force"));
+  assert.ok(model.quantities.some((quantity) => quantity.kind === "lever_arm"));
+  assert.equal(model.quantities.some((quantity) => quantity.kind === "friction_force"), false);
+  assert.equal(model.resultUnit, "N m");
+});
+
+test("يبني الخادم عقد السياق من متن السؤال ولا يطلبه من Gemini", () => {
+  const alternative = {
+    stimulus: "يفتح طالب باب المختبر بالضغط على المقبض البعيد عن المفصل.",
+    text: "باستخدام الشكل المرفق، فسّر لماذا يسهل فتح الباب عند هذا الموضع.",
+    options: [], answer: "", rationale: "", markScheme: [], sourceEvidenceId: "", enrichmentEvidenceId: "", needsReview: false,
+  };
+  const visual = {
+    ...noVisual(),
+    type: "force_diagram",
+    variant: "moments",
+    purpose: "توضيح أثر ذراع القوة في عزم الباب",
+    title: "عزم الباب",
+    altText: "باب يدور حول المفصل وتؤثر القوة عند المقبض",
+  };
+  const contract = helpers.buildServerOwnedScenarioContract(alternative, "door_handle", "real_life_scene", "تفسير أثر ذراع القوة في العزم", visual);
+  assert.equal(contract.target, "door_handle");
+  assert.equal(contract.contextIsEssential, true);
+  assert.ok(contract.evidencePhrases.length >= 2);
+  const material = `${alternative.stimulus} ${alternative.text}`;
+  assert.ok(contract.evidencePhrases.every((phrase) => material.includes(phrase)));
 });
 
 test("يشترط مسافة الدوران في سؤال العزم حتى لو ظهرت القوتان في الرسم", () => {

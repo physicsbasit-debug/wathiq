@@ -100,11 +100,11 @@ export interface QuestionVisualSpec {
 }
 
 
-export type ScientificItemModelKind = "generic" | "force_system" | "electrostatic_system";
-export type ScientificDirection = "left" | "right" | "up" | "down" | "toward" | "away" | "balanced" | "none";
+export type ScientificItemModelKind = "generic" | "force_system" | "moment_system" | "electrostatic_system";
+export type ScientificDirection = "left" | "right" | "up" | "down" | "toward" | "away" | "clockwise" | "counterclockwise" | "balanced" | "none";
 export type ScientificChargeState = "positive" | "negative" | "neutral" | "unknown";
-export type ScientificRelationship = "attraction" | "repulsion" | "charge_transfer" | "electrostatic_discharge" | "resultant_force" | "conduction" | "insulation" | "none";
-export type ScientificQuantityKind = "applied_force" | "friction_force" | "weight" | "normal_force" | "charge" | "other";
+export type ScientificRelationship = "attraction" | "repulsion" | "charge_transfer" | "electrostatic_discharge" | "resultant_force" | "moment" | "conduction" | "insulation" | "none";
+export type ScientificQuantityKind = "applied_force" | "friction_force" | "weight" | "normal_force" | "moment_force" | "lever_arm" | "charge" | "other";
 
 export interface ScientificQuantity {
   kind: ScientificQuantityKind;
