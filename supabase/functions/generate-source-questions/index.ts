@@ -686,7 +686,7 @@ async function requestControlledIllustrationImage(
         contents: [{ parts: [{ text: buildControlledIllustrationPrompt(request, correctionNote) }] }],
         generationConfig: {
           responseModalities: ["IMAGE"],
-          responseFormat: { image: { aspectRatio: "4:3", imageSize: "1K" } },
+          imageConfig: { aspectRatio: "4:3", imageSize: "1K" },
         },
       }),
       signal: controller.signal,
