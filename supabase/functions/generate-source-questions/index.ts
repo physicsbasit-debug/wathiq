@@ -1743,8 +1743,8 @@ function buildSystemInstructions(request: GenerationRequest): string {
     "في الاختبار القصير لا تجعل أكثر من مفردة واحدة تعريفًا أو سؤال وحدة مباشرًا، واجعل بقية المفردات تطبيقًا أو تفسيرًا أو بيانات أو قرارًا أو استقصاءً وفق الخطة.",
     "السياق الحياتي يجب أن يكون ضروريًا للإجابة، قصيرًا، واقعيًا، مناسبًا لعمر الطالب، ومتصلًا مباشرة بالمفهوم العلمي؛ لا تضع قصة زخرفية يمكن حذفها دون أن يتغير السؤال.",
     "أعد scenarioContract منظمًا لكل بديل: target مطابق حرفيًا لـscenarioTarget، وevidencePhrases عبارتان إلى أربع عبارات قصيرة منسوخة حرفيًا من stimulus أو text تثبت عناصر السياق، وscientificLink يشرح كيف يخدم السياق هدف التعلم، وcontextIsEssential=true عندما يكون السياق الحياتي أو حالة القرار جزءًا من الحل.",
-    "أعد scientificItem لكل بديل بوصفه المصدر العلمي الوحيد للمفردة. يجب أن تتطابق معه كل الكيانات والعلاقات والكميات والوحدات والاتجاهات والنتيجة في stimulus وtext وanswer وmarkScheme. لا تخترع رقمًا أو نوع شحنة أو اتجاه قوة خارج scientificItem.",
-    "في force_system: أدرج فقط القوى التي تظهر أرقامها ووحداتها صراحة في متن السؤال، واحسب resultValue وresultDirection من quantities نفسها. في electrostatic_system: اجعل نوع الشحنتين والعلاقة attraction/repulsion أو charge_transfer أو electrostatic_discharge متسقة علميًا ومطابقة للسؤال والإجابة.",
+    "لكل مفردة يرسل الخادم serverScientificItem بوصفه المصدر العلمي الوحيد وغير القابل للاستبدال. لا تُعد scientificItem في JSON ولا تنشئ نموذجًا بديلًا؛ صغ stimulus وtext وanswer وmarkScheme بحيث تتطابق حرفيًا مع كيانات serverScientificItem وعلاقاته وكمياته ووحداته واتجاهاته ونتيجته المتوقعة.",
+    "في force_system: استخدم فقط القوى والقيم والاتجاهات الموجودة في serverScientificItem، واذكرها في متن السؤال عند الحاجة للحل. في electrostatic_system: التزم بنوع الشحنتين والعلاقة attraction/repulsion أو charge_transfer أو electrostatic_discharge كما ثبتها الخادم، ولا تعكسها أو تستبدلها.",
     "لا تخلط بين الدروس؛ كل مفردة مرتبطة باسم درس ومرجع صفحة محددين في الخطة.",
     "يُمنع إنشاء أسئلة عن اسم الوحدة أو رقمها أو اسم الكتاب أو الصفحة أو موضع الدرس في المنهج؛ المطلوب قياس المحتوى العلمي للدرس فقط.",
     "إذا وُجد regenerationAnchor فأنشئ البدائل الجديدة مشابهة له في المفهوم العلمي ونمط السؤال ومستوى العمق، مع تغيير الصياغة أو القيم فقط عندما يدعم المرجع ذلك. لا تنتقل إلى مفهوم آخر داخل الكتاب.",
@@ -1802,7 +1802,7 @@ function buildUserPrompt(request: GenerationRequest, evidenceCatalog: EvidenceCa
   return JSON.stringify({
     task: repairAttempt
       ? (request.generationMode === "whole_exam_v2"
-          ? "صحح المفردات المرسلة في هذا الطلب فقط وفق أسباب الرفض المحددة، ولا تعِد أو تغيّر مفردات غير مرسلة. احتفظ بالخطة والدرس والدرجة والسياق المنظم كما هي."
+          ? "صحح المفردات المرسلة في هذا الطلب فقط وفق أسباب الرفض المحددة، ولا تعِد أو تغيّر مفردات غير مرسلة. احتفظ بالخطة والدرس والدرجة والسياق المنظم وserverScientificItem كما هي، ولا تعد scientificItem في JSON."
           : "أعد التوليد بدقة أكبر، وصحح سبب رفض المحاولة السابقة تحديدًا مع إبقاء الخطة والدرس والدرجة كما هي.")
       : (request.generationMode === "whole_exam_v2"
           ? "صمم اختبارًا كاملًا قابلًا للاستخدام الفعلي من بطاقات الدروس والمخطط والمراجع، ثم أعد سؤالًا نهائيًا واحدًا لكل مفردة."
@@ -1852,21 +1852,26 @@ function buildUserPrompt(request: GenerationRequest, evidenceCatalog: EvidenceCa
       skillGuidance: SKILL_GUIDANCE[item.skillTarget],
       diversityKey: item.diversityKey,
     })),
-    batchPlanItems: request.items.map((item) => ({
-      ...item,
-      scientificModelKind: scientificItemKindForRequest(item),
-      fixedVisual: buildServerOwnedVisualSpec(item, request),
-      allowedEvidenceIds: (evidenceCatalog.byReferenceId.get(item.sourceReferenceId) ?? []).map((fragment) => fragment.id),
-      allowedEnrichmentIds: enrichment.segments.map((segment) => segment.id),
-    })),
+    batchPlanItems: request.items.map((item) => {
+      const fixedVisual = buildServerOwnedVisualSpec(item, request);
+      const serverScientificItem = buildServerOwnedScientificItem(item, request, fixedVisual);
+      return {
+        ...item,
+        scientificModelKind: serverScientificItem.kind,
+        serverScientificItem,
+        fixedVisual: hydrateVisualFromScientificItem(fixedVisual, serverScientificItem),
+        allowedEvidenceIds: (evidenceCatalog.byReferenceId.get(item.sourceReferenceId) ?? []).map((fragment) => fragment.id),
+        allowedEnrichmentIds: enrichment.segments.map((segment) => segment.id),
+      };
+    }),
     outputContract: {
       topLevelType: "object",
       requiredTopLevelKey: "items",
       itemCount: request.items.length,
       alternativesPerItem: request.generationMode === "whole_exam_v2" ? 1 : 3,
       exactPlanItemIds: request.items.map((item) => item.planItemId),
-      evidenceRule: "أعد sourceEvidenceId من allowedEvidenceIds الخاصة بالمفردة فقط. أعد enrichmentEvidenceId من allowedEnrichmentIds عند استخدام إثراء خارجي، وإلا فأعد سلسلة فارغة. أعد scenarioContract وscientificItem المنظمين، ولا تعتمد على كلمات مفتاحية منفردة لإثبات السياق.",
-      styleRule: "اجعل questionForm مطابقًا حرفيًا لـ styleTarget، ونفذ scenarioTarget وstimulusTarget وskillTarget. اجعل scientificItem المرجع الوحيد للأرقام والعلاقات والكيانات والنتيجة؛ ويجب أن تتطابق صياغة السؤال والإجابة ونموذج التصحيح معه. أعد markScheme كمصفوفة طولها يساوي marks تمامًا، وكل عنصر فيها معيار مستقل غير فارغ لدرجة واحدة. في السؤال الحسابي أعد workingRequired=true فقط عندما تكون marks درجتين أو أكثر، وfalse عندما تكون درجة واحدة. في الأسئلة غير المفهومية اجعل stimulus غير فارغ، إلا إذا كان fixedVisual يحمل السياق أو البيانات ويشير text إليه صراحة، أو كان text نفسه يتضمن السياق كاملًا.",
+      evidenceRule: "أعد sourceEvidenceId من allowedEvidenceIds الخاصة بالمفردة فقط. أعد enrichmentEvidenceId من allowedEnrichmentIds عند استخدام إثراء خارجي، وإلا فأعد سلسلة فارغة. أعد scenarioContract المنظم، ولا تعد scientificItem ولا تعتمد على كلمات مفتاحية منفردة لإثبات السياق.",
+      styleRule: "اجعل questionForm مطابقًا حرفيًا لـ styleTarget، ونفذ scenarioTarget وstimulusTarget وskillTarget. استخدم serverScientificItem المرفق بوصفه المرجع الوحيد للأرقام والعلاقات والكيانات والنتيجة، ويجب أن تتطابق صياغة السؤال والإجابة ونموذج التصحيح معه. أعد markScheme كمصفوفة طولها يساوي marks تمامًا، وكل عنصر فيها معيار مستقل غير فارغ لدرجة واحدة. في السؤال الحسابي أعد workingRequired=true فقط عندما تكون marks درجتين أو أكثر، وfalse عندما تكون درجة واحدة. في الأسئلة غير المفهومية اجعل stimulus غير فارغ، إلا إذا كان fixedVisual يحمل السياق أو البيانات ويشير text إليه صراحة، أو كان text نفسه يتضمن السياق كاملًا.",
       visualRule: request.generationMode === "whole_exam_v2"
         ? "لا تعد visual في JSON. إذا كان fixedVisual.type لا يساوي none، يجب أن يعتمد السؤال النهائي عليه اعتمادًا جوهريًا ويذكره صراحة."
         : "لا تعد visual في JSON. إذا كان fixedVisual.type لا يساوي none، يجب أن تعتمد جميع البدائل الثلاثة على الشكل نفسه اعتمادًا جوهريًا وتذكر الشكل أو الرسم أو الجدول أو التدريج في نص السؤال؛ وإلا فستُرفض المفردة.",
@@ -1880,43 +1885,188 @@ function scientificItemKindForRequest(item: GenerationItem): ScientificItemModel
   return "generic";
 }
 
-function scientificItemSchema(_item: GenerationItem): Record<string, unknown> {
-  const quantityItems = {
-    type: "object",
-    properties: {
-      kind: { type: "string" },
-      label: { type: "string" },
-      value: { type: "number" },
-      unit: { type: "string" },
-      direction: { type: "string" },
-    },
-    required: ["kind", "label", "value", "unit", "direction"],
+
+function scenarioScientificObject(item: GenerationItem, base: QuestionVisualSpec): string {
+  const objects: Partial<Record<QuestionScenarioTarget, string>> = {
+    door_handle: "باب بمقبض",
+    playground_seesaw: "أرجوحة توازن",
+    wrench_tool: "مفتاح ربط",
+    bicycle_brake: "دراجة بذراع مكبح",
+    shopping_trolley: "عربة تسوق",
+    school_bag: "حقيبة مدرسية",
+    water_tank: "خزان ماء",
+    solar_panel: "لوح شمسي",
+    laboratory_setup: "تجهيز مختبري",
+    road_safety: "مركبة على الطريق",
   };
+  return objects[item.scenarioTarget]
+    ?? base.labels.find((label) => label.trim() && label.trim() !== "الجسم")
+    ?? base.title
+    ?? item.outcomeLabel
+    ?? item.lessonLabel;
+}
+
+function scientificQuantityKindFromVector(vector: QuestionVisualVector, index: number): ScientificQuantityKind {
+  const label = normalizeForEvidence(vector.label);
+  if (/احتكاك/u.test(label)) return "friction_force";
+  if (/وزن/u.test(label)) return "weight";
+  if (/رد الفعل|عمودي/u.test(label)) return "normal_force";
+  if (/قوه مؤثره|قوة مؤثرة|دفع|سحب/u.test(label) || index === 0) return "applied_force";
+  return "other";
+}
+
+function scientificDirectionLabel(direction: ScientificDirection): string {
+  if (direction === "right") return "إلى اليمين";
+  if (direction === "left") return "إلى اليسار";
+  if (direction === "up") return "إلى أعلى";
+  if (direction === "down") return "إلى أسفل";
+  if (direction === "balanced") return "والقوى متزنة";
+  if (direction === "toward") return "نحو الجسم الآخر";
+  if (direction === "away") return "بعيدًا عن الجسم الآخر";
+  return "دون اتجاه محصل";
+}
+
+function genericServerScientificItem(item: GenerationItem, base: QuestionVisualSpec): ModelGeneratedScientificItem {
+  const context = normalizeForEvidence(`${item.lessonLabel} ${item.outcomeLabel} ${base.purpose} ${base.title}`);
+  const relationship: ScientificRelationship = /موصل|توصيل/u.test(context)
+    ? "conduction"
+    : /عازل|عزل/u.test(context)
+      ? "insulation"
+      : "none";
+  const primaryEntity = base.labels.find((label) => label.trim()) || item.outcomeLabel || item.lessonLabel;
   return {
-    type: "object",
-    description: "النموذج العلمي الموحد للمفردة وهو المصدر الوحيد للكيانات والعلاقات والأرقام والنتيجة. يتحقق الخادم لاحقًا من النوع والعلاقات والقيم والاتجاهات وجميع قواعد الاتساق.",
-    properties: {
-      version: { type: "string" },
-      kind: { type: "string" },
-      phenomenon: { type: "string" },
-      primaryEntity: { type: "string" },
-      secondaryEntity: { type: "string" },
-      visualObject: { type: "string" },
-      relationship: { type: "string" },
-      primaryCharge: { type: "string" },
-      secondaryCharge: { type: "string" },
-      transferredParticle: { type: "string" },
-      quantities: {
-        type: "array",
-        items: quantityItems,
-      },
-      resultValue: { type: "number" },
-      resultUnit: { type: "string" },
-      resultDirection: { type: "string" },
-      expectedResult: { type: "string" },
-    },
-    required: ["version", "kind", "phenomenon", "primaryEntity", "secondaryEntity", "visualObject", "relationship", "primaryCharge", "secondaryCharge", "transferredParticle", "quantities", "resultValue", "resultUnit", "resultDirection", "expectedResult"],
+    version: "scientific-item-v1",
+    kind: "generic",
+    phenomenon: item.outcomeLabel || item.lessonLabel,
+    primaryEntity,
+    secondaryEntity: base.labels[1] || "",
+    visualObject: scenarioScientificObject(item, base),
+    relationship,
+    primaryCharge: "unknown",
+    secondaryCharge: "unknown",
+    transferredParticle: "",
+    quantities: [],
+    resultValue: 0,
+    resultUnit: "",
+    resultDirection: "none",
+    expectedResult: item.outcomeLabel || `تطبيق مفهوم ${item.lessonLabel}`,
   };
+}
+
+function buildServerOwnedScientificItem(
+  item: GenerationItem,
+  request: GenerationRequest,
+  base: QuestionVisualSpec = buildServerOwnedVisualSpec(item, request),
+): ModelGeneratedScientificItem {
+  const visualObject = scenarioScientificObject(item, base);
+  if (base.type === "force_diagram" && ["free_body", "balanced_forces"].includes(base.variant)) {
+    let x = 0;
+    let y = 0;
+    const quantities: ModelGeneratedScientificQuantity[] = base.vectors.map((vector, index) => {
+      const direction: ScientificDirection = Math.abs(vector.dx) >= Math.abs(vector.dy)
+        ? vector.dx >= 0 ? "right" : "left"
+        : vector.dy <= 0 ? "up" : "down";
+      const kind = scientificQuantityKindFromVector(vector, index);
+      const component = directionComponents(direction, vector.magnitude);
+      x += component.x;
+      y += component.y;
+      return {
+        kind,
+        label: vector.label,
+        value: Number(vector.magnitude.toFixed(4)),
+        unit: "N",
+        direction,
+      };
+    });
+    const resultValue = Number(Math.hypot(x, y).toFixed(2));
+    const resultDirection = resultantDirection(x, y);
+    return {
+      version: "scientific-item-v1",
+      kind: "force_system",
+      phenomenon: "القوى والقوة المحصلة",
+      primaryEntity: visualObject,
+      secondaryEntity: "سطح أفقي",
+      visualObject,
+      relationship: "resultant_force",
+      primaryCharge: "unknown",
+      secondaryCharge: "unknown",
+      transferredParticle: "",
+      quantities,
+      resultValue,
+      resultUnit: "N",
+      resultDirection,
+      expectedResult: resultDirection === "balanced"
+        ? "القوة المحصلة تساوي 0 N والقوى متزنة"
+        : `القوة المحصلة تساوي ${resultValue} N ${scientificDirectionLabel(resultDirection)}`,
+    };
+  }
+
+  if (base.type === "electrostatic_diagram") {
+    const context = normalizeForEvidence(`${item.lessonLabel} ${item.outcomeLabel} ${SCENARIO_GUIDANCE[item.scenarioTarget]} ${base.purpose}`);
+    const discharge = item.scenarioTarget === "road_safety" || /(تفريغ|تأريض|سلسله معدنيه|شاحنه وقود|شراره)/u.test(context);
+    if (discharge) {
+      return {
+        version: "scientific-item-v1",
+        kind: "electrostatic_system",
+        phenomenon: "التفريغ الكهروستاتيكي الآمن",
+        primaryEntity: visualObject,
+        secondaryEntity: "الأرض",
+        visualObject,
+        relationship: "electrostatic_discharge",
+        primaryCharge: "unknown",
+        secondaryCharge: "neutral",
+        transferredParticle: "الإلكترونات",
+        quantities: [],
+        resultValue: 0,
+        resultUnit: "",
+        resultDirection: "none",
+        expectedResult: "تنتقل الشحنة الزائدة إلى الأرض عبر مسار موصل فتقل احتمالية الشرارة",
+      };
+    }
+    if (base.variant === "charge_transfer") {
+      return {
+        version: "scientific-item-v1",
+        kind: "electrostatic_system",
+        phenomenon: "الشحن بالدلك وانتقال الإلكترونات",
+        primaryEntity: base.labels[0] || "المسطرة البلاستيكية",
+        secondaryEntity: base.labels[1] || "قطعة القماش",
+        visualObject: base.labels[0] || visualObject,
+        relationship: "charge_transfer",
+        primaryCharge: "negative",
+        secondaryCharge: "positive",
+        transferredParticle: "الإلكترونات",
+        quantities: [],
+        resultValue: 0,
+        resultUnit: "",
+        resultDirection: "none",
+        expectedResult: "تكتسب المسطرة إلكترونات فتصبح سالبة وتفقد قطعة القماش إلكترونات فتصبح موجبة",
+      };
+    }
+    if (base.variant === "attraction_repulsion") {
+      const attraction = (base.values[0] ?? 0) >= 0.5;
+      return {
+        version: "scientific-item-v1",
+        kind: "electrostatic_system",
+        phenomenon: attraction ? "تجاذب الشحنات المختلفة" : "تنافر الشحنات المتماثلة",
+        primaryEntity: base.labels[0] || "الجسم س",
+        secondaryEntity: base.labels[1] || "الجسم ص",
+        visualObject: "جسمان مشحونان",
+        relationship: attraction ? "attraction" : "repulsion",
+        primaryCharge: "positive",
+        secondaryCharge: attraction ? "negative" : "positive",
+        transferredParticle: "",
+        quantities: [],
+        resultValue: 0,
+        resultUnit: "",
+        resultDirection: attraction ? "toward" : "away",
+        expectedResult: attraction
+          ? "الشحنتان مختلفتان ولذلك يتجاذب الجسمان"
+          : "الشحنتان متماثلتان ولذلك يتنافر الجسمان",
+      };
+    }
+  }
+
+  return genericServerScientificItem(item, base);
 }
 
 function generationSchema(_requestedItems: GenerationItem[], _evidenceSource: EvidenceCatalog | string[], _enrichmentIds: string[] = [], _alternativesPerItem = 3): Record<string, unknown> {
@@ -1943,10 +2093,9 @@ function generationSchema(_requestedItems: GenerationItem[], _evidenceSource: Ev
         },
         required: ["target", "evidencePhrases", "scientificLink", "contextIsEssential"],
       },
-      scientificItem: scientificItemSchema({} as GenerationItem),
       needsReview: { type: "boolean" },
     },
-    required: ["stimulus", "text", "options", "answer", "rationale", "markScheme", "questionForm", "workingRequired", "sourceEvidenceId", "enrichmentEvidenceId", "scenarioContract", "scientificItem", "needsReview"],
+    required: ["stimulus", "text", "options", "answer", "rationale", "markScheme", "questionForm", "workingRequired", "sourceEvidenceId", "enrichmentEvidenceId", "scenarioContract", "needsReview"],
   };
   return {
     type: "object",
@@ -1980,6 +2129,7 @@ function parseGenerationRequest(value: unknown): GenerationRequest {
     "source-grounded-policy-ai-18-exam-integrity-resume",
     "source-grounded-policy-ai-19-structured-scenario-repair",
     "source-grounded-policy-ai-20-unified-scientific-item",
+    "source-grounded-policy-ai-21-server-owned-scientific-item",
   ]);
   if (generationMode === "whole_exam_v2" && !compatibleWholeExamVersions.has(generationVersion)) {
     throw httpError("إصدار محرك الاختبار الكامل غير متوافق.", 400);
@@ -2777,14 +2927,17 @@ function hydrateGeneratedItem(
       : "مولد الأسئلة لم يلتزم بثلاثة بدائل للمفردة.");
   }
   const baseVisual = buildServerOwnedVisualSpec(requested, request);
-  const unifiedScientificRequired = request.generationVersion === "source-grounded-policy-ai-20-unified-scientific-item";
+  const serverOwnedScientificRequired = request.generationVersion === "source-grounded-policy-ai-20-unified-scientific-item"
+    || request.generationVersion === "source-grounded-policy-ai-21-server-owned-scientific-item";
+  const serverScientificItem = serverOwnedScientificRequired
+    ? buildServerOwnedScientificItem(requested, request, baseVisual)
+    : null;
   const hydrated = generatedItem.alternatives.map((alternative) => {
-    const scientificItem = alternative.scientificItem
-      ? sanitizeScientificItem(alternative.scientificItem, requested)
-      : unifiedScientificRequired
-        ? (() => { throw retryableError("السؤال لا يحتوي نموذجًا علميًا موحدًا صالحًا."); })()
-        : legacyScientificItemFromVisual(baseVisual, alternative);
-    const visual = unifiedScientificRequired ? hydrateVisualFromScientificItem(baseVisual, scientificItem) : baseVisual;
+    const scientificItem = serverScientificItem
+      ?? (alternative.scientificItem
+        ? sanitizeScientificItem(alternative.scientificItem, requested)
+        : legacyScientificItemFromVisual(baseVisual, alternative));
+    const visual = serverOwnedScientificRequired ? hydrateVisualFromScientificItem(baseVisual, scientificItem) : baseVisual;
     const hydratedAlternative = validateAndHydrateAlternative(
       alternative,
       requested.questionType,
@@ -2804,8 +2957,9 @@ function hydrateGeneratedItem(
       requested.skillTarget,
       requested.diversityKey,
       request.generationVersion === "source-grounded-policy-ai-19-structured-scenario-repair"
-        || request.generationVersion === "source-grounded-policy-ai-20-unified-scientific-item",
-      unifiedScientificRequired,
+        || request.generationVersion === "source-grounded-policy-ai-20-unified-scientific-item"
+        || request.generationVersion === "source-grounded-policy-ai-21-server-owned-scientific-item",
+      serverOwnedScientificRequired,
     );
     return { visual, alternative: hydratedAlternative };
   });

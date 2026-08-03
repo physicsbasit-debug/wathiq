@@ -111,9 +111,9 @@ function electrostaticVisual(attractionFlag = 0, withIllustration = false) {
   }, "electrostatic_diagram");
 }
 
-test("يثبت Phase 2-C4 وعقد ai-20 للنموذج العلمي الموحد", () => {
-  assert.equal(pkg.version, "0.0.58");
-  assert.equal(ASSESSMENT_GENERATION_V2_VERSION, "source-grounded-policy-ai-20-unified-scientific-item");
+test("يثبت Phase 2-C4 Fix 2 وعقد ai-21 للنموذج العلمي المملوك للخادم", () => {
+  assert.equal(pkg.version, "0.0.59");
+  assert.equal(ASSESSMENT_GENERATION_V2_VERSION, "source-grounded-policy-ai-21-server-owned-scientific-item");
   assert.match(pkg.description, /نموذج علمي موحد/);
 });
 
@@ -154,8 +154,9 @@ test("يعرض صورة أساس للشحنات مع طبقة رموز وأسه�
 });
 
 test("يجعل الخادم النموذج العلمي مصدر الحقيقة للسؤال والمرئي والإجابة", () => {
-  assert.match(edge, /scientificItemSchema/);
-  assert.match(edge, /single source of truth|المصدر الوحيد/);
+  assert.match(edge, /buildServerOwnedScientificItem/);
+  assert.match(edge, /serverScientificItem/);
+  assert.match(edge, /المصدر العلمي الوحيد|غير القابل للاستبدال/);
   assert.match(edge, /validateScientificItemConsistency/);
   assert.match(edge, /hydrateVisualFromScientificItem/);
   assert.match(edge, /القوة .* في الرسم لا تظهر بالقيمة نفسها في متن السؤال/);
@@ -181,7 +182,7 @@ test("يفصل مخطط النقل الخفيف عن قواعد المجال ا�
   assert.match(edge, /غلاف نقل خفيف فقط/);
   assert.doesNotMatch(edge, /prefixItems:\s*requestedItems\.map/);
   assert.doesNotMatch(edge, /minItems:\s*kind === "force_system"/);
-  assert.match(edge, /sanitizeScientificItem/);
+  assert.match(edge, /buildServerOwnedScientificItem/);
   assert.match(edge, /validateScientificItemConsistency/);
   assert.match(edge, /validateGeneratedItemsIndividually/);
 });

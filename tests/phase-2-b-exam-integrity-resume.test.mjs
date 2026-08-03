@@ -51,8 +51,8 @@ function visualItem(id, visualTarget, styleTarget = "سياقي", marks = 1, cog
 test("يثبت إصدار محرك سلامة الاختبار واستئناف المسودة", () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
   const edge = fs.readFileSync(path.join(root, "supabase/functions/generate-source-questions/index.ts"), "utf8");
-  assert.match(pkg.version, /^0\.0\.(?:51|52|53|54|55|56|57|58)$/);
-  assert.match(ASSESSMENT_GENERATION_V2_VERSION, /source-grounded-policy-ai-(?:19-structured-scenario-repair|20-unified-scientific-item)/);
+  assert.match(pkg.version, /^0\.0\.(?:51|52|53|54|55|56|57|58|59)$/);
+  assert.match(ASSESSMENT_GENERATION_V2_VERSION, /source-grounded-policy-ai-(?:19-structured-scenario-repair|20-unified-scientific-item|21-server-owned-scientific-item)/);
   assert.match(edge, /source-grounded-policy-ai-19-structured-scenario-repair/);
   assert.match(edge, /source-grounded-policy-ai-18-exam-integrity-resume/);
   assert.match(edge, /source-grounded-policy-ai-17-whole-exam-v2/);

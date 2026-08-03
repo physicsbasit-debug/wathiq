@@ -10,7 +10,7 @@ const visual = await text("src/question-visual.ts");
 const edge = await text("supabase/functions/generate-source-questions/index.ts");
 
  test("يثبت Phase 1-D2 وإصدار جودة القياس وتنوع السياقات", () => {
-  assert.match(pkg.version, /^0\.0\.(?:48|49|50|51|52|53|54|55|56|57|58)$/);
+  assert.match(pkg.version, /^0\.0\.(?:48|49|50|51|52|53|54|55|56|57|58|59)$/);
   assert.match(client, /source-grounded-policy-ai-16-assessment-quality-context-diversity/);
   assert.match(pkg.description, /السياقات الحياتية/);
   assert.match(pkg.description, /كامبريدج/);

@@ -5,8 +5,8 @@ import { readFile } from "node:fs/promises";
 const edge = await readFile(new URL("../supabase/functions/generate-source-questions/index.ts", import.meta.url), "utf8");
 const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 
-test("يثبت إصدار C4 Fix 1 ومخطط النقل الخفيف", () => {
-  assert.equal(pkg.version, "0.0.58");
+test("يحافظ C4 Fix 2 على مخطط النقل الخفيف مع ملكية الخادم", () => {
+  assert.equal(pkg.version, "0.0.59");
   assert.match(pkg.description, /مخطط النقل.*خفيف/);
 });
 
@@ -25,7 +25,7 @@ test("لا يرسل قيود tuple أو حدود ديناميكية داخل م�
 test("يبقي التحقق الدقيق في الخادم بدل تفويضه إلى Gemini", () => {
   for (const symbol of [
     "validateGeneratedItemsIndividually",
-    "sanitizeScientificItem",
+    "buildServerOwnedScientificItem",
     "validateScientificItemConsistency",
     "validateStructuredScenarioContract",
     "hasExactMarkScheme",

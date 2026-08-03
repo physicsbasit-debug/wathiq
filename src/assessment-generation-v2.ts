@@ -21,7 +21,7 @@ import {
 import { parseQuestionVisualSpec } from "./question-visual.js";
 import { parseScientificItemModel } from "./scientific-item.js";
 
-export const ASSESSMENT_GENERATION_V2_VERSION = "source-grounded-policy-ai-20-unified-scientific-item";
+export const ASSESSMENT_GENERATION_V2_VERSION = "source-grounded-policy-ai-21-server-owned-scientific-item";
 export type AssessmentGenerationMode = "whole_exam_v2" | "legacy_items";
 
 export interface LessonCardV2 {
