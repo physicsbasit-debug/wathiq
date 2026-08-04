@@ -362,9 +362,9 @@ begin
     );
   end loop;
 
-  select count(distinct plan_item_id) into v_seen_count
-  from public.assessment_generation_items
-  where run_id = v_run_id;
+  select count(distinct item.plan_item_id) into v_seen_count
+  from public.assessment_generation_items as item
+  where item.run_id = v_run_id;
   if v_seen_count <> v_total then
     raise exception using errcode = '22023', message = 'DUPLICATE_OR_MISSING_PLAN_ITEMS';
   end if;

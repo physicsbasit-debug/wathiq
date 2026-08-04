@@ -78,3 +78,19 @@ PASS: Phase 2-D2 durable generation schema, security, idempotency, leases, recov
 - لا تغيّر أسرار Gemini.
 
 هذه المرحلة لا تغيّر الواجهة ولا تعالج زمن التوليد للمستخدم بعد؛ إنها البنية الدائمة التي سيعمل فوقها عامل Phase 2-D3.
+
+## تصحيح عقد SQL المكتشف باختبار القبول
+
+إذا ظهر الخطأ `column reference "run_id" is ambiguous` بعد نشر المرحلة الأساسية، نفّذ مرة واحدة:
+
+```text
+supabase/phase_2_d2_sql_contract_correction.sql
+```
+
+ثم أعد تشغيل:
+
+```text
+supabase/phase_2_d2_post_deploy_acceptance.sql
+```
+
+لا يُعاد إنشاء الجداول ولا تُحذف البيانات؛ الملف يستبدل دالة الإدخال نفسها باستعلام مؤهل بأسماء الجداول.

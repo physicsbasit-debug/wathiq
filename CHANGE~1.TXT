@@ -1,0 +1,6 @@
+supabase/phase_2_d2_assessment_generation_jobs.sql
+supabase/phase_2_d2_sql_contract_correction.sql
+tests/phase-2-d2-sql-contract-correction.test.mjs
+PHASE_2_D2_DEPLOYMENT_INSTRUCTIONS.md
+PHASE_2_D2_SQL_CONTRACT_CORRECTION_REPORT.md
+PHASE_2_D2_SQL_CONTRACT_CORRECTION_INSTRUCTIONS.md
