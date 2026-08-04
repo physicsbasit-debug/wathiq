@@ -18,10 +18,12 @@ test("يثبت خط الأساس أن وظيفة التوليد السابقة �
   assert.match(edge, /generate_visual_illustration/);
 });
 
-test("يثبت خط الأساس أن الواجهة تنتظر طلب الاختبار الكامل ثم تتحول للمسار السابق بعد 12 مفردة", () => {
-  assert.match(app, /questionGenerationService\.generateWholeExam\(request\)/);
-  assert.match(app, /generationMode === "whole_exam_v2" && plan\.length > 12/);
-  assert.match(app, /state\.draft\.generationMode = "legacy_items"/);
+test("يثبت التحويل الإنتاجي أن الواجهة لم تعد تنتظر الطلب الكامل أو تعود للمسار السابق", () => {
+  assert.doesNotMatch(app, /questionGenerationService\.generateWholeExam\(request\)/);
+  assert.doesNotMatch(app, /generationMode === "whole_exam_v2" && plan\.length > 12/);
+  assert.doesNotMatch(app, /state\.draft\.generationMode = "legacy_items"/);
+  assert.match(app, /ProgressiveAssessmentGenerationOrchestrator/);
+  assert.match(app, /concurrency: 2/);
 });
 
 test("يثبت خط الأساس أن عقد الاختبار السابق يرسل جميع المراجع ضمن طلب واحد", () => {

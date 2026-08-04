@@ -69,7 +69,9 @@ export function createEmptyDraft(now = new Date()): ExamDraft {
     trustedEnrichmentEnabled: true,
     visualEnhancementEnabled: true,
     visualJobs: {},
-    generationMode: "whole_exam_v2",
+    generationMode: "progressive_items_v1",
+    generationRunId: "",
+    generationEpoch: 1,
     counts: { mcq: 2, short: 3, long: 1 },
     plan: [],
     selectedProposalByPlanItem: {},
@@ -95,6 +97,8 @@ export function applyOfficialAssessmentTemplate(draft: ExamDraft): ExamDraft {
   draft.plan = [];
   draft.selectedProposalByPlanItem = {};
   draft.visualJobs = {};
+  draft.generationRunId = "";
+  draft.generationEpoch = Math.max(1, draft.generationEpoch + 1);
   draft.generationVersion = "";
   draft.generationModel = "";
   draft.generatedAt = "";

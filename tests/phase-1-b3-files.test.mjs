@@ -22,13 +22,14 @@ test("Phase 1-B3 تقبل من درسين إلى خمسة وتربط كل درس
   assert.match(storage, /lessonTopics/);
 });
 
-test("تولد الأسئلة على دفعات صغيرة وتحفظ المكتمل عند الفشل", () => {
+test("يحفظ المحرك التدريجي كل مفردة ويعيد المتعذرة وحدها بتوازٍ محدود", async () => {
+  const orchestrator = await readFile(new URL("../src/assessment-generation-orchestrator.ts", import.meta.url), "utf8");
   assert.match(generator, /GENERATION_BATCH_SIZE\s*=\s*2/);
-  assert.match(generator, /splitQuestionGenerationBatches/);
-  assert.match(app, /تم الاحتفاظ بـ/);
-  assert.match(app, /اضغط التالي لإكمال الباقي فقط/);
+  assert.match(orchestrator, /concurrency \?\? 2/);
+  assert.match(orchestrator, /retryItem/);
+  assert.match(app, /دون لمس الأسئلة المكتملة/);
+  assert.match(app, /persistDraftCheckpoint\(false\)/);
   assert.match(edge, /MAX_BATCH_ITEMS\s*=\s*2/);
-  assert.match(edge, /officialPlanItems/);
 });
 
 test("تقوي قراءة JSON من Gemini وتبقي النشر من محرر Supabase", () => {

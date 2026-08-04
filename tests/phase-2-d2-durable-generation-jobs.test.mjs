@@ -236,7 +236,7 @@ test("يرسل العميل المخطط والعقود إلى الوظيفة ا
   assert.equal(Object.hasOwn(calls[0].body.contracts[0].source, "content"), false);
 });
 
-test("يدعم العميل الاستعادة والإلغاء وإعادة المفردة دون ربطه بواجهة الإنتاج", async () => {
+test("يدعم العميل الاستعادة والإلغاء وإعادة المفردة ويرتبط بواجهة D4", async () => {
   const { blueprint } = await generationPayload();
   const actions = [];
   const fetcher = async (_url, init) => {
@@ -258,8 +258,10 @@ test("يدعم العميل الاستعادة والإلغاء وإعادة ا�
   await service.cancelRun("123e4567-e89b-42d3-a456-426614174000");
   assert.deepEqual(actions.map((entry) => entry.action), ["list", "resume", "retry", "cancel"]);
   const app = await text("src/app.ts");
-  assert.doesNotMatch(app, /assessment-generation-jobs/);
-  assert.doesNotMatch(app, /AssessmentGenerationJobService/);
+  assert.match(app, /AssessmentGenerationJobService/);
+  assert.match(app, /assessmentGenerationJobService/);
+  assert.match(app, /cancelProgressiveGeneration/);
+  assert.match(app, /retryGenerationItem/);
 });
 
 test("يرفض عميل D2 نتيجة ready ناقصة بدل تمريرها للمسودة", async () => {

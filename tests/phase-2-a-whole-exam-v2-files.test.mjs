@@ -13,11 +13,13 @@ test("يثبت إصدار Phase 2-A", () => {
   assertWathiqPatchAtLeast(pkg.version, 51);
 });
 
-test("يضيف محرك تصميم الاختبار الكامل مع إبقاء المحرك السابق", () => {
-  assert.match(app, /whole_exam_v2/);
-  assert.match(app, /legacy_items/);
-  assert.match(app, /تصميم الاختبار كاملًا/);
-  assert.match(app, /المحرك السابق/);
+test("يبقي عقود V2 التاريخية للتوافق ولا يعرضها كخيار إنتاجي بعد D4", () => {
+  assert.match(storage, /whole_exam_v2/);
+  assert.match(storage, /legacy_items/);
+  assert.match(app, /progressive_items_v1/);
+  assert.match(app, /التوليد التدريجي الدائم/);
+  assert.doesNotMatch(app, /generation-mode-option/);
+  assert.doesNotMatch(app, /state\.draft\.generationMode = "legacy_items"/);
   assert.match(styles, /\.generation-mode-panel/);
 });
 

@@ -6,7 +6,7 @@ export type CognitiveLevel = "معرفة" | "تطبيق" | "استدلال";
 export type ItemDifficulty = "منخفض" | "متوسط" | "مرتفع";
 export type ExamTitleOption = "الاختبار القصير الأول" | "الاختبار القصير الثاني" | "الاختبار النهائي";
 export type AssessmentType = "اختبار قصير رسمي" | "امتحان نهاية الفصل الدراسي";
-export type AssessmentGenerationMode = "whole_exam_v2" | "legacy_items";
+export type AssessmentGenerationMode = "progressive_items_v1" | "whole_exam_v2" | "legacy_items";
 export type QuestionDesignPattern = "مفهومي" | "سياقي" | "حسابي" | "بيانات" | "استقصائي" | "مقارنة";
 export type QuestionVisualType = "none" | "context_scene" | "line_graph" | "bar_chart" | "pressure_diagram" | "circuit_diagram" | "electrostatic_diagram" | "data_table" | "instrument_scale" | "ray_diagram" | "force_diagram" | "flow_diagram";
 export type QuestionVisualVariant = "default" | "door_handle" | "playground_seesaw" | "wrench_tool" | "bicycle_brake" | "shopping_trolley" | "school_bag" | "water_tank" | "solar_panel" | "laboratory_setup" | "road_safety" | "submerged_object" | "depth_comparison" | "force_area" | "liquid_column" | "series_circuit" | "measurement_circuit" | "charge_transfer" | "attraction_repulsion" | "electric_field" | "trend" | "comparison" | "multi_series" | "table_completion" | "table_comparison" | "thermometer" | "burette" | "measuring_cylinder" | "meter_scale" | "reflection" | "refraction" | "converging_lens" | "prism" | "free_body" | "balanced_forces" | "moments" | "linear_flow" | "cycle_flow" | "state_change";
@@ -225,6 +225,8 @@ export interface ExamDraft {
   visualEnhancementEnabled: boolean;
   visualJobs: Record<string, QuestionVisualJobSnapshot>;
   generationMode: AssessmentGenerationMode;
+  generationRunId: string;
+  generationEpoch: number;
   counts: QuestionCounts;
   plan: PlanItem[];
   selectedProposalByPlanItem: Record<string, string>;

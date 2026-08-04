@@ -21,6 +21,9 @@ test("يستبدل رفض workingRequired بتطبيع حتمي حسب عدد ا
   assert.match(assessmentV2, /shouldRequireCalculationWorking\(expected\.styleTarget, expected\.marks\)/);
 });
 
-test("يبقي مسودة V2 على المحرك المختار عند فشل محاولة التوليد", () => {
-  assert.match(app, /بقيت المسودة على محرك تصميم الاختبار كاملًا ولم يغيّر واثق طريقة التوليد/);
+test("لا يعود مسار الإنتاج إلى محرك V2 عند تعذر مفردة", () => {
+  assert.match(app, /state\.draft\.generationMode = "progressive_items_v1"/);
+  assert.match(app, /retryGenerationItem/);
+  assert.doesNotMatch(app, /state\.draft\.generationMode = "whole_exam_v2"/);
+  assert.doesNotMatch(app, /state\.draft\.generationMode = "legacy_items"/);
 });

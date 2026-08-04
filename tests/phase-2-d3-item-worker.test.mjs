@@ -152,7 +152,7 @@ test("لا يسمح مخطط Gemini في D3 بامتلاك المعرفات أو
   assert.match(schema, /additionalProperties: false/);
 });
 
-test("خدمة العميل تستدعي عامل D3 دون ربطها بواجهة الإنتاج", async () => {
+test("خدمة العميل تستدعي عامل D3 وترتبط بمنسق واجهة D4", async () => {
   const calls = [];
   const fetcher = async (url, init) => {
     const body = JSON.parse(init.body);
@@ -177,7 +177,10 @@ test("خدمة العميل تستدعي عامل D3 دون ربطها بواج�
   assert.ok(calls.every((call) => call.init.headers.Authorization === "Bearer owner-token"));
   assert.ok(calls.every((call) => /assessment-generation-worker$/.test(call.url)));
   const app = await text("src/app.ts");
-  assert.doesNotMatch(app, /AssessmentGenerationWorkerService|assessment-generation-worker/);
+  assert.match(app, /AssessmentGenerationWorkerService/);
+  assert.match(app, /ProgressiveAssessmentGenerationOrchestrator/);
+  assert.match(app, /assessmentGenerationWorkerService/);
+  assert.doesNotMatch(app, /generateWholeExam/);
 });
 
 test("يرفع الإصدار إلى مرحلة D3 دون تعديل اختبارات الإصدارات التاريخية", async () => {

@@ -9,13 +9,15 @@ const edge = await readFile(new URL("../supabase/functions/generate-source-quest
 const config = await readFile(new URL("../supabase/config.toml", import.meta.url), "utf8");
 const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 
-test("Phase 1-B يستبدل الصياغات الوهمية بخدمة توليد من المصدر", () => {
-  assert.match(app, /QuestionGenerationService/);
-  assert.match(app, /generateQuestionsForPlan/);
-  assert.match(app, /buildQuestionGenerationRequest/);
-  assert.doesNotMatch(app, /generateProposals/);
-  assert.doesNotMatch(app, /visualKind/);
+test("يبقي خدمة Phase 1-B التاريخية للأرشيف ويستخدم في الإنتاج دورة المفردات الدائمة", () => {
+  assert.match(generator, /QuestionGenerationService/);
+  assert.match(generator, /buildQuestionGenerationRequest/);
   assert.match(generator, /ثلاثة بدائل لكل مفردة/);
+  assert.match(app, /AssessmentGenerationJobService/);
+  assert.match(app, /ProgressiveAssessmentGenerationOrchestrator/);
+  assert.match(app, /generateQuestionsForPlan/);
+  assert.doesNotMatch(app, /new QuestionGenerationService/);
+  assert.doesNotMatch(app, /generateProposals/);
 });
 
 test("Edge Function تستخدم Gemini generateContent ومخطط JSON ومفتاحًا سريًا", () => {

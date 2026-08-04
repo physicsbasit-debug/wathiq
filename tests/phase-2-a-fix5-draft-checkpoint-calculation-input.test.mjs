@@ -6,14 +6,14 @@ const app = await readFile(new URL("../src/app.ts", import.meta.url), "utf8");
 const storage = await readFile(new URL("../src/storage.ts", import.meta.url), "utf8");
 const edge = await readFile(new URL("../supabase/functions/generate-source-questions/index.ts", import.meta.url), "utf8");
 
-test("يحفظ نقطة استئناف قبل استدعاء محرك الاختبار الكامل", () => {
-  assert.match(app, /if \(!persistDraftCheckpoint\(\)\) return;/);
-  assert.match(app, /جارٍ تصميم الاختبار كاملًا[\s\S]*persistDraftCheckpoint\(\)/);
+test("يحفظ نقطة استئناف قبل إطلاق دورة التوليد التدريجي", () => {
+  assert.match(app, /state\.draft\.generationMode = "progressive_items_v1"[\s\S]*if \(!persistDraftCheckpoint\(\)\) return;[\s\S]*setStep\(3\)/);
+  assert.match(app, /window\.setTimeout\(\(\) => \{ void generateQuestionsForPlan/);
 });
 
-test("يحفظ المسودة فور نجاح التوليد أو فشله بدل الاعتماد على مؤقت فقط", () => {
-  assert.match(app, /تم تصميم اختبار كامل[\s\S]*persistDraftCheckpoint\(false\)/);
-  assert.match(app, /حُفظت المسودة الحالية ويمكنك إعادة المحاولة من الموضع نفسه/);
+test("يحفظ كل لقطة تقدم ونتيجة قبل الاعتماد على مؤقت الواجهة", () => {
+  assert.match(app, /applyProgressiveGenerationSnapshot[\s\S]*persistDraftCheckpoint\(false\)/);
+  assert.match(app, /generationRunId = snapshot\.id/);
   assert.match(app, /pagehide/);
   assert.match(app, /visibilitychange/);
 });

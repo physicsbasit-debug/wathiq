@@ -24,8 +24,11 @@ test("يمرر سبب الرفض إلى المحاولة الثانية ويوس
 });
 
 
-test("يعزل الدفعة الفاشلة إلى مفردات مستقلة ويحفظ المفردة السليمة", () => {
-  assert.match(app, /if \(batch\.length === 1\) throw batchError/);
-  assert.match(app, /for \(const isolatedItem of batch\)/);
-  assert.match(app, /حتى لا تضيع المفردة السليمة/);
+test("يعزل D4 كل مفردة في مهمة مستقلة ويحفظ السليمة قبل إعادة المتعذرة", async () => {
+  const orchestrator = await text("src/assessment-generation-orchestrator.ts");
+  assert.match(orchestrator, /dispatchAvailable/);
+  assert.match(orchestrator, /retryItem/);
+  assert.match(app, /item\.status === "ready" && item\.result/);
+  assert.match(app, /دون لمس الأسئلة المكتملة/);
+  assert.doesNotMatch(app, /for \(const isolatedItem of batch\)/);
 });
