@@ -1,3 +1,4 @@
+import { assertWathiqPatchAtLeast } from "./version-assertions.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
@@ -13,7 +14,7 @@ function blockBetween(startToken, endToken) {
 }
 
 test("يثبت إصدار C4 Fix 2 وعقد ai-21 المملوك للخادم", () => {
-  assert.match(pkg.version, /^0\.0\.(?:61|62|63)$/);
+  assertWathiqPatchAtLeast(pkg.version, 61);
   assert.match(ASSESSMENT_GENERATION_V2_VERSION, /source-grounded-policy-ai-(?:21-server-owned-scientific-item|22-server-owned-question-pattern|23-server-owned-assessment-contract|24-context-aware-moment-contract|25-essential-scientific-visual-contract)/);
   assert.match(pkg.description, /ملكية النموذج العلمي بالكامل إلى خادم واثق/);
 });

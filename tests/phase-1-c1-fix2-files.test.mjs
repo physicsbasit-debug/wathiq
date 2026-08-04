@@ -1,3 +1,4 @@
+import { assertWathiqPatchAtLeast } from "./version-assertions.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
@@ -26,7 +27,7 @@ test("يضبط تكلفة التفكير وحجم الإخراج ويسجل بي
 });
 
 test("يحافظ على المسودات المكتملة ويرفع إصدار التطبيق فقط", () => {
-  assert.match(pkg.version, /^0\.0\.(?:36|37|38|39|40|41|42|43|44|45|46|47|48|49|50|51|52|53|54|55|56|57|58|59|60|61|62|63)$/);
+  assertWathiqPatchAtLeast(pkg.version, 36);
   assert.match(generator, /source-grounded-policy-ai-(?:9-visual-svg|10-strict-lesson-scope|11-visual-enforced|12-advanced-visuals|13-trusted-enrichment|14-contextual-stimulus-alignment|15-controlled-hybrid-visuals|16-assessment-quality-context-diversity)/);
   assert.match(pkg.description, /تقليل استهلاك Gemini/);
 });

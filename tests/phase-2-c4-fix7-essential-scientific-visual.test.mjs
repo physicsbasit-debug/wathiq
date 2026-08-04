@@ -1,3 +1,4 @@
+import { assertWathiqPatchAtLeast } from "./version-assertions.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
@@ -41,7 +42,7 @@ function momentItem(id, overrides = {}) {
 }
 
 test("يثبت Fix 7 عقد المرئي العلمي الضروري", () => {
-  assert.equal(pkg.version, "0.0.63");
+  assertWathiqPatchAtLeast(pkg.version, 63);
   assert.equal(ASSESSMENT_GENERATION_V2_VERSION, "source-grounded-policy-ai-25-essential-scientific-visual-contract");
   assert.match(edge, /enforceServerOwnedScientificVisualContract/);
   assert.match(edge, /generationItemRequiresEssentialMomentVisual/);

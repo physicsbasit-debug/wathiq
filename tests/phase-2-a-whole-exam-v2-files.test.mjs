@@ -1,3 +1,4 @@
+import { assertWathiqPatchAtLeast } from "./version-assertions.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
@@ -9,7 +10,7 @@ const styles = await readFile(new URL("../src/styles.css", import.meta.url), "ut
 const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 
 test("يثبت إصدار Phase 2-A", () => {
-  assert.match(pkg.version, /^0\.0\.(?:51|52|53|54|55|56|57|58|59|60|61|62|63)$/);
+  assertWathiqPatchAtLeast(pkg.version, 51);
 });
 
 test("يضيف محرك تصميم الاختبار الكامل مع إبقاء المحرك السابق", () => {

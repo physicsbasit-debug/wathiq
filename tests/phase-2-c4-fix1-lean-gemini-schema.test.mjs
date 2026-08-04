@@ -1,3 +1,4 @@
+import { assertWathiqPatchAtLeast } from "./version-assertions.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
@@ -6,7 +7,7 @@ const edge = await readFile(new URL("../supabase/functions/generate-source-quest
 const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 
 test("يحافظ C4 Fix 2 على مخطط النقل الخفيف مع ملكية الخادم", () => {
-  assert.match(pkg.version, /^0\.0\.(?:61|62|63)$/);
+  assertWathiqPatchAtLeast(pkg.version, 61);
   assert.match(pkg.description, /مخطط النقل.*خفيف/);
 });
 

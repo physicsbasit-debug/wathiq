@@ -1,3 +1,4 @@
+import { assertWathiqPatchAtLeast } from "./version-assertions.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
@@ -29,7 +30,7 @@ function illustration() {
 }
 
 test("يثبت Phase 2-C2 وإصدار المرئيات التعليمية True 2D", () => {
-  assert.match(pkg.version, /^0\.0\.(?:54|55|56|57|58|59|60|61|62|63)$/);
+  assertWathiqPatchAtLeast(pkg.version, 54);
   assert.match(pkg.description, /True 2D|طبقة الشرح العلمي|ثنائية الأبعاد/);
 });
 

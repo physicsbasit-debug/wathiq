@@ -1,3 +1,4 @@
+import { assertWathiqPatchAtLeast } from "./version-assertions.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -8,7 +9,7 @@ const retrieval = fs.readFileSync("src/source-retrieval.ts", "utf8");
 const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
 
 test("يثبت ربط الصفحات المطبوعة بصفحات PDF مع بحث متدرج آمن", () => {
-  assert.match(pkg.version, /^0\.0\.(?:40|41|42|43|44|45|46|47|48|49|50|51|52|53|54|55|56|57|58|59|60|61|62|63)$/);
+  assertWathiqPatchAtLeast(pkg.version, 40);
   assert.match(tree, /pdfPageOffset:\s*3/);
   assert.match(tree, /toPdfPage/);
   assert.match(retrieval, /strict-lesson-scope-3-pdf-pages/);
