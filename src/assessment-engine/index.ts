@@ -5,3 +5,6 @@ export * from "./invariants.js";
 export * from "./blueprint.js";
 export * from "./normalization.js";
 export * from "./global-review.js";
+export * from "./source-grounding.js";
+export * from "./scientific-contracts.js";
+export * from "./item-validation.js";

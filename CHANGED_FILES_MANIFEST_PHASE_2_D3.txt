@@ -1,0 +1,36 @@
+Phase 2-D3 — Item Generation Worker
+
+Added:
+- src/assessment-engine/source-grounding.ts
+- src/assessment-engine/scientific-contracts.ts
+- src/assessment-engine/item-validation.ts
+- src/assessment-generation-worker.ts
+- supabase/functions/assessment-generation-worker/index.ts
+- tests/phase-2-d3-item-worker.test.mjs
+- docs/PHASE_2_D3_ITEM_GENERATION_WORKER.md
+- PHASE_2_D3_ITEM_GENERATION_WORKER_REPORT.md
+- PHASE_2_D3_DEPLOYMENT_INSTRUCTIONS.md
+- CHANGED_FILES_MANIFEST_PHASE_2_D3.txt
+
+Modified:
+- src/assessment-engine/hashing.ts
+- src/assessment-engine/index.ts
+- supabase/config.toml
+- package.json
+- generated dist assets for the new and modified modules
+
+Production UI behavior changed: no
+Production app.ts integration: no
+Old generation engine called by new worker: no
+Gemini ownership: content fields only
+Source text loaded from server: yes
+Server-side evidence binding: yes
+Server-owned scientific contract and visual: yes
+Question image generation in critical path: no
+SQL required: no
+New Edge Function deployment required: yes, assessment-generation-worker
+New secret required: no
+Source reindex required: no
+Old Edge Function redeployment required: no
+Expected GitHub Actions result: 484 passed, 0 failed
+Next phase: Phase 2-D4 user-interface orchestration and progressive recovery

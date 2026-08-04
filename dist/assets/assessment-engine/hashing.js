@@ -48,4 +48,10 @@ export function deterministicNumericSeed(value) {
     const hash = stableHash64(value);
     return Number.parseInt(hash.slice(-8), 16) >>> 0;
 }
+/** بصمة محتوى المصدر بعد توحيد فواصل الأسطر والمسافات النهائية. */
+export async function sourceContentHash(content) {
+    const normalized = content.replace(/\r\n?/gu, "\n").split("\n").map((line) => line.trimEnd()).join("\n").trim();
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(normalized));
+    return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
 //# sourceMappingURL=hashing.js.map
