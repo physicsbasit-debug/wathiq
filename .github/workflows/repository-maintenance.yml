@@ -35,16 +35,19 @@ jobs:
           node-version: '22'
 
       - name: Remove known obsolete artifacts
-        run: node scripts/check-repository-hygiene.mjs --clean
+        run: npm run repo:clean
 
       - name: Install dependencies
         run: npm install --no-package-lock --no-audit --no-fund
 
-      - name: Verify repository hygiene
-        run: npm run repo:check
-
       - name: Verify application
         run: npm run check
+
+      - name: Remove generated build output after verification
+        run: npm run repo:clean
+
+      - name: Verify repository hygiene
+        run: npm run repo:check
 
       - name: Commit cleanup when needed
         shell: bash
