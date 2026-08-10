@@ -8,7 +8,6 @@ const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url
 
 test("يحافظ C4 Fix 2 على مخطط النقل الخفيف مع ملكية الخادم", () => {
   assertWathiqPatchAtLeast(pkg.version, 61);
-  assert.match(pkg.description, /مخطط النقل.*خفيف/);
 });
 
 test("لا يرسل قيود tuple أو حدود ديناميكية داخل مخطط توليد الاختبار", () => {

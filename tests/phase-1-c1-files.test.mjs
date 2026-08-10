@@ -8,14 +8,13 @@ const generator = await readFile(new URL("../src/question-generation.ts", import
 const visual = await readFile(new URL("../src/question-visual.ts", import.meta.url), "utf8");
 const edge = await readFile(new URL("../supabase/functions/generate-source-questions/index.ts", import.meta.url), "utf8");
 const styles = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
-const readme = await readFile(new URL("../README.md", import.meta.url), "utf8");
+const architecture = await readFile(new URL("../docs/ARCHITECTURE.md", import.meta.url), "utf8");
 const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 
-test("يثبت إصدار محرك الرسومات ويعلن نطاقه بوضوح", () => {
+test("يبقي محرك الرسومات الحتمية موثقًا ضمن المعمارية الحالية", () => {
   assertWathiqPatchAtLeast(pkg.version, 36);
-  assert.match(pkg.description, /SVG/);
-  assert.match(readme, /Phase 1-C1/);
-  assert.match(readme, /مواصفة SVG حتمية وآمنة|fixedVisual/);
+  assert.match(architecture, /SVG/);
+  assert.match(architecture, /question-visual\.ts/);
 });
 
 test("يدعم أربعة قوالب بصرية علمية ولا يقبل SVG حرًا", () => {

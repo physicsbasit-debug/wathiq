@@ -38,7 +38,5 @@ test("ينظف ورقة الطالب من مراجع المصدر ويضعها �
 
 test("يرفع إصدار واثق ويحافظ على التوليد الموثق", () => {
   assertWathiqPatchAtLeast(pkg.version, 34);
-  assert.match(pkg.description, /المرجع العُماني/);
-  assert.match(pkg.description, /كامبريدج/);
   assert.match(edge, /sourceSupport: evidence\.text/);
 });

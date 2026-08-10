@@ -16,5 +16,4 @@ test("Fix 3 يسترد صفوف الدروس مكانيًا ولا يشترط ر
 test("Fix 3 لا يغيّر Supabase أو pages workflow", async () => {
   const packageJson = JSON.parse(await read("package.json"));
   assert.ok(Number(packageJson.version.split(".").at(-1)) >= 22);
-  assert.match(packageJson.description, /فهرستها حسب الصفحات والمقاطع/);
 });

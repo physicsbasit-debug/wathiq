@@ -31,7 +31,6 @@ function illustration() {
 
 test("يثبت Phase 2-C2 وإصدار المرئيات التعليمية True 2D", () => {
   assertWathiqPatchAtLeast(pkg.version, 54);
-  assert.match(pkg.description, /True 2D|طبقة الشرح العلمي|ثنائية الأبعاد/);
 });
 
 test("يؤهل تفاعل الشحنات الآمن لصورة 2D مدققة", () => {

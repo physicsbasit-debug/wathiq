@@ -9,7 +9,7 @@ const generator = await readFile(new URL("../src/question-generation.ts", import
 const storage = await readFile(new URL("../src/storage.ts", import.meta.url), "utf8");
 const edge = await readFile(new URL("../supabase/functions/generate-source-questions/index.ts", import.meta.url), "utf8");
 const styles = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
-const deployment = await readFile(new URL("../docs/PHASE_1_B_DEPLOYMENT.md", import.meta.url), "utf8");
+const deployment = await readFile(new URL("../docs/DEPLOYMENT.md", import.meta.url), "utf8");
 const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 
 test("Phase 1-B3 تقبل من درسين إلى خمسة وتربط كل درس بمقاطعه", () => {

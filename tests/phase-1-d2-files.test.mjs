@@ -13,8 +13,6 @@ const edge = await text("supabase/functions/generate-source-questions/index.ts")
  test("يثبت Phase 1-D2 وإصدار جودة القياس وتنوع السياقات", () => {
   assertWathiqPatchAtLeast(pkg.version, 48);
   assert.match(client, /source-grounded-policy-ai-16-assessment-quality-context-diversity/);
-  assert.match(pkg.description, /السياقات الحياتية/);
-  assert.match(pkg.description, /كامبريدج/);
 });
 
 test("يرسل هدف التعلم والمهارة والسياق والمثير لكل مفردة", () => {

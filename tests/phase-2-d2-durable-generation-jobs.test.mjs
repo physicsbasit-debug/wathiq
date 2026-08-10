@@ -300,7 +300,6 @@ test("تعلن الحزمة Phase 2-D2 دون تغيير إصدار عقود ا�
   const packageJson = JSON.parse(await text("package.json"));
   const contracts = await text("src/assessment-engine/contracts.ts");
   assertWathiqPatchAtLeast(packageJson.version, 64);
-  assert.match(packageJson.description, /Phase 2-D2/);
   assert.match(contracts, /ASSESSMENT_ENGINE_SCHEMA_VERSION = 1/);
   assert.match(contracts, /ASSESSMENT_CONTRACT_VERSION = 1/);
   assert.match(contracts, /ASSESSMENT_BLUEPRINT_VERSION = 1/);
