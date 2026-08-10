@@ -114,21 +114,22 @@ test("ينوّع الرسومات الحتمية بين المفردات ولا 
   assert.match(renderQuestionVisualSvg(third), /مساحة التلامس A|القوة F/);
 });
 
-test("يرسم مخطط كهرباء ساكنة دون صور حرة", () => {
+test("لا يعرض رسم الكهرباء الساكنة الخطي قبل أصل 2D مدقق", () => {
   const electrostatic = {
     ...emptyQuestionVisualSpec(),
     type: "electrostatic_diagram",
     variant: "charge_transfer",
+    role: "interpret",
     title: "شحن مسطرة بالدلك",
     altText: "مسطرة بلاستيكية تدلك بقطعة قماش ثم تقرب من قصاصات ورق",
     labels: ["المسطرة البلاستيكية", "قطعة القماش"],
     values: [1],
     annotations: ["اتجاه الدلك"],
   };
-  const svg = renderQuestionVisualSvg(parseQuestionVisualSpec(electrostatic, "electrostatic_diagram"));
-  assert.match(svg, /qv-rod/);
-  assert.match(svg, /qv-paper-piece/);
-  assert.match(svg, /اتجاه الدلك/);
+  const html = renderQuestionVisualSvg(parseQuestionVisualSpec(electrostatic, "electrostatic_diagram"));
+  assert.match(html, /data-visual-mode="2d-required"/);
+  assert.match(html, /الأصل العلمي 2D غير جاهز بعد/);
+  assert.doesNotMatch(html, /qv-rod|qv-paper-piece/);
   assert.equal(questionVisualTypeLabel("electrostatic_diagram"), "مخطط كهرباء ساكنة ثنائي الأبعاد");
 });
 
@@ -215,7 +216,9 @@ test("يرسم مخططات الأشعة والقوى والعمليات بصي�
     annotations: ["ثم", "ينتج"],
   };
   assert.match(renderQuestionVisualSvg(parseQuestionVisualSpec(ray, "ray_diagram")), /qv-mirror/);
-  assert.match(renderQuestionVisualSvg(parseQuestionVisualSpec(force, "force_diagram")), /qv-force-arrow/);
+  const forceHtml = renderQuestionVisualSvg(parseQuestionVisualSpec(force, "force_diagram"));
+  assert.match(forceHtml, /data-visual-mode="2d-required"/);
+  assert.doesNotMatch(forceHtml, /qv-force-arrow/);
   assert.match(renderQuestionVisualSvg(parseQuestionVisualSpec(flow, "flow_diagram")), /qv-flow-node/);
 });
 
@@ -246,12 +249,15 @@ test("يستخدم صورة 2D مدققة للمشهد المؤهل ويستخد
   const html = renderQuestionVisualSvg(visual);
   assert.match(html, /question-visual-illustrated/);
   assert.match(html, /question-visual-illustration/);
-  assert.match(html, /question-visual-deterministic-fallback/);
-  assert.match(html, /qv-rod/);
+  assert.doesNotMatch(html, /question-visual-deterministic-fallback/);
+  assert.doesNotMatch(html, /qv-rod/);
   assert.match(html, /data-visual-mode="illustrated"/);
   const stripped = stripQuestionVisualIllustration(visual);
   assert.equal(stripped.illustration, undefined);
-  assert.match(renderQuestionVisualSvg(stripped), /data-visual-mode="(?:deterministic|2d-vector)"/);
+  const pending = renderQuestionVisualSvg(stripped);
+  assert.match(pending, /data-visual-mode="2d-required"/);
+  assert.match(pending, /لن يعرض واثق رسمًا خطيًا بديلًا/);
+  assert.doesNotMatch(pending, /qv-rod/);
 });
 
 test("يرفض بيانات صورة غير آمنة ويُبقي شرح القوى داخل طبقة علمية منضبطة", () => {
@@ -302,7 +308,7 @@ test("يعرض مخطط حساب الضغط القوة والمساحة ووحد
   assert.match(html, /مساحة التلامس A = 0\.02 m²/);
 });
 
-test("يرسم مشاهد حياتية حتمية مختلفة ويجعلها مؤهلة للتحسين البصري", () => {
+test("تتطلب المشاهد الحياتية أصل 2D ولا تعرض رسومات خطية احتياطية", () => {
   const build = (variant, labels) => ({
     ...emptyQuestionVisualSpec(),
     type: "context_scene",
@@ -322,9 +328,11 @@ test("يرسم مشاهد حياتية حتمية مختلفة ويجعلها م
   const wrenchSvg = renderQuestionVisualSvg(wrench);
   assert.notEqual(doorSvg, seesawSvg);
   assert.notEqual(seesawSvg, wrenchSvg);
-  assert.match(doorSvg, /المقبض/);
-  assert.match(seesawSvg, /نقطة الارتكاز/);
-  assert.match(wrenchSvg, /مفتاح الربط/);
+  for (const html of [doorSvg, seesawSvg, wrenchSvg]) {
+    assert.match(html, /data-visual-mode="2d-required"/);
+    assert.match(html, /لن يعرض واثق رسمًا خطيًا بديلًا/);
+    assert.doesNotMatch(html, /qv-context-object|qv-context-line|qv-context-motion/);
+  }
   assert.equal(isAiIllustrationEligible(door), true);
   assert.equal(isAiIllustrationEligible(seesaw), true);
   assert.equal(isAiIllustrationEligible(wrench), true);

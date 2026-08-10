@@ -52,7 +52,7 @@ test("يؤهل تفاعل الشحنات الآمن لصورة 2D مدققة", (
   assert.match(html, /data-visual-mode="illustrated"/);
 });
 
-test("يحافظ على مخططات القوى دقيقة لكنه يرسم الجسم كعنصر 2D لا مستطيل مجرد", () => {
+test("لا يعرض مخطط القوى الخطي قبل جاهزية الأصل العلمي 2D", () => {
   const bag = parseQuestionVisualSpec({
     ...emptyQuestionVisualSpec(),
     type: "force_diagram",
@@ -68,10 +68,9 @@ test("يحافظ على مخططات القوى دقيقة لكنه يرسم ا�
     ],
   }, "force_diagram");
   const html = renderQuestionVisualSvg(bag);
-  assert.match(html, /qv-force-bag/);
-  assert.match(html, /qv-force-pocket/);
-  assert.match(html, /qv-force-arrow/);
-  assert.match(html, /data-visual-mode="2d-vector"/);
+  assert.match(html, /data-visual-mode="2d-required"/);
+  assert.match(html, /لن يعرض واثق رسمًا خطيًا بديلًا/);
+  assert.doesNotMatch(html, /qv-force-bag|qv-force-pocket|qv-force-arrow/);
 });
 
 test("ينشئ مهام صور دائمة بلا حد أربع مرئيات ويستأنفها عند فتح المسودة", () => {
@@ -84,10 +83,13 @@ test("ينشئ مهام صور دائمة بلا حد أربع مرئيات وي
 });
 
 test("يعيد توليد الصورة مرة ثانية بملاحظات المدقق ويشدد جودة الطباعة", () => {
-  assert.match(edge, /wathiq-unified-scientific-item-v4/);
+  assert.match(edge, /wathiq-phase3-2d-scientific-visual-v5/);
   assert.match(edge, /for \(let attempt = 1; attempt <= 2; attempt \+= 1\)/);
   assert.match(edge, /Correction required after scientific review/);
   assert.match(edge, /objectCountCorrect/);
+  assert.match(edge, /spatialRelationshipsCorrect/);
+  assert.match(edge, /noScientificContradiction/);
+  assert.match(edge, /noExtraScientificObjects/);
   assert.match(edge, /clear2DComposition/);
   assert.match(edge, /printReady/);
   assert.match(edge, /attraction_repulsion/);

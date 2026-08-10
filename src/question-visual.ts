@@ -807,13 +807,13 @@ export interface QuestionVisualAssetRequirement {
 
 export function questionVisualAssetRequirement(spec: QuestionVisualSpec): QuestionVisualAssetRequirement {
   if (!isAiIllustrationEligible(spec)) {
-    return { required: false, mode: null, reason: "هذا النوع يبقى مخططًا علميًا حتميًا لضمان الدقة." };
+    return { required: false, mode: null, reason: "هذا النوع تمثيل علمي منظم يعتمد بيانات واثق مباشرة لضمان الدقة." };
   }
   if (spec.type === "force_diagram"
     || (spec.type === "electrostatic_diagram" && spec.variant === "attraction_repulsion")) {
     return { required: true, mode: "overlay", reason: "يتطلب أصلًا بصريًا 2D مع طبقة رموز وأسهم وقيم علمية يملكها واثق." };
   }
-  return { required: true, mode: "replace", reason: "يتطلب صورة تعليمية 2D مدققة علميًا بدل الرسم الخطي الاحتياطي." };
+  return { required: true, mode: "replace", reason: "يتطلب أصلًا علميًا 2D مدققًا؛ لا يسمح واثق برسم خطي احتياطي بدلًا منه." };
 }
 
 export function stripQuestionVisualIllustration(spec: QuestionVisualSpec): QuestionVisualSpec {
@@ -991,6 +991,30 @@ function renderCircuitDiagram(spec: QuestionVisualSpec): string {
 export function renderQuestionVisualSvg(spec: QuestionVisualSpec): string {
   validateQuestionVisualSpec(spec);
   if (spec.type === "none") return "";
+  const requirement = questionVisualAssetRequirement(spec);
+  const renderMode = illustrationRenderMode(spec);
+  const assetKind = illustrationAssetKind(spec);
+
+  if (requirement.required && !renderMode) {
+    return `<figure class="question-visual question-visual-${spec.type} question-visual-2d-required" data-visual-id="${escapeXml(spec.visualId ?? "")}" data-visual-variant="${escapeXml(spec.variant ?? "default")}" data-visual-mode="2d-required" data-visual-asset-kind="pending"><div class="question-visual-2d-placeholder" role="status" aria-label="${escapeXml(spec.altText)}"><strong>الأصل العلمي 2D غير جاهز بعد</strong><span>لن يعرض واثق رسمًا خطيًا بديلًا. يظهر المرئي بعد اجتياز التحقق العلمي والبصري.</span></div><figcaption>${escapeXml(spec.altText)}</figcaption></figure>`;
+  }
+
+  const overlaySvg = renderMode === "overlay"
+    ? spec.type === "force_diagram"
+      ? renderForceDiagramOverlaySvg(spec)
+      : spec.type === "electrostatic_diagram" && spec.variant === "attraction_repulsion"
+        ? renderElectrostaticOverlaySvg(spec)
+        : ""
+    : "";
+  if (renderMode === "overlay" && spec.illustration) {
+    const media = `<div class="question-visual-composite" data-hybrid-visual="ready"><img class="question-visual-illustration" src="${escapeXml(spec.illustration.url)}" alt="${escapeXml(spec.altText)}" loading="eager" decoding="async" crossorigin="anonymous"/><div class="question-visual-overlay">${overlaySvg}</div></div>`;
+    return `<figure class="question-visual question-visual-${spec.type} question-visual-illustrated-overlay" data-visual-id="${escapeXml(spec.visualId ?? "")}" data-visual-variant="${escapeXml(spec.variant ?? "default")}" data-visual-mode="illustrated-overlay" data-visual-asset-kind="${escapeXml(assetKind ?? "scene_2d_overlay")}">${media}<figcaption>${escapeXml(spec.altText)}</figcaption></figure>`;
+  }
+  if (renderMode === "replace" && spec.illustration) {
+    const media = `<div class="question-visual-illustrated" data-hybrid-visual="ready"><img class="question-visual-illustration" src="${escapeXml(spec.illustration.url)}" alt="${escapeXml(spec.altText)}" loading="eager" decoding="async" crossorigin="anonymous"/></div>`;
+    return `<figure class="question-visual question-visual-${spec.type} question-visual-illustrated" data-visual-id="${escapeXml(spec.visualId ?? "")}" data-visual-variant="${escapeXml(spec.variant ?? "default")}" data-visual-mode="illustrated" data-visual-asset-kind="${escapeXml(assetKind ?? "scene_2d")}">${media}<figcaption>${escapeXml(spec.altText)}</figcaption></figure>`;
+  }
+
   const svg = spec.type === "context_scene"
     ? renderContextScene(spec)
     : spec.type === "line_graph"
@@ -1012,20 +1036,5 @@ export function renderQuestionVisualSvg(spec: QuestionVisualSpec): string {
                     : spec.type === "force_diagram"
                       ? renderForceDiagram(spec)
                       : renderFlowDiagram(spec);
-  const renderMode = illustrationRenderMode(spec);
-  const assetKind = illustrationAssetKind(spec);
-  const overlaySvg = renderMode === "overlay"
-    ? spec.type === "force_diagram"
-      ? renderForceDiagramOverlaySvg(spec)
-      : spec.type === "electrostatic_diagram" && spec.variant === "attraction_repulsion"
-        ? renderElectrostaticOverlaySvg(spec)
-        : ""
-    : "";
-  const media = renderMode === "overlay" && spec.illustration
-    ? `<div class="question-visual-composite" data-hybrid-visual="ready"><img class="question-visual-illustration" src="${escapeXml(spec.illustration.url)}" alt="${escapeXml(spec.altText)}" loading="eager" decoding="async" crossorigin="anonymous"/><div class="question-visual-overlay">${overlaySvg}</div><div class="question-visual-deterministic-fallback" data-fallback-visual="hidden" hidden aria-hidden="true">${svg}</div></div>`
-    : renderMode === "replace" && spec.illustration
-      ? `<div class="question-visual-illustrated" data-hybrid-visual="ready"><img class="question-visual-illustration" src="${escapeXml(spec.illustration.url)}" alt="${escapeXml(spec.altText)}" loading="eager" decoding="async" crossorigin="anonymous"/><div class="question-visual-deterministic-fallback" data-fallback-visual="hidden" hidden aria-hidden="true">${svg}</div></div>`
-      : svg;
-  const mode = renderMode === "overlay" ? "illustrated-overlay" : renderMode === "replace" ? "illustrated" : "2d-vector";
-  return `<figure class="question-visual question-visual-${spec.type} question-visual-${mode}" data-visual-id="${escapeXml(spec.visualId ?? "")}" data-visual-variant="${escapeXml(spec.variant ?? "default")}" data-visual-mode="${mode}" data-visual-asset-kind="${escapeXml(assetKind ?? "deterministic")}">${media}<figcaption>${escapeXml(spec.altText)}</figcaption></figure>`;
+  return `<figure class="question-visual question-visual-${spec.type} question-visual-2d-vector" data-visual-id="${escapeXml(spec.visualId ?? "")}" data-visual-variant="${escapeXml(spec.variant ?? "default")}" data-visual-mode="2d-vector" data-visual-asset-kind="structured"><div class="question-visual-structured">${svg}</div><figcaption>${escapeXml(spec.altText)}</figcaption></figure>`;
 }

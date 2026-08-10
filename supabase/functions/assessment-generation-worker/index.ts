@@ -12,6 +12,8 @@ const appOrigin = new URL(WATHIQ_APP_URL).origin;
 const MAX_BODY_BYTES = 32_000;
 const LEASE_SECONDS = 120;
 const MODEL_TIMEOUT_MS = 45_000;
+const MODEL_TRANSIENT_RETRY_DELAYS_MS = [2_000, 6_000] as const;
+const MODEL_TRANSIENT_HTTP_STATUSES = new Set([408, 429, 502, 503, 504]);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const HEX_64 = /^[0-9a-f]{64}$/u;
 const MODEL_ALLOWED = new Set(["stimulus", "text", "options", "answer", "rationale", "markScheme", "needsReview"]);
@@ -320,8 +322,6 @@ async function callGemini(
   scientific: ScientificBundle,
   requestId: string,
 ): Promise<{ content: unknown; tokenUsage: Record<string, number> }> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), MODEL_TIMEOUT_MS);
   const body = {
     systemInstruction: { parts: [{ text: systemInstruction(contract) }] },
     contents: [{
@@ -350,36 +350,64 @@ async function callGemini(
       responseJsonSchema: modelContentSchema(contract),
     },
   };
-  try {
-    const response = await fetch(GEMINI_API_URL, {
-      method: "POST",
-      headers: { "x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-    const rawPayload = await response.text();
-    let payload: unknown = null;
-    if (rawPayload) {
-      try { payload = JSON.parse(rawPayload) as unknown; }
-      catch { payload = { error: { message: rawPayload.slice(0, 500) } }; }
+
+  for (let transportAttempt = 0; transportAttempt <= MODEL_TRANSIENT_RETRY_DELAYS_MS.length; transportAttempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), MODEL_TIMEOUT_MS);
+    try {
+      const response = await fetch(GEMINI_API_URL, {
+        method: "POST",
+        headers: { "x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      const rawPayload = await response.text();
+      let payload: unknown = null;
+      if (rawPayload) {
+        try { payload = JSON.parse(rawPayload) as unknown; }
+        catch { payload = { error: { message: rawPayload.slice(0, 500) } }; }
+      }
+      if (!response.ok) {
+        const providerMessage = geminiError(payload, `Gemini HTTP ${response.status}`);
+        if (MODEL_TRANSIENT_HTTP_STATUSES.has(response.status)) {
+          const retryDelay = MODEL_TRANSIENT_RETRY_DELAYS_MS[transportAttempt];
+          console.warn(JSON.stringify({
+            event: "wathiq_assessment_generation_model_transient",
+            requestId,
+            planItemId: contract.planItemId,
+            status: response.status,
+            transportAttempt: transportAttempt + 1,
+            providerMessage: providerMessage.slice(0, 240),
+            retryDelayMs: retryDelay ?? 0,
+          }));
+          if (retryDelay !== undefined) {
+            await delay(retryDelay + Math.floor(Math.random() * 700));
+            continue;
+          }
+          if (response.status === 429) {
+            throw workerError("MODEL_RATE_LIMITED", "خدمة توليد الأسئلة مشغولة مؤقتًا بسبب ارتفاع الطلب.", "transport_once", 503);
+          }
+          throw workerError("MODEL_UNAVAILABLE", "خدمة توليد الأسئلة غير متاحة مؤقتًا. احتفظ واثق بالمفردات المكتملة ويمكن إعادة هذه المفردة لاحقًا.", "transport_once", 503);
+        }
+        throw workerError("MODEL_INVALID_JSON", "أعادت خدمة توليد الأسئلة استجابة غير صالحة لهذه المفردة.", "content_once", 400);
+      }
+      const output = findOutputText(payload);
+      if (!output.text) throw workerError("MODEL_INCOMPLETE_CONTENT", "لم يُرجع مولد الأسئلة محتوى قابلًا للقراءة.", "content_once", 422);
+      let parsed: unknown;
+      try { parsed = JSON.parse(output.text) as unknown; }
+      catch { throw workerError("MODEL_INVALID_JSON", "أعاد مولد الأسئلة JSON غير صالح.", "content_once", 422); }
+      console.log(JSON.stringify({ event: "wathiq_assessment_generation_model_completed", requestId, planItemId: contract.planItemId, transportAttempts: transportAttempt + 1, ...output.tokenUsage }));
+      return { content: parsed, tokenUsage: output.tokenUsage };
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        throw workerError("MODEL_TIMEOUT", "تأخرت خدمة توليد الأسئلة أكثر من المدة المسموحة. احتفظ واثق بالمفردات المكتملة.", "transport_once", 504);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
     }
-    if (!response.ok) {
-      const provider = geminiError(payload, `تعذر الاتصال بمولد الأسئلة (${response.status}).`);
-      if (response.status === 429) throw workerError("MODEL_RATE_LIMITED", provider, "transport_once", 503);
-      if ([408, 502, 503, 504].includes(response.status)) throw workerError("MODEL_UNAVAILABLE", provider, "transport_once", 503);
-      throw workerError("MODEL_INVALID_JSON", provider, "content_once", 400);
-    }
-    const output = findOutputText(payload);
-    if (!output.text) throw workerError("MODEL_INCOMPLETE_CONTENT", "لم يُرجع مولد الأسئلة محتوى قابلًا للقراءة.", "content_once", 422);
-    let parsed: unknown;
-    try { parsed = JSON.parse(output.text) as unknown; }
-    catch { throw workerError("MODEL_INVALID_JSON", "أعاد مولد الأسئلة JSON غير صالح.", "content_once", 422); }
-    console.log(JSON.stringify({ event: "wathiq_assessment_generation_model_completed", requestId, planItemId: contract.planItemId, ...output.tokenUsage }));
-    return { content: parsed, tokenUsage: output.tokenUsage };
-  } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") throw workerError("MODEL_TIMEOUT", "تأخر مولد الأسئلة أكثر من المدة المسموحة.", "transport_once", 504);
-    throw error;
-  } finally { clearTimeout(timeout); }
+  }
+  throw workerError("MODEL_UNAVAILABLE", "خدمة توليد الأسئلة غير متاحة مؤقتًا.", "transport_once", 503);
 }
 
 function systemInstruction(contract: ItemContract): string {
@@ -602,6 +630,7 @@ function findOutputText(payload: unknown): { text: string; tokenUsage: Record<st
 }
 
 function geminiError(payload: unknown, fallback: string): string { const error = asRecord(asRecord(payload)?.error); return typeof error?.message === "string" && error.message ? error.message : fallback; }
+function delay(milliseconds: number): Promise<void> { return new Promise((resolve) => setTimeout(resolve, milliseconds)); }
 function mapWorkerError(error: unknown): { code: string; message: string; retryClass: RetryClass; status: number } {
   if (error instanceof TypeError) return { code: "MODEL_UNAVAILABLE", message: "تعذر الاتصال بخدمة توليد الأسئلة.", retryClass: "transport_once", status: 503 };
   const record = asRecord(error);

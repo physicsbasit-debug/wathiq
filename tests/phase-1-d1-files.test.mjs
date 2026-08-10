@@ -19,9 +19,10 @@ test("يثبت Phase 1-D1 وإصدار الرسوم الهجينة المنضب�
   assert.match(types, /visualEnhancementEnabled: boolean/);
 });
 
-test("يبقي الرسم الحتمي أساسًا ويقصر صورة AI على الأنواع الآمنة", () => {
+test("يفرض أصل 2D للأنواع المؤهلة ولا يعرض الرسم الخطي كرجوع نهائي", () => {
   assert.match(visual, /isAiIllustrationEligible/);
-  assert.match(visual, /question-visual-deterministic-fallback/);
+  assert.doesNotMatch(visual, /question-visual-deterministic-fallback/);
+  assert.match(visual, /question-visual-2d-placeholder/);
   assert.match(visual, /question-visual-illustration/);
   assert.match(visual, /electrostatic_diagram.*charge_transfer/s);
   assert.match(visual, /pressure_diagram.*submerged_object/s);
@@ -36,11 +37,12 @@ test("تنقل الواجهة المرئيات من تحسين اختياري إ
   assert.doesNotMatch(app, /visual-enhancement-toggle/);
 });
 
-test("تولد الوظيفة صورة 2D وتفحصها قبل التخزين مع رجوع آمن", () => {
+test("تولد الوظيفة صورة 2D وتفحصها قبل التخزين وترفض الرجوع الخطي", () => {
   assert.match(edge, /gemini-3\.1-flash-image/);
   assert.match(edge, /generate_visual_illustration/);
   assert.match(edge, /validateControlledIllustration/);
-  assert.match(edge, /visual_illustration_fallback/);
+  assert.match(edge, /visual_illustration_rejected/);
+  assert.match(edge, /لم يعتمد واثق أي رسم خطي بديل/);
   assert.match(edge, /wathiq-question-visuals/);
   assert.match(edge, /responseModalities: \["IMAGE"\]/);
   assert.match(edge, /no words, no letters, no numbers, no units, no arrows/);

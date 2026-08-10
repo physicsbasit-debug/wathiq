@@ -842,6 +842,18 @@ function generationItemStatusClass(status: AssessmentGenerationItemSnapshot["sta
   return "queued";
 }
 
+function generationItemUserMessage(task: AssessmentGenerationItemSnapshot): string {
+  const transient = task.errorCode === "MODEL_RATE_LIMITED" || task.errorCode === "MODEL_UNAVAILABLE" || task.errorCode === "MODEL_TIMEOUT";
+  if (!transient) return task.errorMessage;
+  if (task.status === "retry_pending") {
+    return "خدمة توليد الأسئلة مشغولة مؤقتًا. احتفظ واثق بالمفردات المكتملة وسيعيد محاولة هذه المفردة تلقائيًا.";
+  }
+  if (task.status === "failed") {
+    return "تعذر إكمال هذه المفردة بسبب ضغط مؤقت في خدمة التوليد. المفردات المكتملة محفوظة ويمكن إعادة هذه المفردة وحدها لاحقًا.";
+  }
+  return task.errorMessage || "خدمة توليد الأسئلة مشغولة مؤقتًا.";
+}
+
 function renderProgressiveGenerationPanel(): string {
   const snapshot = state.assessmentGenerationRun;
   const total = snapshot?.totalItems ?? state.draft.plan.length;
@@ -904,7 +916,7 @@ function renderPlanVisual(item: PlanItem, compact = false): string {
   const pending = Boolean(job && isVisualJobPending(job.status));
   const failed = job?.status === "failed" || job?.status === "cancelled";
   const modeLabel = !requirement.required
-    ? "مخطط علمي حتمي دقيق"
+    ? "تمثيل علمي منظم دقيق"
     : ready
       ? requirement.mode === "overlay" ? "أصل 2D مع طبقة شرح علمية" : "صورة تعليمية 2D معتمدة"
       : pending
@@ -918,17 +930,15 @@ function renderPlanVisual(item: PlanItem, compact = false): string {
   const message = !compact && requirement.required
     ? `<p class="visual-enhancement-message ${failed ? "error" : ready ? "success" : ""}" aria-live="polite">${escapeHtml(visualJobMessage(job))}</p>`
     : "";
-  const fallbackNotice = requirement.required && !ready
-    ? `<div class="visual-fallback-warning">المعروض حاليًا مخطط احتياطي للمراجعة فقط، ولا يُعد أصلًا بصريًا نهائيًا.</div>`
-    : "";
-  return `<section class="plan-shared-visual ${compact ? "compact" : ""}"><div class="visual-heading"><strong>${escapeHtml(questionVisualTypeLabel(item.visual.type))}</strong><span>${escapeHtml(modeLabel)}</span></div>${renderQuestionVisualSvg(item.visual)}${fallbackNotice}${controls}${message}</section>`;
+  return `<section class="plan-shared-visual ${compact ? "compact" : ""}"><div class="visual-heading"><strong>${escapeHtml(questionVisualTypeLabel(item.visual.type))}</strong><span>${escapeHtml(modeLabel)}</span></div>${renderQuestionVisualSvg(item.visual)}${controls}${message}</section>`;
 }
 
 function renderGenerationPlaceholder(item: PlanItem): string {
   const task = generationItemSnapshot(item.id);
   const status = task?.status ?? "pending";
   const attempts = task ? `${task.attemptCount} من ${task.maxAttempts}` : "0 من 2";
-  const error = task?.errorMessage ? `<p class="generation-item-error">${escapeHtml(task.errorMessage)}</p>` : "";
+  const errorMessage = task ? generationItemUserMessage(task) : "";
+  const error = errorMessage ? `<p class="generation-item-error">${escapeHtml(errorMessage)}</p>` : "";
   const retry = task?.status === "failed" && state.draft.status !== "معتمد"
     ? `<button class="secondary-btn compact" data-generation-retry="${escapeHtml(task.id)}" ${state.questionGenerationBusy ? "disabled" : ""}>${icon("spark")} إعادة هذه المفردة فقط</button>`
     : "";
@@ -1117,7 +1127,7 @@ function reviewReadiness(selected: SelectedPaperItem[]): ReviewReadiness {
     { label: "توليد الأسئلة من المصدر", okay: groundedGeneration },
     { label: "نموذج تصحيح لكل درجة", okay: markSchemesComplete },
     { label: "النموذج العلمي الموحد لكل مفردة", okay: scientificModelsComplete },
-    { label: `العناصر البصرية الحتمية (${visualItems.length})`, okay: visualValidity && visualsUnique },
+    { label: `العناصر البصرية العلمية (${visualItems.length})`, okay: visualValidity && visualsUnique },
     { label: `الأصول البصرية المطلوبة (${requiredVisualItems.length})`, okay: requiredVisualsReady },
     { label: "بيانات الاختبار والمواصفة", okay: setupValid },
   ];

@@ -22,7 +22,7 @@ const MARK_SCHEME_REPAIR_MAX_OUTPUT_TOKENS = 900;
 const IMAGE_GENERATION_TIMEOUT_MS = 48_000;
 const IMAGE_VALIDATION_TIMEOUT_MS = 18_000;
 const QUESTION_VISUAL_BUCKET = "wathiq-question-visuals";
-const VISUAL_PROMPT_VERSION = "wathiq-unified-scientific-item-v4";
+const VISUAL_PROMPT_VERSION = "wathiq-phase3-2d-scientific-visual-v5";
 const MAX_IMAGE_BASE64_CHARACTERS = 16_000_000;
 const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent`;
 const GEMINI_IMAGE_API_URL = `https://generativelanguage.googleapis.com/v1/models/${encodeURIComponent(GEMINI_IMAGE_MODEL)}:generateContent`;
@@ -599,6 +599,7 @@ function parseVisualIllustrationRequest(value: unknown): VisualIllustrationReque
   if (!isControlledIllustrationEligible(visual)) {
     throw httpError("هذا الرسم يجب أن يبقى حتميًا لحماية الدقة العلمية والتقويمية.", 422);
   }
+  assertControlledIllustrationScientificContract(visual, scientificItem);
   return {
     action: "generate_visual_illustration",
     draftId: requireText(record.draftId, "معرف المسودة غير صالح.", 100),
@@ -628,6 +629,34 @@ function isControlledIllustrationEligible(visual: QuestionVisualSpec): boolean {
     return !["draw", "complete"].includes(visual.role);
   }
   return false;
+}
+
+function assertControlledIllustrationScientificContract(visual: QuestionVisualSpec, scientificItem: ModelGeneratedScientificItem): void {
+  if (visual.type === "force_diagram") {
+    if (scientificItem.kind !== "force_system" || scientificItem.relationship !== "resultant_force") {
+      throw httpError("مخطط القوى لا يملك عقدًا علميًا متسقًا مع أصل 2D المطلوب.", 422);
+    }
+    if (scientificItem.quantities.length < 2 || scientificItem.quantities.some((quantity) => quantity.unit !== "N" || quantity.value <= 0)) {
+      throw httpError("عقد القوى لا يحتوي كميات ووحدات صالحة لتدقيق الرسم 2D.", 422);
+    }
+    return;
+  }
+  if (visual.type === "electrostatic_diagram") {
+    if (scientificItem.kind !== "electrostatic_system") {
+      throw httpError("مخطط الكهرباء الساكنة لا يملك نموذجًا علميًا كهروستاتيكيًا صالحًا.", 422);
+    }
+    if (visual.variant === "attraction_repulsion" && !["attraction", "repulsion"].includes(scientificItem.relationship)) {
+      throw httpError("علاقة الشحنات لا تطابق مرئي التجاذب أو التنافر.", 422);
+    }
+    if (visual.variant === "charge_transfer" && scientificItem.relationship !== "charge_transfer") {
+      throw httpError("مرئي انتقال الشحنة لا يطابق العلاقة العلمية للمفردة.", 422);
+    }
+    return;
+  }
+  if (visual.type === "context_scene" && scientificItem.kind === "electrostatic_system"
+    && scientificItem.relationship === "electrostatic_discharge" && visual.variant !== "road_safety") {
+    throw httpError("مشهد التفريغ الكهروستاتيكي لا يطابق السيناريو البصري المعتمد.", 422);
+  }
 }
 
 function forceSceneKind(request: VisualIllustrationRequest): "shopping_trolley" | "school_bag" | "crate" {
@@ -803,12 +832,15 @@ const visualValidationSchema = {
     requiredObjectsPresent: { type: "boolean" },
     objectCountCorrect: { type: "boolean" },
     scientificRelationshipCorrect: { type: "boolean" },
+    spatialRelationshipsCorrect: { type: "boolean" },
+    noScientificContradiction: { type: "boolean" },
+    noExtraScientificObjects: { type: "boolean" },
     clear2DComposition: { type: "boolean" },
     printReady: { type: "boolean" },
     forbiddenTextDetected: { type: "boolean" },
     reason: { type: "string" },
   },
-  required: ["approved", "requiredObjectsPresent", "objectCountCorrect", "scientificRelationshipCorrect", "clear2DComposition", "printReady", "forbiddenTextDetected", "reason"],
+  required: ["approved", "requiredObjectsPresent", "objectCountCorrect", "scientificRelationshipCorrect", "spatialRelationshipsCorrect", "noScientificContradiction", "noExtraScientificObjects", "clear2DComposition", "printReady", "forbiddenTextDetected", "reason"],
   additionalProperties: false,
 };
 
@@ -838,8 +870,9 @@ async function validateControlledIllustration(
               `النموذج العلمي الموحد: ${JSON.stringify(request.scientificItem)}`,
               `نمط الاستخدام: ${(request.visual.type === "force_diagram" || (request.visual.type === "electrostatic_diagram" && request.visual.variant === "attraction_repulsion")) ? "صورة أساس فقط وستضاف فوقها طبقة علمية حتمية" : "صورة نهائية مباشرة"}.`,
               "يجب أن تكون صورة ثنائية الأبعاد واضحة ومصقولة بصريًا على خلفية بيضاء، وتبقى مفهومة عند الطباعة على ورقة A4.",
-              "تحقق من العدد الدقيق للعناصر المطلوبة، ومن عدم اختفاء أي عنصر أو اندماجه بصريًا مع عنصر آخر.",
-              "ارفضها إذا ظهر أي نص أو حرف أو رقم أو وحدة أو سهم أو رمز شحنة أو عنصر علمي زائد.",
+              "تحقق من العدد الدقيق للعناصر المطلوبة، ومن مواضعها وعلاقاتها المكانية، ومن عدم اختفاء أي عنصر أو اندماجه بصريًا مع عنصر آخر.",
+              "قارن الصورة بالنموذج العلمي الموحد وبالسؤال ودليل المصدر؛ ارفض أي وضع أو اتجاه أو تماس أو علاقة بصرية تناقضها ولو بدا الرسم جميلًا.",
+              "ارفضها إذا ظهر أي نص أو حرف أو رقم أو وحدة أو سهم أو رمز شحنة أو عنصر علمي زائد أو جهاز غير مطلوب.",
               "ارفضها إذا كانت العناصر صغيرة جدًا، أو التكوين غامضًا، أو الصورة أقرب إلى أيقونات مبهمة من رسم تعليمي.",
               "في نمط صورة الأساس مع طبقة علمية: لا تطلب من الصورة إظهار الأسهم أو الشحنات أو العلاقة؛ اعتبر scientificRelationshipCorrect=true فقط إذا كانت العناصر وعددها ومواضعها لا تناقض النموذج وتسمح بإضافة الطبقة العلمية بدقة.",
               "وافق فقط إذا ظهرت العناصر المطلوبة دون تضليل، وكانت الصورة جاهزة للطباعة التعليمية.",
@@ -866,6 +899,9 @@ async function validateControlledIllustration(
       && parsed.requiredObjectsPresent === true
       && parsed.objectCountCorrect === true
       && parsed.scientificRelationshipCorrect === true
+      && parsed.spatialRelationshipsCorrect === true
+      && parsed.noScientificContradiction === true
+      && parsed.noExtraScientificObjects === true
       && parsed.clear2DComposition === true
       && parsed.printReady === true
       && parsed.forbiddenTextDetected === false;
@@ -978,13 +1014,13 @@ async function generateControlledVisualIllustration(
     }
     return {
       status: "fallback",
-      reason: `${lastReason || "لم تجتز الصورة فحص الدقة العلمية."} استخدم واثق الرسم الثنائي الأبعاد المصقول الآمن.`,
+      reason: `${lastReason || "لم تجتز الصورة فحص الدقة العلمية."} لم يعتمد واثق أي بديل خطي؛ أعد توليد الأصل 2D.`,
     };
   } catch (error) {
-    logStage(requestId, "visual_illustration_fallback", { message: errorMessage(error) });
+    logStage(requestId, "visual_illustration_rejected", { message: errorMessage(error) });
     return {
       status: "fallback",
-      reason: `تعذر اعتماد الصورة المحسنة؛ استخدم واثق الرسم الثنائي الأبعاد المصقول دون تعطيل الاختبار. ${errorMessage(error)}`.slice(0, 360),
+      reason: `تعذر اعتماد أصل 2D علميًا أو بصريًا. لم يعتمد واثق أي رسم خطي بديل. ${errorMessage(error)}`.slice(0, 360),
     };
   }
 }

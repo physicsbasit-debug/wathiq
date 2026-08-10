@@ -11,9 +11,10 @@ const styles = await readFile(new URL("../src/styles.css", import.meta.url), "ut
 const architecture = await readFile(new URL("../docs/ARCHITECTURE.md", import.meta.url), "utf8");
 const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 
-test("يبقي محرك الرسومات الحتمية موثقًا ضمن المعمارية الحالية", () => {
+test("يوثق التمثيلات العلمية المنظمة ومسار الأصول 2D الحالي", () => {
   assertWathiqPatchAtLeast(pkg.version, 36);
-  assert.match(architecture, /SVG/);
+  assert.match(architecture, /2D/);
+  assert.match(architecture, /تمثيلات منظمة/);
   assert.match(architecture, /question-visual\.ts/);
 });
 
