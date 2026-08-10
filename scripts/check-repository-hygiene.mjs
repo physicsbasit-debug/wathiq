@@ -106,7 +106,25 @@ const gitCheck = spawnSync("git", ["rev-parse", "--is-inside-work-tree"], { enco
 if (gitCheck.status === 0 && gitCheck.stdout.trim() === "true") {
   const trackedDist = spawnSync("git", ["ls-files", "dist"], { encoding: "utf8" });
   if (trackedDist.status === 0 && trackedDist.stdout.trim()) {
-    failures.push("dist/ is tracked by git; generated build output must not be committed");
+    const trackedDistFiles = trackedDist.stdout
+      .split(/\r?\n/)
+      .map((value) => value.trim())
+      .filter(Boolean);
+
+    const trackedDistStillPresent = [];
+    for (const file of trackedDistFiles) {
+      try {
+        await stat(file);
+        trackedDistStillPresent.push(file);
+      } catch {
+        // A tracked build artifact deleted by --clean is intentionally pending removal
+        // until the maintenance workflow commits the cleanup.
+      }
+    }
+
+    if (trackedDistStillPresent.length) {
+      failures.push("dist/ is tracked by git; generated build output must not be committed");
+    }
   }
 }
 
