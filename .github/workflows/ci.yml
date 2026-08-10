@@ -29,6 +29,9 @@ jobs:
         with:
           node-version: "22"
 
+      - name: فحص نظافة المستودع
+        run: node scripts/check-repository-hygiene.mjs
+
       - name: تثبيت الاعتماديات
         run: npm install --no-audit --no-fund
 

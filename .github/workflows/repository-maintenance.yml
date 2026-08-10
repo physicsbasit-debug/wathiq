@@ -1,0 +1,62 @@
+name: Repository Maintenance
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/repository-maintenance.yml'
+      - 'scripts/check-repository-hygiene.mjs'
+      - 'docs/REPOSITORY_MAINTENANCE.md'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: wathiq-repository-maintenance
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    name: Remove obsolete repository artifacts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Remove known obsolete artifacts
+        run: node scripts/check-repository-hygiene.mjs --clean
+
+      - name: Install dependencies
+        run: npm install --no-package-lock --no-audit --no-fund
+
+      - name: Verify repository hygiene
+        run: npm run repo:check
+
+      - name: Verify application
+        run: npm run check
+
+      - name: Commit cleanup when needed
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [[ -z "$(git status --porcelain)" ]]; then
+            echo "Repository already clean."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "chore: remove obsolete repository artifacts"
+          git push origin HEAD:main
