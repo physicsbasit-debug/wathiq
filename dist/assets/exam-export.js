@@ -72,6 +72,10 @@ const EXPORT_STYLES = `
   .question-visual-hybrid { position: relative; width: 100%; aspect-ratio: 4 / 3; max-height: 70mm; overflow: hidden; background: #fff; }
   .question-visual-deterministic-fallback { position: absolute; inset: 0; display: grid; place-items: center; }
   .question-visual-deterministic-fallback svg { width: 100%; height: 100%; max-height: none; object-fit: contain; }
+  .question-visual-illustrated { position: relative; width: 100%; aspect-ratio: 4 / 3; max-height: 70mm; overflow: hidden; background: #fff; }
+  .question-visual-composite { position: relative; width: 100%; aspect-ratio: 4 / 3; max-height: 70mm; overflow: hidden; background: #fff; }
+  .question-visual-overlay { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+  .question-visual-overlay svg { width: 100%; height: 100%; max-height: none; object-fit: contain; }
   .question-visual-illustration { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; background: #fff; }
   .question-visual figcaption { display: none; text-align: center; font-size: 9px; margin-top: 1mm; }
   .qv-title { font-size: 16px; font-weight: 800; fill: #172b45; direction: rtl; unicode-bidi: plaintext; }
@@ -271,37 +275,68 @@ async function imageUrlToDataUrl(url) {
         reader.readAsDataURL(blob);
     });
 }
+async function dataUrlToImage(dataUrl) {
+    const image = new Image();
+    image.decoding = "sync";
+    await new Promise((resolve, reject) => {
+        image.onload = () => resolve();
+        image.onerror = () => reject(new Error("تعذر تجهيز الأصل البصري للتصدير."));
+        image.src = dataUrl;
+    });
+    return image;
+}
+async function compositeVisualToPngDataUrl(composite) {
+    const sourceImage = composite.querySelector("img.question-visual-illustration");
+    const overlaySvg = composite.querySelector(".question-visual-overlay svg");
+    if (!sourceImage || !overlaySvg)
+        throw new Error("الأصل البصري المركب غير مكتمل.");
+    const [baseDataUrl, overlayDataUrl] = await Promise.all([
+        imageUrlToDataUrl(sourceImage.src),
+        svgElementToPngDataUrl(overlaySvg),
+    ]);
+    const [baseImage, overlayImage] = await Promise.all([dataUrlToImage(baseDataUrl), dataUrlToImage(overlayDataUrl)]);
+    const width = 1280;
+    const height = 960;
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context)
+        throw new Error("المتصفح لا يدعم دمج طبقة الرسم العلمي.");
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, width, height);
+    const scale = Math.min(width / baseImage.naturalWidth, height / baseImage.naturalHeight);
+    const drawWidth = baseImage.naturalWidth * scale;
+    const drawHeight = baseImage.naturalHeight * scale;
+    context.drawImage(baseImage, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight);
+    context.drawImage(overlayImage, 0, 0, width, height);
+    return canvas.toDataURL("image/png");
+}
 export async function prepareWordHtml(html) {
     const parsed = new DOMParser().parseFromString(html, "text/html");
+    const composites = [...parsed.querySelectorAll(".question-visual-composite")];
+    for (const composite of composites) {
+        const dataUrl = await compositeVisualToPngDataUrl(composite);
+        const image = parsed.createElement("img");
+        image.src = dataUrl;
+        image.alt = composite.closest("figure")?.querySelector("figcaption")?.textContent ?? "رسم علمي مركب";
+        image.className = "question-visual-raster";
+        composite.replaceWith(image);
+    }
     const illustrations = [...parsed.querySelectorAll("img.question-visual-illustration")];
     for (const image of illustrations) {
-        const hybrid = image.closest(".question-visual-hybrid");
-        try {
-            image.src = await imageUrlToDataUrl(image.src);
-            hybrid?.querySelector(".question-visual-deterministic-fallback")?.remove();
-        }
-        catch {
-            image.remove();
-            if (hybrid)
-                hybrid.dataset.hybridVisual = "fallback";
-        }
+        image.src = await imageUrlToDataUrl(image.src);
+        image.closest(".question-visual-illustrated, .question-visual-hybrid")
+            ?.querySelector(".question-visual-deterministic-fallback")?.remove();
     }
     const svgs = [...parsed.querySelectorAll("svg")];
     for (const svg of svgs) {
-        try {
-            const dataUrl = await svgElementToPngDataUrl(svg);
-            const image = parsed.createElement("img");
-            image.src = dataUrl;
-            image.alt = svg.getAttribute("aria-label") ?? "رسم تعليمي";
-            image.className = "question-visual-raster";
-            svg.replaceWith(image);
-        }
-        catch {
-            // يبقى SVG مضمنًا في ملف Word بدل إلغاء التصدير كله بسبب رسم واحد.
-            svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-            svg.setAttribute("role", svg.getAttribute("role") ?? "img");
-            svg.setAttribute("style", "display:block;width:100%;height:auto;max-height:70mm;margin:0 auto;");
-        }
+        const dataUrl = await svgElementToPngDataUrl(svg);
+        const image = parsed.createElement("img");
+        image.src = dataUrl;
+        image.alt = svg.getAttribute("aria-label") ?? "رسم تعليمي";
+        image.className = "question-visual-raster";
+        svg.replaceWith(image);
     }
     return `<!doctype html>${parsed.documentElement.outerHTML}`;
 }

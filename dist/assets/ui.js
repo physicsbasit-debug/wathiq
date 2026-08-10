@@ -21,6 +21,7 @@ export function icon(name) {
         home: '<path d="M3 11.5 12 4l9 7.5v8a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
         plus: '<path d="M12 5v14M5 12h14"/>',
         files: '<path d="M7 3h7l4 4v14H7z"/><path d="M14 3v5h5M4 7H3v14h11"/>',
+        book: '<path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11v16H6.5A2.5 2.5 0 0 0 4 21.5z"/><path d="M20 5.5A2.5 2.5 0 0 0 17.5 3H13v16h4.5A2.5 2.5 0 0 1 20 21.5z"/>',
         admin: '<path d="M12 3 4.5 6v5c0 5 3.3 8.3 7.5 10 4.2-1.7 7.5-5 7.5-10V6z"/><path d="m9 12 2 2 4-4"/>',
         check: '<path d="m5 12 4 4L19 6"/>',
         arrow: '<path d="m9 18 6-6-6-6"/>',

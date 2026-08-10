@@ -3,6 +3,7 @@ import { SCIENCE_ASSESSMENT_POLICY_ID, assessmentTypeForTitle, getOfficialAssess
 import { normalizeManagedSource } from "./source-registry.js";
 import { SOURCE_GENERATION_VERSION } from "./question-generation.js";
 import { ASSESSMENT_GENERATION_V2_VERSION } from "./assessment-generation-v2.js";
+import { ASSESSMENT_PROGRESSIVE_GENERATION_VERSION } from "./assessment-generation-progressive.js";
 import { diversifyQuestionVisualSpec } from "./question-visual.js";
 import { SOURCE_RETRIEVAL_VERSION } from "./source-retrieval.js";
 import { parseScientificItemModel } from "./scientific-item.js";
@@ -255,11 +256,21 @@ export function normalizeExamDraft(value) {
         trustedEnrichmentEnabled: candidate.trustedEnrichmentEnabled !== false,
         visualEnhancementEnabled: true,
         visualJobs: normalizeVisualJobs(candidate.visualJobs),
-        generationMode: candidate.generationMode === "legacy_items"
-            ? "legacy_items"
-            : candidate.generationMode === "whole_exam_v2"
-                ? "whole_exam_v2"
-                : (typeof candidate.generationVersion === "string" && candidate.generationVersion.trim() ? "legacy_items" : "whole_exam_v2"),
+        generationMode: candidate.generationMode === "progressive_items_v1"
+            ? "progressive_items_v1"
+            : candidate.generationMode === "legacy_items"
+                ? "legacy_items"
+                : candidate.generationMode === "whole_exam_v2"
+                    ? "whole_exam_v2"
+                    : (candidate.generationVersion === ASSESSMENT_PROGRESSIVE_GENERATION_VERSION
+                        ? "progressive_items_v1"
+                        : typeof candidate.generationVersion === "string" && candidate.generationVersion.trim()
+                            ? "legacy_items"
+                            : "progressive_items_v1"),
+        generationRunId: typeof candidate.generationRunId === "string" ? candidate.generationRunId : "",
+        generationEpoch: typeof candidate.generationEpoch === "number" && Number.isSafeInteger(candidate.generationEpoch) && candidate.generationEpoch >= 1
+            ? candidate.generationEpoch
+            : 1,
         examDate: typeof candidate.examDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(candidate.examDate)
             ? candidate.examDate
             : toDateInputValue(),
@@ -278,7 +289,10 @@ export function normalizeExamDraft(value) {
         approvedAt: typeof candidate.approvedAt === "string" ? candidate.approvedAt : "",
         status: candidate.status === "معتمد" || candidate.status === "جاهز للمراجعة" ? candidate.status : "مسودة",
     };
-    if (draft.generationVersion === ASSESSMENT_GENERATION_V2_VERSION) {
+    if (draft.generationVersion === ASSESSMENT_PROGRESSIVE_GENERATION_VERSION) {
+        draft.generationMode = "progressive_items_v1";
+    }
+    else if (draft.generationVersion === ASSESSMENT_GENERATION_V2_VERSION) {
         draft.generationMode = "whole_exam_v2";
     }
     else if (COMPATIBLE_GENERATION_VERSIONS.has(draft.generationVersion)) {
@@ -323,6 +337,8 @@ export function normalizeExamDraft(value) {
         draft.plan = [];
         draft.selectedProposalByPlanItem = {};
         draft.visualJobs = {};
+        draft.generationRunId = "";
+        draft.generationEpoch = Math.max(1, draft.generationEpoch + 1);
         draft.generationVersion = "";
         draft.generationModel = "";
         draft.generatedAt = "";
@@ -355,7 +371,11 @@ export function normalizeExamDraft(value) {
             draft.sourceRetrievalVersion = "";
         }
     }
-    else if (draft.currentStep >= 3 && draft.generationVersion !== (draft.generationMode === "whole_exam_v2" ? ASSESSMENT_GENERATION_V2_VERSION : SOURCE_GENERATION_VERSION)) {
+    else if (draft.currentStep >= 3 && draft.generationVersion !== (draft.generationMode === "progressive_items_v1"
+        ? ASSESSMENT_PROGRESSIVE_GENERATION_VERSION
+        : draft.generationMode === "whole_exam_v2"
+            ? ASSESSMENT_GENERATION_V2_VERSION
+            : SOURCE_GENERATION_VERSION)) {
         if (hasGeneratedContent) {
             // نحافظ على الأسئلة القديمة للمراجعة بدل إتلافها عند ترقية عقد التوليد.
             draft.currentStep = Math.max(3, requestedStep);

@@ -43,6 +43,12 @@ export function createEmptyDraft(now = new Date()) {
         durationMinutes: 40,
         totalMarks: 10,
         difficulty: "متوسط",
+        trustedEnrichmentEnabled: true,
+        visualEnhancementEnabled: true,
+        visualJobs: {},
+        generationMode: "progressive_items_v1",
+        generationRunId: "",
+        generationEpoch: 1,
         counts: { mcq: 2, short: 3, long: 1 },
         plan: [],
         selectedProposalByPlanItem: {},
@@ -67,6 +73,9 @@ export function applyOfficialAssessmentTemplate(draft) {
     draft.counts = { ...spec.counts };
     draft.plan = [];
     draft.selectedProposalByPlanItem = {};
+    draft.visualJobs = {};
+    draft.generationRunId = "";
+    draft.generationEpoch = Math.max(1, draft.generationEpoch + 1);
     draft.generationVersion = "";
     draft.generationModel = "";
     draft.generatedAt = "";

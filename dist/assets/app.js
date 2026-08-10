@@ -16,8 +16,13 @@ import { resolveInitialView, viewFromHash, viewHash } from "./navigation.js";
 import { rankSourceChunks, SOURCE_RETRIEVAL_VERSION } from "./source-retrieval.js";
 import { buildLessonCatalog } from "./lesson-catalog.js";
 import { buildCuratedBookStructure } from "./book-content-tree.js";
-import { applyGeneratedQuestions, buildQuestionGenerationRequest, QuestionGenerationService, SOURCE_GENERATION_VERSION, splitQuestionGenerationBatches, } from "./question-generation.js";
-import { ASSESSMENT_GENERATION_V2_VERSION, applyWholeExamQuestionsV2, buildWholeExamGenerationRequestV2, parseWholeExamGenerationResponseV2, } from "./assessment-generation-v2.js";
+import { SOURCE_GENERATION_VERSION, shouldRequireCalculationWorking } from "./question-generation.js";
+import { ASSESSMENT_GENERATION_V2_VERSION } from "./assessment-generation-v2.js";
+import { AssessmentGenerationJobService } from "./assessment-generation-jobs.js";
+import { AssessmentGenerationWorkerService } from "./assessment-generation-worker.js";
+import { ProgressiveAssessmentGenerationOrchestrator } from "./assessment-generation-orchestrator.js";
+import { ASSESSMENT_PROGRESSIVE_GENERATION_VERSION, buildProgressiveGenerationPayload, } from "./assessment-generation-progressive.js";
+import { reviewCompletedAssessment, } from "./assessment-engine/index.js";
 import { VisualJobService, isVisualJobPending, requiredVisualJobItems } from "./visual-jobs.js";
 import { scientificItemIsComplete, scientificItemMatchesVisual } from "./scientific-item.js";
 import { ASSESSMENT_ITEM_WRITING_RULES, INTERNATIONAL_SCIENCE_QUESTION_STYLE_PRINCIPLES, SCIENCE_ASSESSMENT_POLICY_DOCUMENT_PATH, SCIENCE_ASSESSMENT_POLICY_PUBLISHED, SCIENCE_ASSESSMENT_POLICY_TITLE, SCIENCE_ASSESSMENT_POLICY_VERSION, EXAM_TITLE_OPTIONS, getOfficialAssessmentSpec, getOfficialFinalExamSpec, getOfficialShortTestSpec, } from "./assessment-policy.js";
@@ -33,8 +38,14 @@ const centralSourceStore = isCentralStorageConfigured(runtimeConfig)
 const googleDriveService = centralSourceStore && isGoogleDriveConfigured(runtimeConfig)
     ? new GoogleDriveService(runtimeConfig, centralSourceStore)
     : null;
-const questionGenerationService = centralSourceStore
-    ? new QuestionGenerationService(runtimeConfig, () => centralSourceStore.getActiveSession())
+const assessmentGenerationJobService = centralSourceStore
+    ? new AssessmentGenerationJobService(runtimeConfig, () => centralSourceStore.getActiveSession())
+    : null;
+const assessmentGenerationWorkerService = centralSourceStore
+    ? new AssessmentGenerationWorkerService(runtimeConfig, () => centralSourceStore.getActiveSession())
+    : null;
+let assessmentGenerationOrchestrator = assessmentGenerationJobService && assessmentGenerationWorkerService
+    ? new ProgressiveAssessmentGenerationOrchestrator(assessmentGenerationJobService, assessmentGenerationWorkerService, { concurrency: 2 })
     : null;
 const visualJobService = centralSourceStore
     ? new VisualJobService(runtimeConfig, () => centralSourceStore.getActiveSession())
@@ -84,6 +95,7 @@ const state = {
     sourceRetrievalMessage: "",
     questionGenerationBusy: false,
     questionGenerationMessage: "",
+    assessmentGenerationRun: null,
     lessonCatalog: [],
     lessonCatalogKey: "",
     lessonCatalogBusy: false,
@@ -200,15 +212,25 @@ function setStep(step) {
     window.scrollTo({ top: 0, behavior: "smooth" });
 }
 function invalidateGeneratedQuestions() {
+    const activeRunId = state.draft.generationRunId;
+    assessmentGenerationOrchestrator?.stop();
+    if (activeRunId && assessmentGenerationJobService) {
+        void assessmentGenerationJobService.cancelRun(activeRunId).catch(() => undefined);
+    }
+    state.assessmentGenerationRun = null;
     state.draft.plan = [];
     state.draft.selectedProposalByPlanItem = {};
     state.draft.visualJobs = {};
     stopVisualJobPolling();
+    state.draft.generationRunId = "";
+    state.draft.generationEpoch = Math.max(1, state.draft.generationEpoch + 1);
+    state.draft.generationMode = "progressive_items_v1";
     state.draft.generationVersion = "";
     state.draft.generationModel = "";
     state.draft.generatedAt = "";
     state.draft.approvedAt = "";
     state.draft.status = "مسودة";
+    state.questionGenerationBusy = false;
     state.questionGenerationMessage = "";
 }
 function invalidateSourceAndGeneratedQuestions() {
@@ -426,6 +448,12 @@ function fallbackLessonCatalogFromDraft(draft) {
     return [...byLabel.values()];
 }
 function restoreDraftRuntimeContext(draft) {
+    assessmentGenerationOrchestrator?.stop();
+    state.assessmentGenerationRun = null;
+    state.questionGenerationBusy = false;
+    state.questionGenerationMessage = draft.generationRunId && !isPlanComplete(draft)
+        ? "سيستعيد واثق دورة التوليد من Supabase بعد مزامنة المصادر."
+        : "";
     const storedContext = loadDraftResumeContext(draft.id);
     const embeddedContext = draft.resumeContext;
     const context = embeddedContext?.lessonCatalog?.length ? embeddedContext : storedContext;
@@ -620,17 +648,12 @@ function renderSetupStep() {
         : `${inputField("duration-input", "الزمن بالدقائق", state.draft.durationMinutes, "number", "", "10")}${inputField("marks-input", "الدرجة الكلية", state.draft.totalMarks, "number", "", "5")}`}
     </div>
 
-    <section class="generation-mode-panel">
-      <div class="generation-mode-heading"><div><span class="eyebrow">طريقة إنشاء الاختبار</span><h3>محرك التوليد</h3></div><span class="generation-mode-badge">V2 تجريبي آمن</span></div>
-      <div class="generation-mode-options">
-        <label class="generation-mode-option ${state.draft.generationMode === "whole_exam_v2" ? "selected" : ""}">
-          <input type="radio" name="generation-mode" value="whole_exam_v2" ${state.draft.generationMode === "whole_exam_v2" ? "checked" : ""}/>
-          <span><strong>تصميم الاختبار كاملًا</strong><small>يبني واثق مخطط الاختبار والأسئلة والبيانات كوحدة واحدة، ثم يراجع التنوع وقابلية الحل قبل العرض. هذا هو الخيار الموصى به.</small></span>
-        </label>
-        <label class="generation-mode-option ${state.draft.generationMode === "legacy_items" ? "selected" : ""}">
-          <input type="radio" name="generation-mode" value="legacy_items" ${state.draft.generationMode === "legacy_items" ? "checked" : ""}/>
-          <span><strong>المحرك السابق</strong><small>يولد المفردات على دفعات صغيرة. يبقى متاحًا كخطة رجوع ولا يُحذف من التطبيق.</small></span>
-        </label>
+    <section class="generation-mode-panel progressive-engine-panel">
+      <div class="generation-mode-heading"><div><span class="eyebrow">طريقة إنشاء الاختبار</span><h3>التوليد التدريجي الدائم</h3></div><span class="generation-mode-badge">Engine v1</span></div>
+      <div class="progressive-engine-summary">
+        <div><strong>مهمة مستقلة لكل مفردة</strong><small>يولد واثق سؤالين بالتوازي، ويحفظ كل سؤال في Supabase قبل عرضه.</small></div>
+        <div><strong>استكمال بعد الانقطاع</strong><small>تحديث الصفحة أو إغلاقها لا يعيد الأسئلة المكتملة ولا يضيّع التقدم.</small></div>
+        <div><strong>مصدر مقيد خادميًا</strong><small>كل مفردة ترى مقطعها فقط، ولا يختار النموذج معرف الدليل أو الرسم أو الدرجة.</small></div>
       </div>
     </section>
 
@@ -669,14 +692,60 @@ function renderCompliance(validation) {
     }
     return `<div class="compliance warning"><div class="warning-mark">!</div><div><strong>تحتاج بعض البيانات إلى ضبط</strong><ul>${validation.issues.map((issue) => `<li>${escapeHtml(issue.message)}</li>`).join("")}</ul>${validation.suggestedCounts ? `<button class="secondary-btn compact" data-action="apply-suggestion">تطبيق التوزيع المقترح: ${validation.suggestedCounts.mcq} متعدد، ${validation.suggestedCounts.short} قصيرة، ${validation.suggestedCounts.long} طويلة</button>` : ""}</div></div>`;
 }
+function generationItemStatusLabel(status) {
+    const labels = {
+        pending: "بانتظار إنشاء الدورة",
+        queued: "في طابور التوليد",
+        grounding: "يربط السؤال بالمصدر",
+        generating: "يكتب السؤال",
+        normalizing: "يضبط بنية المفردة",
+        validating: "يتحقق علميًا وتقويميًا",
+        ready: "مكتملة ومحفوظة",
+        retry_pending: "بانتظار إعادة المحاولة",
+        failed: "تعذرت",
+        cancelled: "ملغاة",
+        superseded: "استُبدلت بدورة أحدث",
+    };
+    return labels[status];
+}
+function generationItemStatusClass(status) {
+    if (status === "ready")
+        return "success";
+    if (status === "failed" || status === "cancelled")
+        return "error";
+    if (status === "superseded")
+        return "muted";
+    if (["grounding", "generating", "normalizing", "validating"].includes(status))
+        return "active";
+    return "queued";
+}
+function renderProgressiveGenerationPanel() {
+    const snapshot = state.assessmentGenerationRun;
+    const total = snapshot?.totalItems ?? state.draft.plan.length;
+    const completed = snapshot?.completedItems ?? state.draft.plan.filter((item) => item.proposals.length > 0).length;
+    const failed = snapshot?.failedItems ?? 0;
+    const active = snapshot?.items.filter((item) => ["grounding", "generating", "normalizing", "validating"].includes(item.status)).length ?? 0;
+    const queued = snapshot?.items.filter((item) => item.status === "queued" || item.status === "retry_pending").length ?? Math.max(0, total - completed);
+    const percent = total ? Math.round((completed / total) * 100) : 0;
+    const canCancel = Boolean(snapshot && !["completed", "cancelled", "superseded"].includes(snapshot.status)
+        && snapshot.items.some((item) => ["queued", "retry_pending", "grounding", "generating", "normalizing", "validating"].includes(item.status)));
+    const canResume = Boolean(snapshot && ["partial", "failed"].includes(snapshot.status) && !state.questionGenerationBusy);
+    const runState = snapshot ? progressiveRunMessage(snapshot) : (state.questionGenerationMessage || "جارٍ إعداد دورة التوليد المستقلة لكل مفردة.");
+    return `<section class="generation-progress-panel" aria-live="polite">
+    <div class="generation-progress-head"><div><span class="eyebrow">التوليد التدريجي</span><h3>${completed} من ${total} مفردات مكتملة</h3><p>${escapeHtml(runState)}</p></div><strong>${percent}%</strong></div>
+    <div class="generation-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}"><span style="width:${percent}%"></span></div>
+    <div class="generation-progress-metrics"><span><b>${completed}</b> محفوظة</span><span><b>${active}</b> قيد التنفيذ</span><span><b>${queued}</b> في الطابور</span><span class="${failed ? "has-error" : ""}"><b>${failed}</b> متعذرة</span></div>
+    ${(canCancel || canResume) ? `<div class="generation-progress-actions">${canResume ? `<button class="secondary-btn compact" data-generation-resume>${icon("spark")} استكمال المفردات المتبقية</button>` : ""}${canCancel ? `<button class="text-btn danger-text" data-generation-cancel>إلغاء الدورة الحالية</button>` : ""}</div>` : ""}
+  </section>`;
+}
 function renderPlanStep() {
     const selectedCount = Object.keys(state.draft.selectedProposalByPlanItem).length;
     const generationLabel = state.draft.generationModel
         ? `تم التوليد عبر ${state.draft.generationModel} في ${formatArabicDate(state.draft.generatedAt.slice(0, 10))}.`
-        : "تم إنشاء الأسئلة من المقاطع المرتبطة بالدروس.";
-    const wholeExamMode = state.draft.generationMode === "whole_exam_v2";
+        : "تُحفظ كل مفردة فور اكتمالها، ويمكن استكمال البقية بعد تحديث الصفحة.";
     return `
-    <div class="section-intro inline"><div><h2>${wholeExamMode ? "راجع الاختبار المصمم كاملًا" : "اختر سؤالًا واحدًا لكل مفردة"}</h2><p>${escapeHtml(state.questionGenerationMessage || generationLabel)} ${wholeExamMode ? "راجع الأسئلة كوحدة واحدة؛ يمكنك إعادة توليد مفردة منفردة بعد ذلك عند الحاجة." : "راجع الصياغة والإجابة ودليل المصدر قبل الاختيار."}</p></div><span class="progress-pill">${selectedCount} من ${state.draft.plan.length}</span></div>
+    <div class="section-intro inline"><div><h2>التوليد التدريجي ومراجعة الاختبار</h2><p>${escapeHtml(state.questionGenerationMessage || generationLabel)} راجع كل مفردة مكتملة، بينما يستمر واثق في إنشاء البقية دون إعادة ما حُفظ.</p></div><span class="progress-pill">${selectedCount} من ${state.draft.plan.length}</span></div>
+    ${renderProgressiveGenerationPanel()}
     <div class="plan-stack">${state.draft.plan.map((item, index) => renderPlanItem(item, index)).join("")}</div>
     ${renderWizardFooter(3, isPlanComplete(state.draft))}
   `;
@@ -736,17 +805,45 @@ function renderPlanVisual(item, compact = false) {
         : "";
     return `<section class="plan-shared-visual ${compact ? "compact" : ""}"><div class="visual-heading"><strong>${escapeHtml(questionVisualTypeLabel(item.visual.type))}</strong><span>${escapeHtml(modeLabel)}</span></div>${renderQuestionVisualSvg(item.visual)}${fallbackNotice}${controls}${message}</section>`;
 }
+function renderGenerationPlaceholder(item) {
+    const task = generationItemSnapshot(item.id);
+    const status = task?.status ?? "pending";
+    const attempts = task ? `${task.attemptCount} من ${task.maxAttempts}` : "0 من 2";
+    const error = task?.errorMessage ? `<p class="generation-item-error">${escapeHtml(task.errorMessage)}</p>` : "";
+    const retry = task?.status === "failed" && state.draft.status !== "معتمد"
+        ? `<button class="secondary-btn compact" data-generation-retry="${escapeHtml(task.id)}" ${state.questionGenerationBusy ? "disabled" : ""}>${icon("spark")} إعادة هذه المفردة فقط</button>`
+        : "";
+    return `<div class="generation-item-placeholder ${generationItemStatusClass(status)}">
+    <div class="generation-item-state"><span class="generation-item-pulse" aria-hidden="true"></span><div><strong>${escapeHtml(generationItemStatusLabel(status))}</strong><small>المحاولة ${attempts}</small></div></div>
+    ${error}
+    ${retry}
+  </div>`;
+}
 function renderPlanItem(item, index) {
     const chosen = state.draft.selectedProposalByPlanItem[item.id];
     const reference = state.draft.sourceReferences.find((entry) => entry.id === item.sourceReferenceId);
     const sourceLabel = reference
         ? `${reference.sourceTitle} · ${reference.pageFrom === reference.pageTo ? `ص ${reference.pageFrom}` : `ص ${reference.pageFrom}-${reference.pageTo}`}`
         : "مرجع غير محدد";
-    return `<article class="plan-card">
+    const task = generationItemSnapshot(item.id);
+    const status = task?.status ?? (item.proposals.length ? "ready" : "pending");
+    const proposals = item.proposals.length
+        ? `<div class="proposal-grid">${item.proposals.map((proposal, proposalIndex) => {
+            const selected = chosen === proposal.id || item.proposals.length === 1;
+            const legacyChoice = item.proposals.length > 1;
+            return `<${legacyChoice ? "label" : "div"} class="proposal-card ${selected ? "selected" : ""} ${legacyChoice ? "" : "progressive-single-proposal"}">${legacyChoice ? `<input type="radio" name="proposal-${item.id}" data-plan-id="${item.id}" value="${proposal.id}" ${selected ? "checked" : ""} ${state.draft.status === "معتمد" ? "disabled" : ""}/>` : ""}<div class="proposal-top"><span>${legacyChoice ? `البديل ${proposalIndex + 1}` : "المفردة المعتمدة من المحرك"}</span><div class="proposal-badges"><b class="generation-item-badge ${generationItemStatusClass(status)}">${escapeHtml(generationItemStatusLabel(status))}</b>${proposal.questionForm ? `<b class="question-form-badge">${escapeHtml(proposal.questionForm)}</b>` : ""}${proposal.needsReview ? `<b class="review-needed-badge">يحتاج تدقيقًا أدق</b>` : ""}</div></div>${proposal.stimulus ? `<div class="proposal-stimulus">${escapeHtml(proposal.stimulus)}</div>` : ""}<p>${escapeHtml(proposal.text)}</p>${renderProposalOptions(proposal.options)}<details class="proposal-evidence"><summary>الإجابة ونموذج التصحيح ودليل المصدر</summary><p class="proposal-answer"><strong>الإجابة:</strong> ${escapeHtml(proposal.answer)}</p>${renderMarkScheme(proposal.markScheme)}${proposal.rationale ? `<p><strong>سبب الإجابة:</strong> ${escapeHtml(proposal.rationale)}</p>` : ""}${proposal.sourceSupport ? `<blockquote>${escapeHtml(proposal.sourceSupport)}</blockquote>` : ""}${proposal.enrichmentSupport ? `<div class="proposal-enrichment-evidence"><strong>إثراء علمي موثوق:</strong><p>${escapeHtml(proposal.enrichmentSupport)}</p>${proposal.enrichmentSourceUrl ? `<a href="${escapeHtml(proposal.enrichmentSourceUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(proposal.enrichmentSourceTitle || "فتح المصدر الرسمي")}</a>` : ""}</div>` : ""}</details>${legacyChoice ? `<span class="choose-label">${selected ? `${icon("check")} تم الاختيار` : "اختر هذا السؤال"}</span>` : `<span class="choose-label">${icon("check")} حُفظت خادميًا واختيرت تلقائيًا</span>`}</${legacyChoice ? "label" : "div"}>`;
+        }).join("")}</div>`
+        : renderGenerationPlaceholder(item);
+    const footer = task?.status === "failed"
+        ? `<footer><button class="text-btn" data-generation-retry="${escapeHtml(task.id)}" ${state.questionGenerationBusy ? "disabled" : ""}>${icon("spark")} إعادة هذه المفردة فقط</button></footer>`
+        : item.proposals.length
+            ? `<footer class="generation-item-footer"><span>${icon("check")} محفوظة داخل دورة التوليد الدائمة</span>${task?.stageTimings.totalMs ? `<small>${Math.max(1, Math.round(task.stageTimings.totalMs / 1000))} ثانية</small>` : ""}</footer>`
+            : "";
+    return `<article class="plan-card generation-plan-card ${generationItemStatusClass(status)}">
     <header><div class="question-number">${index + 1}</div><div><h3>${item.questionType}</h3><p>${escapeHtml(item.lessonLabel)} · ${escapeHtml(sourceLabel)}</p></div><div class="plan-tags"><span>${item.cognitiveLevel}</span><span>${item.marks} ${item.marks === 1 ? "درجة" : "درجات"}</span></div></header>
     ${renderPlanVisual(item)}
-    <div class="proposal-grid">${item.proposals.map((proposal, proposalIndex) => `<label class="proposal-card ${chosen === proposal.id ? "selected" : ""}"><input type="radio" name="proposal-${item.id}" data-plan-id="${item.id}" value="${proposal.id}" ${chosen === proposal.id ? "checked" : ""} ${state.draft.status === "معتمد" ? "disabled" : ""}/><div class="proposal-top"><span>البديل ${proposalIndex + 1}</span><div class="proposal-badges">${proposal.questionForm ? `<b class="question-form-badge">${escapeHtml(proposal.questionForm)}</b>` : ""}${proposal.needsReview ? `<b class="review-needed-badge">يحتاج تدقيقًا أدق</b>` : ""}</div></div>${proposal.stimulus ? `<div class="proposal-stimulus">${escapeHtml(proposal.stimulus)}</div>` : ""}<p>${escapeHtml(proposal.text)}</p>${renderProposalOptions(proposal.options)}<details class="proposal-evidence"><summary>الإجابة ونموذج التصحيح ودليل المصدر</summary><p class="proposal-answer"><strong>الإجابة:</strong> ${escapeHtml(proposal.answer)}</p>${renderMarkScheme(proposal.markScheme)}${proposal.rationale ? `<p><strong>سبب الإجابة:</strong> ${escapeHtml(proposal.rationale)}</p>` : ""}${proposal.sourceSupport ? `<blockquote>${escapeHtml(proposal.sourceSupport)}</blockquote>` : ""}${proposal.enrichmentSupport ? `<div class="proposal-enrichment-evidence"><strong>إثراء علمي موثوق:</strong><p>${escapeHtml(proposal.enrichmentSupport)}</p>${proposal.enrichmentSourceUrl ? `<a href="${escapeHtml(proposal.enrichmentSourceUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(proposal.enrichmentSourceTitle || "فتح المصدر الرسمي")}</a>` : ""}</div>` : ""}</details><span class="choose-label">${chosen === proposal.id ? `${icon("check")} تم الاختيار` : "اختر هذا السؤال"}</span></label>`).join("")}</div>
-    <footer><button class="text-btn" data-regenerate="${item.id}" ${(state.questionGenerationBusy || state.draft.status === "معتمد") ? "disabled" : ""}>${icon("spark")} توليد ثلاثة بدائل مشابهة لهذه المفردة</button></footer>
+    ${proposals}
+    ${footer}
   </article>`;
 }
 const ARABIC_SUBPART_LABELS = ["أ", "ب", "ج", "د", "هـ", "و", "ز", "ح", "ط", "ي"];
@@ -837,7 +934,8 @@ function visualSignature(item) {
 function reviewReadiness(selected) {
     const setupValid = validateExamSetup(state.draft).valid;
     const markTotal = state.draft.plan.reduce((sum, item) => sum + item.marks, 0);
-    const groundedGeneration = state.draft.generationVersion === SOURCE_GENERATION_VERSION
+    const groundedGeneration = state.draft.generationVersion === ASSESSMENT_PROGRESSIVE_GENERATION_VERSION
+        || state.draft.generationVersion === SOURCE_GENERATION_VERSION
         || state.draft.generationVersion === ASSESSMENT_GENERATION_V2_VERSION;
     const markSchemesComplete = selected.length === state.draft.plan.length
         && selected.every(({ item, proposal }) => proposal.markScheme?.length === item.marks);
@@ -979,7 +1077,7 @@ function checkRow(label, okay) {
 }
 function renderWizardFooter(step, canContinue = true) {
     const retrieving = step === 1 && state.sourceRetrievalBusy;
-    const generating = step === 2 && state.questionGenerationBusy;
+    const generating = (step === 2 || step === 3) && state.questionGenerationBusy;
     const nextLabel = retrieving
         ? "جارٍ مطابقة المصادر…"
         : generating
@@ -1458,8 +1556,14 @@ function handleAction(action, element) {
         // ثبّت الترقية غير المتلفة فورًا حتى لا تعود المسودة إلى خطوة المحتوى في الزيارة التالية.
         persistDraftCheckpoint(false);
         navigate("wizard");
-        if (loaded.currentStep >= 3)
-            window.setTimeout(() => { void syncVisualJobs(true); }, 0);
+        if (loaded.currentStep >= 3 && state.sourceStorageStatus === "متصل") {
+            window.setTimeout(() => {
+                if (!isPlanComplete(state.draft) && state.draft.plan.length)
+                    void generateQuestionsForPlan(state.draft.plan);
+                else
+                    void syncVisualJobs(true);
+            }, 0);
+        }
         return;
     }
     if (action === "preview-library-exam") {
@@ -1533,6 +1637,14 @@ function handleAction(action, element) {
         return applySuggestedCounts();
     if (action === "delete-draft") {
         const targetDraftId = requestedDraftId || state.draft.id;
+        if (targetDraftId === state.draft.id) {
+            const activeRunId = state.draft.generationRunId;
+            assessmentGenerationOrchestrator?.stop();
+            if (activeRunId && assessmentGenerationJobService) {
+                void assessmentGenerationJobService.cancelRun(activeRunId).catch(() => undefined);
+            }
+            state.assessmentGenerationRun = null;
+        }
         clearDraft(targetDraftId);
         const remaining = loadDraft();
         state.draft = remaining ?? createEmptyDraft();
@@ -1805,13 +1917,11 @@ async function nextStep() {
         const validPlanIds = new Set(state.draft.plan.map((item) => item.id));
         state.draft.selectedProposalByPlanItem = Object.fromEntries(Object.entries(state.draft.selectedProposalByPlanItem).filter(([planItemId]) => validPlanIds.has(planItemId)));
         state.draft.visualJobs = Object.fromEntries(Object.entries(state.draft.visualJobs).filter(([planItemId]) => validPlanIds.has(planItemId)));
+        state.draft.generationMode = "progressive_items_v1";
         if (!persistDraftCheckpoint())
             return;
-        const generated = await generateQuestionsForPlan(state.draft.plan);
-        if (!generated)
-            return;
         setStep(3);
-        await syncVisualJobs(true);
+        window.setTimeout(() => { void generateQuestionsForPlan(state.draft.plan); }, 0);
         return;
     }
     if (step === 3) {
@@ -1822,177 +1932,222 @@ async function nextStep() {
         return setStep(4);
     }
 }
-async function generateQuestionsForPlan(plan) {
-    if (!questionGenerationService || !centralSourceStore?.currentSession || state.sourceStorageStatus !== "متصل") {
-        invalidateGeneratedQuestions();
-        state.questionGenerationMessage = "يلزم تسجيل دخول مالك المنصة وتشغيل خدمة توليد الأسئلة قبل المتابعة.";
+function contractsByPlanItem(payload) {
+    return new Map(payload.contracts.map((contract) => [contract.planItemId, contract]));
+}
+function generationItemSnapshot(planItemId) {
+    return state.assessmentGenerationRun?.items.find((item) => item.planItemId === planItemId);
+}
+function progressiveRunMessage(snapshot) {
+    const active = snapshot.items.filter((item) => ["grounding", "generating", "normalizing", "validating"].includes(item.status)).length;
+    const queued = snapshot.items.filter((item) => item.status === "queued" || item.status === "retry_pending").length;
+    if (snapshot.items.every((item) => item.status === "ready")) {
+        return `اكتملت ${snapshot.completedItems} من ${snapshot.totalItems} مفردات وحُفظت خادميًا. راجع الاختبار كوحدة واحدة قبل الاعتماد.`;
+    }
+    if (snapshot.status === "cancelled")
+        return `أُلغي التوليد بعد حفظ ${snapshot.completedItems} مفردات مكتملة.`;
+    if (snapshot.status === "superseded")
+        return "أوقفت دورة قديمة لأن خطة أحدث أصبحت هي المعتمدة.";
+    if (snapshot.failedItems > 0 && active === 0 && queued === 0) {
+        return `اكتملت ${snapshot.completedItems} من ${snapshot.totalItems} وتعذرت ${snapshot.failedItems} مفردات. أعد المفردات الفاشلة وحدها.`;
+    }
+    return `اكتمل ${snapshot.completedItems} من ${snapshot.totalItems}؛ ${active ? `يجري تنفيذ ${active}` : "يجهز واثق الدفعة التالية"}${queued ? `، والمتبقي في الطابور ${queued}` : ""}.`;
+}
+function applyProgressiveGenerationSnapshot(snapshot, payload) {
+    if (snapshot.draftId !== state.draft.id
+        || snapshot.generationEpoch !== state.draft.generationEpoch
+        || snapshot.planHash !== payload.blueprint.planHash
+        || snapshot.sourceSnapshotHash !== payload.blueprint.sourceSnapshotHash)
+        return false;
+    const contracts = contractsByPlanItem(payload);
+    const results = snapshot.items.flatMap((item) => item.status === "ready" && item.result ? [item.result] : []);
+    const resultByPlanItem = new Map(results.map((result) => [result.planItemId, result]));
+    state.assessmentGenerationRun = snapshot;
+    state.draft.generationRunId = snapshot.id;
+    state.draft.generationMode = "progressive_items_v1";
+    state.draft.plan = state.draft.plan.map((item) => {
+        const result = resultByPlanItem.get(item.id);
+        const contract = contracts.get(item.id);
+        if (!result || !contract || result.contractHash !== contract.contractHash)
+            return item;
+        const proposalId = `${item.id}-engine-v1-primary`;
+        state.draft.selectedProposalByPlanItem[item.id] = proposalId;
+        return {
+            ...item,
+            visual: result.visual,
+            proposals: [{
+                    id: proposalId,
+                    ...(result.content.stimulus ? { stimulus: result.content.stimulus } : {}),
+                    text: result.content.text,
+                    options: [...result.content.options],
+                    answer: result.content.answer,
+                    rationale: result.content.rationale,
+                    markScheme: [...result.content.markScheme],
+                    questionForm: contract.styleTarget,
+                    workingRequired: shouldRequireCalculationWorking(contract.styleTarget, contract.marks),
+                    sourceSupport: result.evidence.excerpt,
+                    needsReview: result.content.needsReview,
+                    ...(result.scientificItem ? { scientificItem: result.scientificItem } : {}),
+                }],
+        };
+    });
+    let reviewMessage = "";
+    if (results.length === snapshot.totalItems) {
+        const conflicts = reviewCompletedAssessment(results);
+        if (conflicts.length) {
+            const affected = new Set(conflicts.flatMap((conflict) => conflict.planItemIds));
+            state.draft.plan = state.draft.plan.map((item) => affected.has(item.id)
+                ? { ...item, proposals: item.proposals.map((proposal) => ({ ...proposal, needsReview: true })) }
+                : item);
+            reviewMessage = `اكتملت المفردات، ورصدت المراجعة العامة ${conflicts.length} ملاحظة تنوع تحتاج تدقيقًا قبل الاعتماد.`;
+        }
+        state.draft.generationVersion = ASSESSMENT_PROGRESSIVE_GENERATION_VERSION;
+        state.draft.generationModel = [...new Set(results.map((result) => result.model))].join(" + ");
+        state.draft.generatedAt = results.map((result) => result.generatedAt).sort().at(-1) ?? new Date().toISOString();
+    }
+    state.questionGenerationMessage = reviewMessage || progressiveRunMessage(snapshot);
+    persistDraftCheckpoint(false);
+    return true;
+}
+function progressiveGenerationHooks(payload, draftId, generationEpoch) {
+    return {
+        onSnapshot: (snapshot) => {
+            if (state.draft.id !== draftId || state.draft.generationEpoch !== generationEpoch) {
+                assessmentGenerationOrchestrator?.stop();
+                return;
+            }
+            state.questionGenerationMessage = progressiveRunMessage(snapshot);
+            applyProgressiveGenerationSnapshot(snapshot, payload);
+            render();
+        },
+        onWorkerError: (_itemId, error) => {
+            if (state.draft.id !== draftId || state.draft.generationEpoch !== generationEpoch)
+                return;
+            state.questionGenerationMessage = error instanceof Error ? error.message : "تعذر تشغيل إحدى مهام التوليد؛ سيحاول واثق استعادتها من الطابور.";
+            render();
+        },
+    };
+}
+async function buildCurrentProgressivePayload() {
+    const subject = SUBJECTS.find((item) => item.id === state.draft.subjectId)?.label ?? state.draft.subjectId;
+    return buildProgressiveGenerationPayload({ draft: state.draft, subject, sources: state.sources });
+}
+async function generateQuestionsForPlan(_plan) {
+    if (state.questionGenerationBusy)
+        return false;
+    if (!assessmentGenerationJobService || !assessmentGenerationWorkerService || !assessmentGenerationOrchestrator
+        || !centralSourceStore?.currentSession || state.sourceStorageStatus !== "متصل") {
+        state.questionGenerationMessage = "يلزم تسجيل دخول مالك المنصة ونشر وظيفتي التوليد الدائم قبل المتابعة.";
         render();
         showToast(state.questionGenerationMessage);
         return false;
     }
-    if (state.draft.grade === null) {
-        showToast("الصف الدراسي غير محدد.");
+    if (state.draft.status === "معتمد")
         return false;
-    }
-    const subject = SUBJECTS.find((item) => item.id === state.draft.subjectId)?.label ?? state.draft.subjectId;
-    if (state.draft.generationMode === "whole_exam_v2" && plan.length <= 12) {
-        const completeV2 = plan.length > 0 && plan.every((item) => item.proposals.length === 1);
-        if (completeV2) {
-            state.questionGenerationMessage = `اكتمل تصميم الاختبار الكامل وحُفظت ${plan.length} مفردات؛ راجعها قبل الاعتماد.`;
-            return true;
-        }
-        state.questionGenerationBusy = true;
-        state.questionGenerationMessage = "جارٍ تصميم الاختبار كاملًا، ثم مراجعته علميًا وتقويميًا كوحدة واحدة…";
-        if (!persistDraftCheckpoint()) {
-            state.questionGenerationBusy = false;
-            return false;
-        }
-        render();
-        try {
-            const request = buildWholeExamGenerationRequestV2(state.draft.assessmentType, state.draft.topic, state.draft.lessonTopics, state.draft.grade, subject, state.draft.difficulty, state.draft.sourceReferences, state.draft.plan, state.lessonCatalog, state.draft.trustedEnrichmentEnabled);
-            const rawResponse = await questionGenerationService.generateWholeExam(request);
-            const response = parseWholeExamGenerationResponseV2(rawResponse, request.items);
-            state.draft.plan = applyWholeExamQuestionsV2(state.draft.plan, response);
-            state.draft.selectedProposalByPlanItem = Object.fromEntries(state.draft.plan.map((item) => [item.id, item.proposals[0]?.id ?? ""]).filter((entry) => Boolean(entry[1])));
-            state.draft.generationVersion = ASSESSMENT_GENERATION_V2_VERSION;
-            state.draft.generationModel = response.model;
-            state.draft.generatedAt = response.generatedAt;
-            state.questionGenerationBusy = false;
-            state.questionGenerationMessage = `تم تصميم اختبار كامل من ${state.draft.plan.length} مفردات ومراجعته كوحدة واحدة. راجع الأسئلة ثم اعتمدها أو جدد مفردة محددة.`;
-            persistDraftCheckpoint(false);
-            render();
-            return true;
-        }
-        catch (error) {
-            state.questionGenerationBusy = false;
-            const detail = error instanceof Error ? error.message : "تعذر تصميم الاختبار الكامل.";
-            const saved = persistDraftCheckpoint(false);
-            state.questionGenerationMessage = `${detail} بقيت المسودة على محرك تصميم الاختبار كاملًا ولم يغيّر واثق طريقة التوليد؛ ${saved ? "حُفظت المسودة الحالية ويمكنك إعادة المحاولة من الموضع نفسه." : "تعذر حفظ المسودة في تخزين المتصفح؛ استخدم زر الحفظ قبل مغادرة الصفحة."}`;
-            render();
-            showToast(detail);
-            return false;
-        }
-    }
-    if (state.draft.generationMode === "whole_exam_v2" && plan.length > 12) {
-        state.draft.generationMode = "legacy_items";
-        state.questionGenerationMessage = "محرك الاختبار الكامل V2 يدعم الاختبارات القصيرة حتى 12 مفردة في هذه المرحلة؛ حوّل واثق هذه المسودة إلى المحرك السابق للاختبار النهائي مع بقاء الخطة كاملة.";
-        scheduleSave();
-        render();
-    }
-    const pendingItems = plan.filter((item) => item.proposals.length !== 3);
-    if (!pendingItems.length) {
-        state.questionGenerationMessage = `اكتملت ${plan.length} مفردات وحُفظت؛ يمكنك الانتقال إلى الاختيار.`;
-        return true;
-    }
-    const batches = splitQuestionGenerationBatches(pendingItems);
-    let completedCount = plan.length - pendingItems.length;
+    const draftId = state.draft.id;
+    const generationEpoch = state.draft.generationEpoch;
     state.questionGenerationBusy = true;
+    state.questionGenerationMessage = "جارٍ تجهيز العقود المستقلة للمفردات وإنشاء دورة التوليد الدائمة…";
     render();
     try {
-        const generateBatch = async (batch) => {
-            const request = buildQuestionGenerationRequest(state.draft.assessmentType, state.draft.topic, state.draft.lessonTopics, state.draft.grade, subject, state.draft.difficulty, state.draft.sourceReferences, batch, state.draft.plan, state.lessonCatalog, state.draft.trustedEnrichmentEnabled);
-            const response = await questionGenerationService.generate(request);
-            const replacements = applyGeneratedQuestions(batch, response);
-            state.draft.plan = replacePlanItems(state.draft.plan, replacements);
-            state.draft.generationVersion = SOURCE_GENERATION_VERSION;
-            state.draft.generationModel = response.model;
-            state.draft.generatedAt = response.generatedAt;
-            completedCount += batch.length;
-            persistDraftCheckpoint(false);
-        };
-        for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
-            const batch = batches[batchIndex];
-            if (!batch)
-                continue;
-            state.questionGenerationMessage = `جارٍ إنشاء الدفعة ${batchIndex + 1} من ${batches.length}؛ اكتمل ${completedCount} من ${plan.length} مفردات…`;
-            render();
-            try {
-                await generateBatch(batch);
+        const workerHealth = await assessmentGenerationWorkerService.health();
+        if (workerHealth.engineSchemaVersion !== 1 || workerHealth.contractVersion !== 1) {
+            throw new Error("عامل توليد المفردات المنشور لا يطابق عقد المحرك الحالي. انشر نسخة Phase 2-D3 ثم أعد المحاولة.");
+        }
+        const payload = await buildCurrentProgressivePayload();
+        let finalSnapshot = null;
+        if (state.draft.generationRunId) {
+            const existing = await assessmentGenerationJobService.list(draftId, state.draft.generationRunId);
+            if (existing.run
+                && existing.run.generationEpoch === generationEpoch
+                && existing.run.planHash === payload.blueprint.planHash
+                && existing.run.sourceSnapshotHash === payload.blueprint.sourceSnapshotHash) {
+                finalSnapshot = await assessmentGenerationOrchestrator.resume(draftId, existing.run.id, progressiveGenerationHooks(payload, draftId, generationEpoch));
             }
-            catch (batchError) {
-                if (batch.length === 1)
-                    throw batchError;
-                state.questionGenerationMessage = `تعذر اعتماد دفعة من مفردتين؛ يعزل واثق كل مفردة الآن حتى لا تضيع المفردة السليمة. اكتمل ${completedCount} من ${plan.length}…`;
-                render();
-                for (const isolatedItem of batch) {
-                    await generateBatch([isolatedItem]);
-                }
+            else {
+                state.draft.generationRunId = "";
             }
         }
-        state.draft.selectedProposalByPlanItem = {};
+        if (!finalSnapshot && state.draft.id === draftId && state.draft.generationEpoch === generationEpoch) {
+            finalSnapshot = await assessmentGenerationOrchestrator.start(payload.blueprint, payload.contracts, progressiveGenerationHooks(payload, draftId, generationEpoch));
+        }
+        if (!finalSnapshot || state.draft.id !== draftId || state.draft.generationEpoch !== generationEpoch)
+            return false;
+        applyProgressiveGenerationSnapshot(finalSnapshot, payload);
+        const completed = finalSnapshot.items.every((item) => item.status === "ready");
         state.questionGenerationBusy = false;
-        state.questionGenerationMessage = `تم إنشاء ${state.draft.plan.length} مفردات موثقة على دفعات؛ اختر البديل الأنسب لكل مفردة.`;
         persistDraftCheckpoint(false);
         render();
-        return true;
+        if (completed)
+            window.setTimeout(() => { void syncVisualJobs(true); }, 0);
+        return completed;
     }
     catch (error) {
+        if (state.draft.id !== draftId || state.draft.generationEpoch !== generationEpoch)
+            return false;
         state.questionGenerationBusy = false;
-        const completed = state.draft.plan.filter((item) => item.proposals.length === 3).length;
-        const detail = error instanceof Error ? error.message : "تعذر إنشاء الأسئلة من المصدر.";
-        const saved = persistDraftCheckpoint(false);
-        state.questionGenerationMessage = `${detail} تم الاحتفاظ بـ ${completed} من ${state.draft.plan.length} مفردات مكتملة${saved ? " وحفظها" : ""}؛ اضغط التالي لإكمال الباقي فقط.`;
+        state.questionGenerationMessage = error instanceof Error ? error.message : "تعذر تشغيل منظومة التوليد التدريجي.";
+        persistDraftCheckpoint(false);
         render();
-        showToast(detail);
+        showToast(state.questionGenerationMessage);
         return false;
     }
 }
-async function regeneratePlanItem(item) {
-    if (state.questionGenerationBusy)
+async function retryGenerationItem(itemId) {
+    if (!assessmentGenerationOrchestrator || state.questionGenerationBusy || state.draft.status === "معتمد")
         return;
-    if (!questionGenerationService || state.draft.grade === null) {
-        showToast("خدمة توليد الأسئلة غير جاهزة.");
+    const snapshot = state.assessmentGenerationRun;
+    if (!snapshot)
         return;
-    }
-    const subject = SUBJECTS.find((entry) => entry.id === state.draft.subjectId)?.label ?? state.draft.subjectId;
+    const failedItem = snapshot.items.find((item) => item.id === itemId && item.status === "failed");
+    if (!failedItem)
+        return;
+    const draftId = state.draft.id;
+    const generationEpoch = state.draft.generationEpoch;
     state.questionGenerationBusy = true;
-    state.questionGenerationMessage = `جارٍ توليد بدائل مشابهة للسؤال ${state.draft.plan.indexOf(item) + 1}…`;
+    state.questionGenerationMessage = `أعيدت المفردة ${failedItem.planItemId} وحدها إلى الطابور دون لمس الأسئلة المكتملة.`;
     render();
     try {
-        const request = buildQuestionGenerationRequest(state.draft.assessmentType, state.draft.topic, state.draft.lessonTopics, state.draft.grade, subject, state.draft.difficulty, state.draft.sourceReferences, [item], state.draft.plan, state.lessonCatalog, state.draft.trustedEnrichmentEnabled);
-        const anchor = selectedProposal(state.draft, item) ?? item.proposals[0];
-        if (anchor && request.items[0]) {
-            request.items[0].regenerationAnchor = {
-                stimulus: anchor.stimulus ?? "",
-                text: anchor.text,
-                answer: anchor.answer,
-                questionForm: anchor.questionForm ?? request.items[0].styleTarget,
-            };
-        }
-        const response = await questionGenerationService.generate(request);
-        const [generatedReplacement] = applyGeneratedQuestions([item], response);
-        if (!generatedReplacement)
-            throw new Error("تعذر ربط البدائل الجديدة بمفردة الخطة.");
-        const replacement = state.draft.generationMode === "whole_exam_v2"
-            ? { ...generatedReplacement, proposals: generatedReplacement.proposals.slice(0, 1).map((proposal) => ({ ...proposal, id: `${item.id}-v2-primary` })) }
-            : generatedReplacement;
-        state.draft.plan = state.draft.plan.map((entry) => entry.id === item.id ? replacement : entry);
-        if (state.draft.generationMode === "whole_exam_v2" && replacement.proposals[0]) {
-            state.draft.selectedProposalByPlanItem[item.id] = replacement.proposals[0].id;
-            state.draft.generationVersion = ASSESSMENT_GENERATION_V2_VERSION;
-        }
-        else {
-            delete state.draft.selectedProposalByPlanItem[item.id];
-            state.draft.generationVersion = SOURCE_GENERATION_VERSION;
-        }
-        invalidateVisualJobForPlanItem(item.id);
-        state.draft.generationModel = response.model;
-        state.draft.generatedAt = response.generatedAt;
+        const payload = await buildCurrentProgressivePayload();
+        const finalSnapshot = await assessmentGenerationOrchestrator.retryItem(itemId, progressiveGenerationHooks(payload, draftId, generationEpoch));
+        applyProgressiveGenerationSnapshot(finalSnapshot, payload);
         state.questionGenerationBusy = false;
-        state.questionGenerationMessage = state.draft.generationMode === "whole_exam_v2"
-            ? "تم تجديد السؤال المحدد مع الحفاظ على وضع تصميم الاختبار الكامل."
-            : "تم توليد ثلاثة بدائل مشابهة لهذه المفردة.";
-        scheduleSave();
         render();
-        window.setTimeout(() => { void syncVisualJobs(true); }, 0);
-        showToast(state.questionGenerationMessage);
+        if (finalSnapshot.items.every((item) => item.status === "ready"))
+            window.setTimeout(() => { void syncVisualJobs(true); }, 0);
     }
     catch (error) {
         state.questionGenerationBusy = false;
-        state.questionGenerationMessage = error instanceof Error ? error.message : "تعذر تجديد بدائل السؤال.";
+        state.questionGenerationMessage = error instanceof Error ? error.message : "تعذر إعادة المفردة الفاشلة.";
         render();
         showToast(state.questionGenerationMessage);
     }
+}
+async function cancelProgressiveGeneration() {
+    const runId = state.draft.generationRunId;
+    if (!runId || !assessmentGenerationJobService)
+        return;
+    assessmentGenerationOrchestrator?.stop();
+    try {
+        const response = await assessmentGenerationJobService.cancelRun(runId);
+        if (response.run)
+            state.assessmentGenerationRun = response.run;
+        state.questionGenerationBusy = false;
+        state.questionGenerationMessage = response.run ? progressiveRunMessage(response.run) : "أُلغيت دورة التوليد.";
+        persistDraftCheckpoint(false);
+        render();
+    }
+    catch (error) {
+        showToast(error instanceof Error ? error.message : "تعذر إلغاء دورة التوليد.");
+    }
+}
+async function regeneratePlanItem(item) {
+    const task = generationItemSnapshot(item.id);
+    if (task?.status === "failed") {
+        await retryGenerationItem(task.id);
+        return;
+    }
+    showToast("المحرك الجديد يحافظ على المفردة المكتملة. إعادة صياغتها ستتم بدورة مراجعة مستقلة في مرحلة التحويل النهائي.");
 }
 async function prepareSourceContext() {
     if (!centralSourceStore?.currentSession || state.sourceStorageStatus !== "متصل") {
@@ -2270,17 +2425,6 @@ function bindSetupStep() {
         state.draft.semester = event.target.value;
         scheduleSave();
     });
-    document.querySelectorAll('input[name="generation-mode"]').forEach((input) => {
-        input.addEventListener("change", () => {
-            state.draft.generationMode = input.value === "legacy_items" ? "legacy_items" : "whole_exam_v2";
-            invalidateGeneratedQuestions();
-            state.questionGenerationMessage = state.draft.generationMode === "whole_exam_v2"
-                ? "سيصمم واثق الاختبار كاملًا في طلب واحد، ثم يراجعه بوصفه وحدة متكاملة قبل عرضه."
-                : "تم اختيار المحرك السابق الذي يولد المفردات على دفعات صغيرة.";
-            scheduleSave();
-            render();
-        });
-    });
     document.querySelector("#trusted-enrichment-toggle")?.addEventListener("change", (event) => {
         state.draft.trustedEnrichmentEnabled = event.target.checked;
         state.questionGenerationMessage = state.draft.trustedEnrichmentEnabled
@@ -2368,6 +2512,19 @@ function bindPlanStep() {
                 return;
             void regeneratePlanItem(item);
         });
+    });
+    document.querySelectorAll("[data-generation-retry]").forEach((button) => {
+        button.addEventListener("click", () => {
+            const itemId = button.dataset.generationRetry;
+            if (itemId)
+                void retryGenerationItem(itemId);
+        });
+    });
+    document.querySelector("[data-generation-resume]")?.addEventListener("click", () => {
+        void generateQuestionsForPlan(state.draft.plan);
+    });
+    document.querySelector("[data-generation-cancel]")?.addEventListener("click", () => {
+        void cancelProgressiveGeneration();
     });
 }
 function bindLibrary() {
@@ -2768,6 +2925,11 @@ async function signInOwner() {
 async function signOutOwner() {
     if (!centralSourceStore)
         return;
+    assessmentGenerationOrchestrator?.stop();
+    state.questionGenerationBusy = false;
+    state.questionGenerationMessage = state.draft.generationRunId && !isPlanComplete(state.draft)
+        ? "توقف التنسيق المحلي بعد تسجيل الخروج. ستبقى النتائج المحفوظة خادميًا ويمكن استكمال الدورة بعد تسجيل الدخول."
+        : "";
     state.sourceStorageBusy = true;
     render();
     await centralSourceStore.signOut();
@@ -2803,8 +2965,14 @@ async function loadAndSyncCentralSources() {
         render();
         showToast("تمت مزامنة سجل المصادر المركزي.");
         void loadGoogleDriveStatus();
-        if (state.draft.currentStep >= 3)
-            void syncVisualJobs(true);
+        if (state.draft.currentStep >= 3) {
+            if (!isPlanComplete(state.draft) && state.draft.plan.length) {
+                window.setTimeout(() => { void generateQuestionsForPlan(state.draft.plan); }, 0);
+            }
+            else {
+                void syncVisualJobs(true);
+            }
+        }
     }
     catch (error) {
         markCentralStorageError(error);

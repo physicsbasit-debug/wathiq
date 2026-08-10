@@ -77,10 +77,39 @@ function optionFromApprovedNode(source, node, unitById) {
                 : "validated-structure",
     };
 }
-function optionFromDetectedHeading(source, heading) {
+const ARABIC_UNIT_ORDINALS = new Map([
+    ["الاولى", 1],
+    ["الثانيه", 2],
+    ["الثالثه", 3],
+    ["الرابعه", 4],
+    ["الخامسه", 5],
+    ["السادسه", 6],
+    ["السابعه", 7],
+    ["الثامنه", 8],
+    ["التاسعه", 9],
+    ["العاشره", 10],
+    ["الحاديه عشره", 11],
+    ["الثانيه عشره", 12],
+]);
+function unitOrdinalFromTitle(value) {
+    const normalized = normalizeKey(value);
+    const numeric = normalized.match(/(?:الوحده|وحده)\s+([0-9]{1,2})\b/u);
+    if (numeric)
+        return Number(numeric[1]);
+    for (const [label, ordinal] of ARABIC_UNIT_ORDINALS) {
+        if (normalized.includes(`الوحده ${label}`) || normalized.includes(`وحده ${label}`))
+            return ordinal;
+    }
+    return null;
+}
+function optionFromDetectedHeading(source, heading, unitLabelByOrdinal) {
     const parsed = parseNumberedLesson(heading);
     if (!parsed)
         return null;
+    const unitOrdinal = Number(parsed.code.split("-")[0]);
+    const unitLabel = Number.isSafeInteger(unitOrdinal)
+        ? unitLabelByOrdinal.get(unitOrdinal) ?? `الوحدة ${unitOrdinal}`
+        : undefined;
     return {
         id: `lesson-${source.id}-heading-${stableHash(`${parsed.code}|${parsed.title}`)}`,
         sourceId: source.id,
@@ -88,8 +117,31 @@ function optionFromDetectedHeading(source, heading) {
         label: `${parsed.code} ${parsed.title}`,
         code: parsed.code,
         title: parsed.title,
+        ...(unitLabel ? { unitLabel } : {}),
         origin: "detected-heading",
     };
+}
+function originPriority(origin) {
+    return {
+        "approved-structure": 4,
+        "curated-book-tree": 3,
+        "validated-structure": 2,
+        "detected-heading": 1,
+    }[origin];
+}
+function preferCatalogOption(current, candidate) {
+    const priorityDifference = originPriority(candidate.origin) - originPriority(current.origin);
+    if (priorityDifference > 0)
+        return candidate;
+    if (priorityDifference < 0)
+        return current;
+    const currentHasPages = current.pageStart !== undefined;
+    const candidateHasPages = candidate.pageStart !== undefined;
+    if (candidateHasPages && !currentHasPages)
+        return candidate;
+    if (currentHasPages && !candidateHasPages)
+        return current;
+    return candidate.title.length > current.title.length ? candidate : current;
 }
 function lessonSortKey(option) {
     const parts = option.code.split("-").map((part) => Number(part));
@@ -101,27 +153,37 @@ export function buildLessonCatalog(sources, structuresBySource = new Map()) {
     const options = [];
     for (const source of sources) {
         const nodes = structuresBySource.get(source.id) ?? [];
-        const unitById = new Map(nodes.filter((node) => node.nodeType === "وحدة").map((node) => [node.id, node]));
+        const unitNodes = nodes.filter((node) => node.nodeType === "وحدة");
+        const unitById = new Map(unitNodes.map((node) => [node.id, node]));
+        const unitLabelByOrdinal = new Map();
+        unitNodes.forEach((unit) => {
+            const ordinal = unitOrdinalFromTitle(unit.title);
+            if (ordinal !== null && !unitLabelByOrdinal.has(ordinal))
+                unitLabelByOrdinal.set(ordinal, unit.title);
+        });
         const structured = nodes
             .map((node) => optionFromApprovedNode(source, node, unitById))
             .filter((option) => option !== null);
-        if (structured.length) {
-            options.push(...structured);
-            continue;
-        }
+        structured.forEach((option) => {
+            const ordinal = Number(option.code.split("-")[0]);
+            if (option.unitLabel && Number.isSafeInteger(ordinal) && !unitLabelByOrdinal.has(ordinal)) {
+                unitLabelByOrdinal.set(ordinal, option.unitLabel);
+            }
+        });
+        options.push(...structured);
+        // لا نهمل العناوين المرقمة عند وجود شجرة جزئية؛ فهي تكمل الدروس التي سقطت من OCR أو الربط اليدوي.
         for (const heading of source.detectedHeadings ?? []) {
-            const option = optionFromDetectedHeading(source, heading);
+            const option = optionFromDetectedHeading(source, heading, unitLabelByOrdinal);
             if (option)
                 options.push(option);
         }
     }
     const unique = new Map();
     for (const option of options) {
-        const key = normalizeKey(`${option.sourceId}|${option.code}|${option.title}`);
+        // رمز الدرس هو الهوية المنهجية داخل المصدر؛ اختلاف الصياغة لا ينشئ درسًا مكررًا.
+        const key = normalizeKey(`${option.sourceId}|${option.code}`);
         const existing = unique.get(key);
-        if (!existing || (existing.origin !== "approved-structure" && option.origin === "approved-structure")) {
-            unique.set(key, option);
-        }
+        unique.set(key, existing ? preferCatalogOption(existing, option) : option);
     }
     return [...unique.values()].sort((left, right) => {
         const [leftA, leftB, leftTitle] = lessonSortKey(left);
