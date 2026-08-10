@@ -1,0 +1,12 @@
+Phase 3-0 — D4 Live Acceptance Gate
+Base: Wathiq v0.0.66
+Production behavior changes: NONE
+SQL: NONE
+Edge deployment: NONE
+Secrets: NONE
+Reindexing: NONE
+
+Added files:
+- scripts/check-phase-3-0-readiness.mjs
+- PHASE_3_0_D4_LIVE_ACCEPTANCE_GATE.md
+- CHANGED_FILES_MANIFEST_PHASE_3_0.txt
