@@ -19,7 +19,7 @@ test("المرئي التوضيحي ينشئ مهمة 2D حتى في IGCSE بل�
   assert.equal(items.length, 1);
   assert.equal(items[0].requiredMode, "replace");
   assert.equal(items[0].programmeId, "igcse");
-  assert.equal(items[0].stageLabel, "كامبريدج للشهادة الدولية العامة للتعليم الثانوي");
+  assert.equal(items[0].stageLabel, "كامبريدج IGCSE");
 });
 
 test("الرسم البياني الدقيق لا يرسل إلى نموذج الصور", () => {

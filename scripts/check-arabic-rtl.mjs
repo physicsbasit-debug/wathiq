@@ -49,7 +49,8 @@ for (const token of forbiddenVisible) {
   if (visibleSources.some((text) => text.includes(token))) failures.push(`نص واجهة غير عربي أو قديم: ${token}`);
 }
 
-if (!app.includes("الكهرباء الساكنة")) failures.push("المثال الافتراضي للموضوع ليس عربيًا.");
+if (!app.includes("الصف / المرحلة") || !app.includes("الموضوع / الدرس")) failures.push("واجهة اختيار المنهج لا تعرض حقول الصف والمادة والموضوع بالعربية.");
+if (app.includes('id="lesson-topics-input"') || app.includes('id="programme-select"')) failures.push("عادت واجهة الإدخال الحر أو اختيار البرنامج القديمة بدل القوائم المبسطة.");
 if (!app.includes("اسم الموضوع يكفي")) failures.push("واجهة البداية لا تعرض فلسفة واثق المبسطة بالعربية.");
 if (!curriculum.includes("كامبريدج للعلوم في المرحلة الابتدائية") || !curriculum.includes("كامبريدج للعلوم في المرحلة الإعدادية")) {
   failures.push("تسميات مسارات كامبريدج ليست عربية بالكامل.");

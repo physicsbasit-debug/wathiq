@@ -7,6 +7,7 @@ import {
 } from "./cambridge-assessment.js";
 import {
   defaultStageForProgramme,
+  isKnownTopicForSelection,
   isStageValidForProgramme,
   subjectProfile,
   syllabusCodeFor,
@@ -202,9 +203,11 @@ export function validateExamSetup(draft: ExamDraft): SpecValidation {
     issues.push({ field: "subject", message: "اختر مادة علوم متاحة في مسار كامبريدج المحدد." });
   }
   if (lessonTopics.length < MIN_LESSON_TOPICS || lessonTopics.length > MAX_LESSON_TOPICS) {
-    issues.push({ field: "lessons", message: `أدخل من ${MIN_LESSON_TOPICS} إلى ${MAX_LESSON_TOPICS} موضوعات أو دروس.` });
+    issues.push({ field: "lessons", message: `اختر من ${MIN_LESSON_TOPICS} إلى ${MAX_LESSON_TOPICS} موضوعات أو دروس.` });
   } else if (uniqueLessons.length !== lessonTopics.length) {
     issues.push({ field: "lessons", message: "لا تكرر الموضوع نفسه داخل الاختبار." });
+  } else if (lessonTopics.some((topic) => !isKnownTopicForSelection(draft.programmeId, draft.subjectId, draft.grade, topic))) {
+    issues.push({ field: "lessons", message: "اختر الموضوعات من قائمة كامبريدج المناسبة للصف والمادة." });
   }
   if (!draft.topic.trim()) issues.push({ field: "topic", message: "أدخل موضوع الاختبار." });
   if (!isExamTitleOption(draft.title)) issues.push({ field: "title", message: "اختر نوع الاختبار." });

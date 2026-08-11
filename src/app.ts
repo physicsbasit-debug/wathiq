@@ -41,11 +41,14 @@ import {
 import { VisualJobService, isVisualJobPending, requiredVisualJobItems } from "./visual-jobs.js";
 import { EXAM_TITLE_OPTIONS } from "./cambridge-assessment.js";
 import {
-  CAMBRIDGE_PROGRAMMES,
+  CAMBRIDGE_LEVEL_OPTIONS,
   curriculumDisplayName,
+  isStageValidForProgramme,
+  levelOptionForValue,
+  levelSelectionValue,
   stageLabel,
-  stagesForProgramme,
   subjectsForProgramme,
+  topicsForSelection,
 } from "./cambridge-curriculum.js";
 
 const appRoot = document.querySelector<HTMLDivElement>("#app");
@@ -377,41 +380,56 @@ function restoreDraftRuntimeContext(draft: ExamDraft): void {
     : "";
 }
 
-function parseLessonInput(value: string): string[] {
-  const seen = new Set<string>();
-  const lessons: string[] = [];
-  for (const raw of value.split(/[\n،;,]+/u)) {
-    const lesson = raw.replace(/\s+/g, " ").trim();
-    if (!lesson) continue;
-    const key = lesson.normalize("NFKC").replace(/\s+/g, " ").toLocaleLowerCase("ar");
-    if (seen.has(key)) continue;
-    seen.add(key);
-    lessons.push(lesson);
-    if (lessons.length >= MAX_LESSON_TOPICS) break;
+function renderTopicOptions(): string {
+  const topics = topicsForSelection(state.draft.programmeId, state.draft.subjectId, state.draft.grade);
+  const selected = new Set(normalizeLessonTopics(state.draft.lessonTopics));
+  const byStrand = new Map<string, typeof topics>();
+  for (const topic of topics) {
+    const group = byStrand.get(topic.strand) ?? [];
+    group.push(topic);
+    byStrand.set(topic.strand, group);
   }
-  return lessons;
+  const groups = [...byStrand.entries()].map(([strand, items]) => `
+    <optgroup label="${escapeHtml(strand)}">
+      ${items.map((topic) => `<option value="${escapeHtml(topic.label)}" ${selected.has(topic.label) ? "disabled" : ""}>${escapeHtml(topic.label)}</option>`).join("")}
+    </optgroup>`).join("");
+  return `<option value="">اختر الموضوع أو الدرس</option>${groups}`;
+}
+
+function renderSelectedTopics(): string {
+  const selected = normalizeLessonTopics(state.draft.lessonTopics);
+  if (!selected.length) return `<p class="topic-empty-state">لم تختر موضوعًا بعد.</p>`;
+  return `<div class="selected-topic-chips" aria-label="الموضوعات المختارة">${selected.map((topic, index) => `
+    <span class="selected-topic-chip"><b>${escapeHtml(topic)}</b><button type="button" data-remove-topic="${index}" aria-label="إزالة ${escapeHtml(topic)}">×</button></span>`).join("")}</div>`;
 }
 
 function renderContentStep(): string {
-  const programme = CAMBRIDGE_PROGRAMMES.find((item) => item.id === state.draft.programmeId) ?? CAMBRIDGE_PROGRAMMES[0]!;
-  const stages = stagesForProgramme(state.draft.programmeId);
   const subjects = subjectsForProgramme(state.draft.programmeId);
+  const topics = topicsForSelection(state.draft.programmeId, state.draft.subjectId, state.draft.grade);
+  const selectedTopics = normalizeLessonTopics(state.draft.lessonTopics);
+  const levelValue = levelSelectionValue(state.draft.programmeId, state.draft.grade);
+  const contentReady = isStageValidForProgramme(state.draft.programmeId, state.draft.grade)
+    && Boolean(state.draft.subjectId)
+    && selectedTopics.length >= MIN_LESSON_TOPICS
+    && selectedTopics.length <= MAX_LESSON_TOPICS;
+  const currentPath = state.draft.subjectId
+    ? curriculumDisplayName(state.draft.programmeId, state.draft.subjectId, state.draft.grade)
+    : "اختر المادة لإكمال المسار";
   return `
-    <div class="section-intro"><h2>حدد نطاق كامبريدج</h2><p>اختر البرنامج والمرحلة والمادة، ثم اكتب اسم الموضوع. هذا يكفي لبدء التأليف.</p></div>
-    <div class="form-grid two-columns">
-      <label class="field"><span>برنامج كامبريدج</span><select id="programme-select">${CAMBRIDGE_PROGRAMMES.map((item) => `<option value="${item.id}" ${state.draft.programmeId === item.id ? "selected" : ""}>${item.label}</option>`).join("")}</select><small>${programme.note}</small></label>
-      ${state.draft.programmeId === "igcse"
-        ? `<label class="field readonly-field"><span>المرحلة</span><input value="كامبريدج للشهادة الدولية العامة للتعليم الثانوي" readonly/></label>`
-        : `<label class="field"><span>المرحلة</span><select id="stage-select">${stages.map((stage) => `<option value="${stage}" ${state.draft.grade === stage ? "selected" : ""}>المرحلة ${stage}</option>`).join("")}</select></label>`}
-      <label class="field"><span>المادة</span><select id="subject-select"><option value="">اختر المادة</option>${subjects.map((item) => `<option value="${item.id}" ${state.draft.subjectId === item.id ? "selected" : ""}>${item.label} · ${item.syllabusCode}</option>`).join("")}</select></label>
-      <label class="field readonly-field"><span>المسار الحالي</span><input value="${escapeHtml(state.draft.subjectId ? curriculumDisplayName(state.draft.programmeId, state.draft.subjectId, state.draft.grade) : programme.label)}" readonly/></label>
-      <section class="field full topic-field" aria-labelledby="lesson-topics-label">
-        <div class="lesson-topics-head"><div><span id="lesson-topics-label">الموضوعات / الدروس</span><small>موضوع واحد يكفي، وحتى ${MAX_LESSON_TOPICS} موضوعات</small></div><b>${normalizeLessonTopics(state.draft.lessonTopics).length}/${MAX_LESSON_TOPICS}</b></div>
-        <textarea id="lesson-topics-input" rows="4" placeholder="مثال: الكهرباء الساكنة\nأو: الاحتكاك والشحن الكهربائي">${escapeHtml(normalizeLessonTopics(state.draft.lessonTopics).join("\n"))}</textarea>
-      </section>
+    <div class="section-intro"><h2>اختر الصف والمادة والموضوع</h2><p>ثلاث خطوات واضحة فقط. يعرض واثق موضوعات علوم كامبريدج المناسبة لاختيارك تلقائيًا.</p></div>
+    <div class="curriculum-picker" aria-label="اختيار منهج كامبريدج">
+      <label class="field curriculum-picker-step"><span><b>1</b> الصف / المرحلة</span><select id="level-select">${CAMBRIDGE_LEVEL_OPTIONS.map((item) => `<option value="${item.id}" ${levelValue === item.id ? "selected" : ""}>${item.label}</option>`).join("")}</select><small>${escapeHtml(CAMBRIDGE_LEVEL_OPTIONS.find((item) => item.id === levelValue)?.note ?? "")}</small></label>
+      <label class="field curriculum-picker-step"><span><b>2</b> المادة</span><select id="subject-select">${state.draft.programmeId === "igcse" ? `<option value="">اختر مادة العلوم</option>` : ""}${subjects.map((item) => `<option value="${item.id}" ${state.draft.subjectId === item.id ? "selected" : ""}>${item.label} · ${item.syllabusCode}</option>`).join("")}</select><small>${state.draft.programmeId === "igcse" ? "اختر مسار العلوم في IGCSE" : "العلوم هي المادة المعتمدة لهذه المرحلة"}</small></label>
+      <label class="field curriculum-picker-step"><span><b>3</b> الموضوع / الدرس</span><select id="topic-select" ${!state.draft.subjectId || !topics.length || selectedTopics.length >= MAX_LESSON_TOPICS ? "disabled" : ""}>${renderTopicOptions()}</select><small>${topics.length ? `متاح ${topics.length} موضوعًا منظمًا حسب محاور المنهج` : "اختر المادة أولًا لعرض الموضوعات"}</small></label>
     </div>
-    <section class="cambridge-context-card"><div><span class="context-label">السياق العلمي</span><h3>كامبريدج العالمي هو نقطة البداية</h3><p>يبني واثق سياق الدرس من البرنامج والمرحلة والمادة والموضوع، ثم يراجع السؤال علميًا قبل اعتماده.</p></div></section>
-    ${renderWizardFooter(1, true)}
+    <section class="topic-selection-panel" aria-labelledby="selected-topics-title">
+      <div class="topic-selection-head"><div><span id="selected-topics-title">الموضوعات المختارة</span><small>يمكنك اختيار موضوع واحد أو حتى ${MAX_LESSON_TOPICS} موضوعات للاختبار نفسه.</small></div><b>${selectedTopics.length}/${MAX_LESSON_TOPICS}</b></div>
+      <div class="topic-add-row"><button class="secondary-btn topic-add-btn" id="add-topic-btn" type="button" ${!state.draft.subjectId || !topics.length || selectedTopics.length >= MAX_LESSON_TOPICS ? "disabled" : ""}>إضافة الموضوع</button></div>
+      ${renderSelectedTopics()}
+    </section>
+    <section class="curriculum-path-card"><span>المسار الحالي</span><strong>${escapeHtml(currentPath)}</strong><small>القائمة تنظّم موضوعات المنهج حسب المرحلة؛ ترتيب التدريس الفعلي قد يختلف بين المدارس والكتب المعتمدة.</small></section>
+    <section class="cambridge-context-card"><div><span class="context-label">السياق العلمي</span><h3>كامبريدج العالمي هو نقطة البداية</h3><p>يبني واثق سياق السؤال من الصف والمادة والموضوع، ثم يراجع الدقة العلمية وملاءمة المستوى قبل اعتماد المفردة.</p></div></section>
+    ${renderWizardFooter(1, contentReady)}
   `;
 }
 
@@ -1242,8 +1260,8 @@ async function nextStep(): Promise<void> {
   const step = state.draft.currentStep;
   if (step === 1) {
     const lessons = normalizeLessonTopics(state.draft.lessonTopics);
-    if (state.draft.grade === null || !state.draft.subjectId || lessons.length < MIN_LESSON_TOPICS || lessons.length > MAX_LESSON_TOPICS) {
-      return showToast(`اختر الصف والمادة وحدد من ${MIN_LESSON_TOPICS} إلى ${MAX_LESSON_TOPICS} دروس.`);
+    if (!isStageValidForProgramme(state.draft.programmeId, state.draft.grade) || !state.draft.subjectId || lessons.length < MIN_LESSON_TOPICS || lessons.length > MAX_LESSON_TOPICS) {
+      return showToast(`اختر الصف أو المسار، والمادة، ومن ${MIN_LESSON_TOPICS} إلى ${MAX_LESSON_TOPICS} موضوعات.`);
     }
     syncDraftTopicFromLessons(state.draft);
     return setStep(2);
@@ -1497,29 +1515,38 @@ async function regeneratePlanItem(item: PlanItem): Promise<void> {
 
 
 function bindContentStep(): void {
-  document.querySelector<HTMLSelectElement>("#programme-select")?.addEventListener("change", (event) => {
-    setCambridgeProgramme(state.draft, (event.target as HTMLSelectElement).value as ExamDraft["programmeId"]);
-    invalidateCurriculumSelection(); scheduleSave(); render();
-  });
-  document.querySelector<HTMLSelectElement>("#stage-select")?.addEventListener("change", (event) => {
-    state.draft.grade = Number((event.target as HTMLSelectElement).value);
+  document.querySelector<HTMLSelectElement>("#level-select")?.addEventListener("change", (event) => {
+    const level = levelOptionForValue((event.target as HTMLSelectElement).value);
+    if (!level) return;
+    const programmeChanged = state.draft.programmeId !== level.programmeId;
+    if (programmeChanged) setCambridgeProgramme(state.draft, level.programmeId);
+    state.draft.grade = level.stage;
+    if (level.programmeId !== "igcse") setCambridgeSubject(state.draft, "science");
+    else if (programmeChanged) setCambridgeSubject(state.draft, "");
+    state.draft.lessonTopics = [];
+    syncDraftTopicFromLessons(state.draft);
     invalidateCurriculumSelection(); scheduleSave(); render();
   });
   document.querySelector<HTMLSelectElement>("#subject-select")?.addEventListener("change", (event) => {
     setCambridgeSubject(state.draft, (event.target as HTMLSelectElement).value);
+    state.draft.lessonTopics = [];
+    syncDraftTopicFromLessons(state.draft);
     invalidateCurriculumSelection(); scheduleSave(); render();
   });
-  const lessonInput = document.querySelector<HTMLTextAreaElement>("#lesson-topics-input");
-  const commit = (): void => {
-    if (!lessonInput) return;
-    const next = parseLessonInput(lessonInput.value);
-    if (next.join("\n") === normalizeLessonTopics(state.draft.lessonTopics).join("\n")) return;
-    state.draft.lessonTopics = next; syncDraftTopicFromLessons(state.draft); invalidateCurriculumSelection(); scheduleSave(); render();
-  };
-  lessonInput?.addEventListener("change", commit); lessonInput?.addEventListener("blur", commit);
-  document.querySelectorAll<HTMLButtonElement>("[data-lesson-suggestion]").forEach((button) => button.addEventListener("click", () => {
-    const value = button.dataset.lessonSuggestion?.trim(); if (!value) return;
-    state.draft.lessonTopics = [...normalizeLessonTopics(state.draft.lessonTopics), value].slice(0, MAX_LESSON_TOPICS);
+  document.querySelector<HTMLButtonElement>("#add-topic-btn")?.addEventListener("click", () => {
+    const select = document.querySelector<HTMLSelectElement>("#topic-select");
+    const value = select?.value.trim() ?? "";
+    if (!value) return showToast("اختر موضوعًا من القائمة أولًا.");
+    const current = normalizeLessonTopics(state.draft.lessonTopics);
+    if (current.includes(value)) return showToast("هذا الموضوع مختار بالفعل.");
+    if (current.length >= MAX_LESSON_TOPICS) return showToast(`يمكن اختيار حتى ${MAX_LESSON_TOPICS} موضوعات.`);
+    state.draft.lessonTopics = [...current, value];
+    syncDraftTopicFromLessons(state.draft); invalidateCurriculumSelection(); scheduleSave(); render();
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-remove-topic]").forEach((button) => button.addEventListener("click", () => {
+    const index = Number(button.dataset.removeTopic);
+    if (!Number.isInteger(index)) return;
+    state.draft.lessonTopics = normalizeLessonTopics(state.draft.lessonTopics).filter((_, itemIndex) => itemIndex !== index);
     syncDraftTopicFromLessons(state.draft); invalidateCurriculumSelection(); scheduleSave(); render();
   }));
 }

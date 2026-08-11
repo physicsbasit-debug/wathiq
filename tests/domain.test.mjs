@@ -24,7 +24,7 @@ function completePrimaryDraft() {
   draft.grade = 5;
   draft.subjectId = "science";
   draft.syllabusCode = "0097";
-  draft.lessonTopics = ["القوى والحركة"];
+  draft.lessonTopics = ["القوى ومخططات القوى"];
   syncDraftTopicFromLessons(draft);
   draft.examDate = "2026-09-15";
   return draft;
@@ -34,7 +34,7 @@ function completeLowerDraft(stage = 8) {
   const draft = createEmptyDraft(new Date("2026-09-01T08:00:00Z"));
   setCambridgeProgramme(draft, "lower_secondary");
   draft.grade = stage;
-  draft.lessonTopics = ["القوى والطاقة"];
+  draft.lessonTopics = ["القوى المتزنة وغير المتزنة"];
   syncDraftTopicFromLessons(draft);
   draft.examDate = "2026-09-15";
   return draft;
@@ -44,7 +44,7 @@ function completeIgcsePhysicsDraft() {
   const draft = createEmptyDraft(new Date("2026-09-01T08:00:00Z"));
   setCambridgeProgramme(draft, "igcse");
   setCambridgeSubject(draft, "physics");
-  draft.lessonTopics = ["الكهرباء الساكنة", "المجالات الكهربائية"];
+  draft.lessonTopics = ["الكهرباء والمغناطيسية", "الحركة والقوى والطاقة"];
   syncDraftTopicFromLessons(draft);
   draft.examDate = "2026-09-15";
   return draft;
@@ -68,13 +68,13 @@ test("يستخرج العام الأكاديمي للعرض فقط", () => {
   assert.equal(getAcademicYear(new Date("2026-09-01T00:00:00Z")), "2026/2027");
 });
 
-test("يدعم من موضوع واحد إلى خمسة موضوعات حرة", () => {
+test("يدعم من موضوع واحد إلى خمسة موضوعات مختارة", () => {
   assert.equal(MIN_LESSON_TOPICS, 1);
   assert.equal(MAX_LESSON_TOPICS, 5);
   assert.deepEqual(normalizeLessonTopics([" القوى ", "", "الطاقة"]), ["القوى", "الطاقة"]);
 });
 
-test("يقبل Cambridge Primary من اسم الموضوع فقط", () => {
+test("يقبل Cambridge Primary من موضوع مطابق لقائمة المرحلة", () => {
   const validation = validateExamSetup(completePrimaryDraft());
   assert.equal(validation.valid, true, validation.issues.map((issue) => issue.message).join(" | "));
   assert.equal(validation.computedMarks, 10);
@@ -87,7 +87,7 @@ test("يغطي المرحلة 8 ضمن Cambridge Lower Secondary", () => {
   assert.equal(draft.syllabusCode, "0893");
 });
 
-test("يدعم IGCSE Physics 0625 من عنوان الموضوع فقط", () => {
+test("يدعم IGCSE Physics 0625 من موضوعات السيلابس", () => {
   const draft = completeIgcsePhysicsDraft();
   const validation = validateExamSetup(draft);
   assert.equal(validation.valid, true, validation.issues.map((issue) => issue.message).join(" | "));
@@ -103,7 +103,7 @@ test("يرفض مرحلة لا تنتمي للمسار", () => {
 
 test("يرفض موضوعًا مكررًا بعد التطبيع العربي", () => {
   const draft = completeIgcsePhysicsDraft();
-  draft.lessonTopics = ["الشحنة الكهربائية", "  الشحنة الكهربائيّة  "];
+  draft.lessonTopics = ["الكهرباء والمغناطيسية", "  الكهرباء والمغناطيسيّة  "];
   syncDraftTopicFromLessons(draft);
   const validation = validateExamSetup(draft);
   assert.equal(validation.valid, false);
