@@ -5,6 +5,7 @@ import {
   isAiIllustrationEligible,
   parseQuestionVisualSpec,
   questionVisualAssetRequirement,
+  renderQuestionVisualForPaper,
   renderQuestionVisualSvg,
   stripQuestionVisualIllustration,
 } from "../dist/assets/question-visual.js";
@@ -13,6 +14,7 @@ function lineVisual() {
   return {
     ...emptyQuestionVisualSpec(),
     type: "line_graph",
+    requirement: "required",
     title: "المسافة والزمن",
     altText: "رسم خطي يوضح تغير المسافة مع الزمن",
     xAxisLabel: "الزمن",
@@ -31,6 +33,7 @@ function illustrated(type, extra = {}) {
   return {
     ...emptyQuestionVisualSpec(),
     type,
+    requirement: "required",
     visualId: `visual-${type}`,
     title: "رسم علمي",
     altText: "أصل علمي يوضح المفهوم دون كشف الإجابة",
@@ -50,6 +53,7 @@ test("تبقى الرسوم البيانية العددية حتمية لأن و
   const visual = parseQuestionVisualSpec(lineVisual(), "line_graph");
   assert.equal(isAiIllustrationEligible(visual), false);
   assert.equal(questionVisualAssetRequirement(visual).required, false);
+  assert.equal(questionVisualAssetRequirement(visual).desired, false);
   const html = renderQuestionVisualSvg(visual);
   assert.match(html, /<svg/);
   assert.match(html, /polyline/);
@@ -58,11 +62,11 @@ test("تبقى الرسوم البيانية العددية حتمية لأن و
 
 test("يبقى جدول البيانات وتدريج القياس حتميين ولا يتحولان إلى صورة حرة", () => {
   const table = parseQuestionVisualSpec({
-    ...emptyQuestionVisualSpec(), type: "data_table", title: "نتائج تجربة", altText: "جدول قراءات",
+    ...emptyQuestionVisualSpec(), type: "data_table", requirement: "required", title: "نتائج تجربة", altText: "جدول قراءات",
     tableColumns: ["الزمن", "المسافة"], tableRows: ["1", "2"], tableCells: [["0", "0"], ["1", "2"]], hiddenCells: [],
   }, "data_table");
   const scale = parseQuestionVisualSpec({
-    ...emptyQuestionVisualSpec(), type: "instrument_scale", title: "ميزان حرارة", altText: "تدريج حرارة", values: [-10, 100, 10, 40],
+    ...emptyQuestionVisualSpec(), type: "instrument_scale", requirement: "required", title: "ميزان حرارة", altText: "تدريج حرارة", values: [-10, 100, 10, 40],
   }, "instrument_scale");
   assert.equal(questionVisualAssetRequirement(table).required, false);
   assert.equal(questionVisualAssetRequirement(scale).required, false);
@@ -84,6 +88,8 @@ test("كل المرئيات التوضيحية تطلب أصلًا ثنائي ا
     const visual = parseQuestionVisualSpec(raw, raw.type);
     assert.equal(isAiIllustrationEligible(visual), true, raw.type);
     assert.deepEqual(questionVisualAssetRequirement(visual), {
+      level: "required",
+      desired: true,
       required: true,
       mode: "replace",
       assetKind: "scene_2d",
@@ -117,6 +123,25 @@ test("يعرض أصل 2D المدقق كصورة نهائية بلا طبقة خ
   const stripped = stripQuestionVisualIllustration(visual);
   assert.equal(stripped.illustration, undefined);
   assert.match(renderQuestionVisualSvg(stripped), /2d-required/);
+});
+
+test("المرئي المساعد يُطلب دون أن يصبح شرط اعتماد ولا يظهر كفشل في ورقة الطالب", () => {
+  const visual = parseQuestionVisualSpec({ ...illustrated("context_scene"), requirement: "helpful" }, "context_scene");
+  assert.deepEqual(questionVisualAssetRequirement(visual), {
+    level: "helpful",
+    desired: true,
+    required: false,
+    mode: "replace",
+    assetKind: "scene_2d",
+  });
+  assert.match(renderQuestionVisualSvg(visual), /2d-helpful/);
+  assert.equal(renderQuestionVisualForPaper(visual), "");
+});
+
+test("ورقة الطالب لا تعرض صندوق انتظار للأصل البصري الإلزامي", () => {
+  const visual = parseQuestionVisualSpec(illustrated("electrostatic_diagram"), "electrostatic_diagram");
+  assert.match(renderQuestionVisualSvg(visual), /2d-required/);
+  assert.equal(renderQuestionVisualForPaper(visual), "");
 });
 
 test("يهرب عناوين الرسوم الحتمية ولا يسمح بحقن SVG خام", () => {

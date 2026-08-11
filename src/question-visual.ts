@@ -2,6 +2,7 @@ import type {
   CircuitComponent,
   QuestionVisualPoint,
   QuestionVisualSeries,
+  QuestionVisualRequirement,
   QuestionVisualSpec,
   QuestionVisualType,
   QuestionVisualVector,
@@ -27,6 +28,12 @@ export const QUESTION_VISUAL_TYPES: readonly QuestionVisualType[] = [
   "force_diagram",
   "flow_diagram",
 ];
+
+export const QUESTION_VISUAL_REQUIREMENTS: readonly QuestionVisualRequirement[] = ["none", "helpful", "required"];
+
+export function isQuestionVisualRequirement(value: unknown): value is QuestionVisualRequirement {
+  return typeof value === "string" && (QUESTION_VISUAL_REQUIREMENTS as readonly string[]).includes(value);
+}
 
 export const CIRCUIT_COMPONENTS: readonly CircuitComponent[] = [
   "battery",
@@ -184,6 +191,7 @@ function cleanVectors(value: unknown): QuestionVisualVector[] {
 export function emptyQuestionVisualSpec(): QuestionVisualSpec {
   return {
     type: "none",
+    requirement: "none",
     visualId: "",
     purpose: "",
     title: "",
@@ -216,8 +224,11 @@ export function parseQuestionVisualSpec(value: unknown, expectedType?: QuestionV
   if (expectedType && record.type !== expectedType) throw new Error("نوع المرئي لا يطابق النوع المتوقع.");
 
   const illustration = parseQuestionVisualIllustration(record.illustration);
+  const legacyRequirement: QuestionVisualRequirement = record.type === "none" ? "none" : "required";
+  const requirement = isQuestionVisualRequirement(record.requirement) ? record.requirement : legacyRequirement;
   const spec: QuestionVisualSpec = {
     type: record.type,
+    requirement: record.type === "none" ? "none" : requirement,
     visualId: cleanText(record.visualId, 80),
     purpose: cleanText(record.purpose, 240),
     title: cleanText(record.title),
@@ -257,7 +268,11 @@ export function diversifyQuestionVisualSpec(spec: QuestionVisualSpec, index: num
 }
 
 export function validateQuestionVisualSpec(spec: QuestionVisualSpec): void {
-  if (spec.type === "none") return;
+  if (spec.type === "none") {
+    if (spec.requirement !== "none") throw new Error("المرئي غير الموجود يجب أن تكون حاجته none.");
+    return;
+  }
+  if (spec.requirement === "none") throw new Error("المرئي الموجود يحتاج تصنيف helpful أو required.");
   if (!spec.title || !spec.altText) throw new Error("المرئي التعليمي يحتاج عنوانًا ووصفًا بديلًا.");
 
   // Illustrative science visuals are validated by the independent multimodal reviewer after generation.
@@ -414,15 +429,23 @@ export function isAiIllustrationEligible(spec: QuestionVisualSpec): boolean {
 }
 
 export interface QuestionVisualAssetRequirement {
+  level: QuestionVisualRequirement;
+  desired: boolean;
   required: boolean;
   mode: "replace" | null;
   assetKind: "scene_2d" | null;
 }
 
 export function questionVisualAssetRequirement(spec: QuestionVisualSpec): QuestionVisualAssetRequirement {
-  return isAiIllustrationEligible(spec)
-    ? { required: true, mode: "replace", assetKind: "scene_2d" }
-    : { required: false, mode: null, assetKind: null };
+  const eligible = isAiIllustrationEligible(spec);
+  const desired = eligible && spec.requirement !== "none";
+  return {
+    level: spec.requirement,
+    desired,
+    required: eligible && spec.requirement === "required",
+    mode: desired ? "replace" : null,
+    assetKind: desired ? "scene_2d" : null,
+  };
 }
 
 export function stripQuestionVisualIllustration(spec: QuestionVisualSpec): QuestionVisualSpec {
@@ -440,7 +463,13 @@ export function renderQuestionVisualSvg(spec: QuestionVisualSpec): string {
 
   if (isAiIllustrationEligible(spec)) {
     if (!isValidated2DIllustration(spec)) {
-      return `<figure class="question-visual question-visual-${spec.type} question-visual-2d-required" data-visual-id="${escapeXml(spec.visualId ?? "")}" data-visual-mode="2d-required" data-visual-asset-kind="pending"><div class="question-visual-2d-placeholder" role="status" aria-label="${escapeXml(spec.altText)}"><strong>الأصل العلمي ثنائي الأبعاد غير جاهز بعد</strong><span>سيظهر المرئي بعد إنشائه واجتياز المراجعة العلمية والبصرية. لا يوجد رسم خطي احتياطي.</span></div><figcaption>${escapeXml(spec.altText)}</figcaption></figure>`;
+      const required = spec.requirement === "required";
+      const mode = required ? "2d-required" : "2d-helpful";
+      const title = required ? "الأصل العلمي ثنائي الأبعاد غير جاهز بعد" : "المرئي العلمي المساعد غير جاهز بعد";
+      const note = required
+        ? "سيظهر المرئي بعد إنشائه واجتياز المراجعة العلمية والبصرية. لا يوجد رسم خطي احتياطي."
+        : "هذا المرئي مساعد فقط، ولن يمنع اعتماد السؤال أو تصديره إذا بقي النص قائمًا بذاته.";
+      return `<figure class="question-visual question-visual-${spec.type} question-visual-${mode}" data-visual-id="${escapeXml(spec.visualId ?? "")}" data-visual-mode="${mode}" data-visual-asset-kind="pending"><div class="question-visual-2d-placeholder" role="status" aria-label="${escapeXml(spec.altText)}"><strong>${title}</strong><span>${note}</span></div><figcaption>${escapeXml(spec.altText)}</figcaption></figure>`;
     }
     return `<figure class="question-visual question-visual-${spec.type} question-visual-illustrated" data-visual-id="${escapeXml(spec.visualId ?? "")}" data-visual-mode="illustrated" data-visual-asset-kind="scene_2d"><div class="question-visual-illustrated" data-hybrid-visual="ready"><img class="question-visual-illustration" src="${escapeXml(spec.illustration!.url)}" alt="${escapeXml(spec.altText)}" loading="eager" decoding="async" crossorigin="anonymous"/></div><figcaption>${escapeXml(spec.altText)}</figcaption></figure>`;
   }
@@ -453,4 +482,15 @@ export function renderQuestionVisualSvg(spec: QuestionVisualSpec): string {
         ? renderDataTable(spec)
         : renderInstrumentScale(spec);
   return `<figure class="question-visual question-visual-${spec.type} question-visual-structured-exact" data-visual-id="${escapeXml(spec.visualId ?? "")}" data-visual-mode="structured-exact" data-visual-asset-kind="structured"><div class="question-visual-structured">${body}</div><figcaption>${escapeXml(spec.altText)}</figcaption></figure>`;
+}
+
+/**
+ * إخراج الطالب/التصدير لا يعرض أبدًا صندوق فشل أو انتظار بصري.
+ * المرئي التوضيحي يظهر فقط بعد اعتماد أصل 2D، بينما الرسوم الحتمية تبقى قابلة للطباعة فورًا.
+ */
+export function renderQuestionVisualForPaper(spec: QuestionVisualSpec): string {
+  validateQuestionVisualSpec(spec);
+  if (spec.type === "none") return "";
+  if (isAiIllustrationEligible(spec) && !isValidated2DIllustration(spec)) return "";
+  return renderQuestionVisualSvg(spec);
 }

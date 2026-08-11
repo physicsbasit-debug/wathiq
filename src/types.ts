@@ -9,6 +9,7 @@ export type AssessmentType = "اختبار قصير" | "اختبار نهائي"
 export type AssessmentGenerationMode = "progressive_items_v1";
 export type CambridgeProgrammeId = "primary" | "lower_secondary" | "igcse";
 export type QuestionVisualType = "none" | "context_scene" | "line_graph" | "bar_chart" | "pressure_diagram" | "circuit_diagram" | "electrostatic_diagram" | "data_table" | "instrument_scale" | "ray_diagram" | "force_diagram" | "flow_diagram";
+export type QuestionVisualRequirement = "none" | "helpful" | "required";
 export type CircuitComponent = "battery" | "switch_open" | "switch_closed" | "lamp" | "resistor" | "motor" | "ammeter" | "voltmeter";
 
 export interface QuestionVisualPoint {
@@ -69,6 +70,7 @@ export interface QuestionVisualJobSnapshot {
 
 export interface QuestionVisualSpec {
   type: QuestionVisualType;
+  requirement: QuestionVisualRequirement;
   visualId?: string;
   purpose?: string;
   title: string;

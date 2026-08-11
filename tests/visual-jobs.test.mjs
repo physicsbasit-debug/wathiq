@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { requiredVisualJobItems, VisualJobService } from "../dist/assets/visual-jobs.js";
+import { visualJobItems, VisualJobService } from "../dist/assets/visual-jobs.js";
 
 function draftWithVisual(type, extra = {}) {
   return {
@@ -8,18 +8,25 @@ function draftWithVisual(type, extra = {}) {
     selectedProposalByPlanItem: { p1: "q1" },
     plan: [{
       id: "p1", lessonLabel: "الكهرباء الساكنة",
-      visual: { type, visualId: "v1", purpose: "توضيح", title: "مرئي", altText: "مرئي علمي", xAxisLabel: "", xAxisUnit: "", yAxisLabel: "", yAxisUnit: "", xMin: 0, xMax: 1, yMin: 0, yMax: 1, points: [], series: [], labels: ["أ", "ب", "ج"], values: [], components: [], annotations: [], tableColumns: [], tableRows: [], tableCells: [], hiddenCells: [], vectors: [], ...extra },
+      visual: { type, requirement: "required", visualId: "v1", purpose: "توضيح", title: "مرئي", altText: "مرئي علمي", xAxisLabel: "", xAxisUnit: "", yAxisLabel: "", yAxisUnit: "", xMin: 0, xMax: 1, yMin: 0, yMax: 1, points: [], series: [], labels: ["أ", "ب", "ج"], values: [], components: [], annotations: [], tableColumns: [], tableRows: [], tableCells: [], hiddenCells: [], vectors: [], ...extra },
       proposals: [{ id: "q1", stimulus: "", text: "فسر العلاقة.", answer: "", reviewSupport: "سياق كامبريدج العالمي" }],
     }],
   };
 }
 
 test("المرئي التوضيحي ينشئ مهمة 2D حتى في IGCSE بلا رقم مرحلة", () => {
-  const items = requiredVisualJobItems(draftWithVisual("context_scene"), "الفيزياء");
+  const items = visualJobItems(draftWithVisual("context_scene"), "الفيزياء");
   assert.equal(items.length, 1);
   assert.equal(items[0].requiredMode, "replace");
   assert.equal(items[0].programmeId, "igcse");
   assert.equal(items[0].stageLabel, "كامبريدج للشهادة الدولية العامة للتعليم الثانوي");
+});
+
+test("المرئي المساعد يدخل طابور الصور لكنه لا يوصف كإلزامي", () => {
+  const draft = draftWithVisual("context_scene", { requirement: "helpful" });
+  const items = visualJobItems(draft, "الفيزياء");
+  assert.equal(items.length, 1);
+  assert.equal(items[0].requiredMode, "replace");
 });
 
 test("الرسم البياني الدقيق لا يرسل إلى نموذج الصور", () => {
@@ -27,7 +34,7 @@ test("الرسم البياني الدقيق لا يرسل إلى نموذج ا�
     title: "الزمن والمسافة", altText: "رسم بيانات", xAxisLabel: "الزمن", yAxisLabel: "المسافة", xMin: 0, xMax: 1, yMin: 0, yMax: 2,
     points: [{ x: 0, y: 0, label: "" }, { x: 1, y: 2, label: "" }], labels: [],
   });
-  assert.equal(requiredVisualJobItems(draft, "الفيزياء").length, 0);
+  assert.equal(visualJobItems(draft, "الفيزياء").length, 0);
 });
 
 test("VisualJobService يرسل المهمة إلى الوظيفة الدائمة", async () => {
@@ -43,7 +50,7 @@ test("VisualJobService يرسل المهمة إلى الوظيفة الدائم�
       }] }), { status: 200 });
     },
   );
-  const jobs = await service.enqueue("draft-1", requiredVisualJobItems(draftWithVisual("context_scene"), "الفيزياء"));
+  const jobs = await service.enqueue("draft-1", visualJobItems(draftWithVisual("context_scene"), "الفيزياء"));
   assert.equal(jobs.length, 1);
   assert.match(calls[0].url, /question-visual-jobs$/);
 });

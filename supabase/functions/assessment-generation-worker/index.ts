@@ -31,6 +31,8 @@ const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 type RetryClass = "none" | "transport_once" | "content_once";
 type QuestionType = "اختيار من متعدد" | "إجابة قصيرة" | "إجابة طويلة";
 type VisualMode = "none" | "illustration_2d" | "data_table" | "line_graph" | "bar_chart";
+type VisualRequirement = "none" | "helpful" | "required";
+type StimulusDisposition = "keep" | "remove";
 
 interface ClaimedItemRow {
   id: string;
@@ -137,6 +139,8 @@ interface ReviewResult {
   approved: boolean;
   issues: string[];
   supportingContextIds: string[];
+  stimulusDisposition: StimulusDisposition;
+  visualRequirement: VisualRequirement;
   finalItem: ModelContent;
 }
 
@@ -168,7 +172,7 @@ Deno.serve(async (req) => {
         contractVersion: 4,
         authorModel: AUTHOR_MODEL,
         reviewModel: REVIEW_MODEL,
-        philosophy: "cambridge-first-official-blueprint-free-authoring-v3",
+        philosophy: "cambridge-first-science-guard-visual-necessity-v4",
         requestId,
       });
     }
@@ -222,7 +226,8 @@ async function processItem(itemId: string, ownerId: string, requestId: string): 
     modelMs = Date.now() - modelStartedAt;
 
     const reviewed = normalizeReviewResult(review.value, contract);
-    const content = normalizeModelContent(reviewed.finalItem, contract);
+    let content = normalizeModelContent(reviewed.finalItem, contract);
+    content = applyStudentFacingDecisions(content, reviewed);
 
     const validationStartedAt = Date.now();
     validateContent(content, contract);
@@ -234,8 +239,20 @@ async function processItem(itemId: string, ownerId: string, requestId: string): 
         422,
       );
     }
+    const deterministicScienceIssues = validateScienceAdapters(content, contract);
+    if (deterministicScienceIssues.length) {
+      throw workerError(
+        "MODEL_SCIENTIFIC_MISMATCH",
+        deterministicScienceIssues[0]!,
+        "content_once",
+        422,
+      );
+    }
+    if (reviewed.visualRequirement === "required" && content.visual.mode === "none") {
+      throw workerError("MODEL_ASSESSMENT_MISMATCH", "صنّف المراجع المرئي إلزاميًا لكن المفردة لا تحتوي مواصفة مرئية قابلة للتنفيذ.", "content_once", 422);
+    }
     const evidence = selectEvidenceAnchor(context, reviewed.supportingContextIds);
-    const visual = buildVisualSpec(content.visual, contract);
+    const visual = buildVisualSpec(content.visual, contract, reviewed.visualRequirement);
     validationMs = Date.now() - validationStartedAt;
 
     const totalMs = Date.now() - totalStartedAt;
@@ -435,7 +452,10 @@ async function callReviewer(contract: ItemContract, context: ContextBlock[], exa
       "مستوى التفكير حقيقي ومتوافق مع المطلوب، والمشتتات في الاختيار من متعدد معقولة وغير هزلية.",
       "الإجابة ونموذج التصحيح متسقان، ونقطة مستقلة لكل درجة.",
       "أي أرقام أو وحدات أو علاقات أو استنتاجات يجب أن تكون صحيحة وقابلة للحل من المعطيات.",
-      "لا تجعل المرئي زينة. إن طُلب مرئي فيجب أن يكون لازمًا أو مفيدًا بوضوح وأن يطابق السؤال علميًا.",
+      "افحص خواص المواد والإجراءات المقترحة معًا: لا تعتمد مثلًا تأريض جسم بلاستيكي عازل بوصفه مسارًا فعالًا لتفريغ الشحنة، ولا تسمح بانتقال البروتونات بين الأجسام في الشحن بالاحتكاك.",
+      "المثير الموجّه للطالب يبقى فقط إذا كان يحمل بيانات أو موقفًا لازمًا لفهم السؤال. احذف الجمل التعليمية العامة والتعريفات والتلميحات التي تقرّب الإجابة أو تكرر ما يعرفه الطالب مسبقًا.",
+      "صنّف المرئي إلى none أو helpful أو required. required فقط إذا كان الطالب لا يستطيع الإجابة بعدل من النص وحده، helpful إذا كان يوضح دون أن يكون لازمًا، وnone إذا كان زينة أو لا يضيف قيمة قياس.",
+      "لا تجعل المرئي زينة. إن طُلب مرئي فيجب أن يطابق السؤال علميًا ولا يكشف الإجابة.",
       "أصلح المفردة بنفسك إذا وجدت عيبًا. approved=true فقط إذا أصبحت finalItem صالحة للاستخدام.",
       "supportingContextIds يجب أن تشير إلى سياق Cambridge العالمي الذي يدعم الفكرة العلمية؛ لا تستخدم تشابه الكلمات معيارًا للرفض.",
     ],
@@ -469,6 +489,9 @@ function reviewerSystemInstruction(): string {
     "لا تجامل المؤلف. افحص العلم والقياس واللغة والدرجة والمشتتات والمرئي.",
     "يمكنك إعادة كتابة finalItem كاملة لإصلاحها، لكن لا تغيّر نوع السؤال أو الدرجة. استخدم مستوى التفكير كتوجيه، وتحقق أن المحتوى داخل نطاق Cambridge للمرحلة/المقرر والموضوع المحددين.",
     "إذا كان العقد يحدد استقصاءً علميًا فتأكد أن السؤال يقيس الاستقصاء فعليًا لا أن يذكر تجربة كزينة.",
+    "افصل محتوى الطالب عن الشرح التعليمي: المثير ليس شرحًا ولا تلميحًا، ونموذج التصحيح والتفسير لا يظهران في نص الطالب.",
+    "احكم على ضرورة المرئي صراحة: required فقط عند الحاجة الفعلية للحل، helpful للمساعدة غير اللازمة، none عند عدم الحاجة.",
+    "راجع خواص المادة والإجراء الفيزيائي معًا، خصوصًا الموصل/العازل والتأريض وانتقال الشحنة.",
     "اعتمد المعرفة الراسخة بمنهج Cambridge والسياق العالمي المرفق. لا تستخدم تطابق الكلمات كمعيار للجودة.",
     "أعد JSON فقط وفق المخطط.",
   ].join("\n");
@@ -543,9 +566,11 @@ function reviewSchema(contract: ItemContract): Record<string, unknown> {
       approved: { type: "boolean" },
       issues: { type: "array", items: { type: "string" }, maxItems: 8 },
       supportingContextIds: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 5 },
+      stimulusDisposition: { type: "string", enum: ["keep", "remove"] },
+      visualRequirement: { type: "string", enum: ["none", "helpful", "required"] },
       finalItem: itemSchema(contract),
     },
-    required: ["approved", "issues", "supportingContextIds", "finalItem"],
+    required: ["approved", "issues", "supportingContextIds", "stimulusDisposition", "visualRequirement", "finalItem"],
     additionalProperties: false,
   };
 }
@@ -623,10 +648,16 @@ async function callJsonModel(
 
 function normalizeReviewResult(value: unknown, contract: ItemContract): ReviewResult {
   const record = requireRecord(value, "استجابة المراجع غير صالحة.");
+  const stimulusDisposition: StimulusDisposition = record.stimulusDisposition === "remove" ? "remove" : "keep";
+  const visualRequirement: VisualRequirement = ["none", "helpful", "required"].includes(String(record.visualRequirement))
+    ? record.visualRequirement as VisualRequirement
+    : "none";
   return {
     approved: record.approved === true,
     issues: uniqueStrings(record.issues).slice(0, 8),
     supportingContextIds: uniqueStrings(record.supportingContextIds).slice(0, 5),
+    stimulusDisposition,
+    visualRequirement,
     finalItem: normalizeModelContent(record.finalItem, contract),
   };
 }
@@ -692,6 +723,42 @@ function validateContent(content: ModelContent, contract: ItemContract): void {
   }
 }
 
+function applyStudentFacingDecisions(content: ModelContent, review: ReviewResult): ModelContent {
+  const definitionLike = /^(?:عر[ّ]?ف|اذكر|سم[ِّ]?|حدد\s+المصطلح|ما\s+المقصود|ما\s+هو)\b/u.test(content.text.trim());
+  const stimulus = review.stimulusDisposition === "remove" || definitionLike ? "" : content.stimulus;
+  return { ...content, stimulus };
+}
+
+function validateScienceAdapters(content: ModelContent, contract: ItemContract): string[] {
+  const issues: string[] = [];
+  const student = `${content.stimulus} ${content.text}`.replace(/\s+/gu, " ");
+  const teacher = `${content.answer} ${content.rationale} ${content.markScheme.join(" ")}`.replace(/\s+/gu, " ");
+  const scope = `${contract.subject} ${contract.topic} ${contract.lessonLabel} ${student} ${teacher}`;
+
+  if (/فيزياء|كهرب|شحن|احتكاك|موصل|عازل/u.test(scope)) {
+    const protonTransfer = /(?:انتقال|انتقلت|ينتقل|فقد|فقدان|اكتساب|اكتسب)[^.!؟]{0,60}البروتون/u.test(teacher)
+      || /البروتون(?:ات)?[^.!؟]{0,60}(?:انتقال|انتقلت|ينتقل)/u.test(teacher);
+    if (protonTransfer) {
+      issues.push("رفضه محقق الفيزياء: الشحن بالاحتكاك بين الأجسام العادية يفسر بانتقال الإلكترونات لا انتقال البروتونات.");
+    }
+
+    const insulatingTube = /(?:أنبوب|خرطوم)[^.!؟]{0,70}(?:بلاستيك|بلاستيكي|عازل)/u.test(student)
+      || /(?:بلاستيك|بلاستيكي|عازل)[^.!؟]{0,70}(?:أنبوب|خرطوم)/u.test(student);
+    const groundsInsulatingTube = /(?:تأريض|توصيل|وصل|يوصل)[^.!؟]{0,80}(?:الأنبوب|الخرطوم)[^.!؟]{0,80}(?:الأرض|بالأرض)/u.test(teacher)
+      || /(?:الأنبوب|الخرطوم)[^.!؟]{0,80}(?:تأريض|بالأرض|إلى\s+الأرض)/u.test(teacher);
+    if (insulatingTube && groundsInsulatingTube) {
+      issues.push("رفضه محقق الفيزياء: لا يُعتمد تأريض أنبوب أو خرطوم بلاستيكي عازل بوصفه مسارًا فعالًا لتفريغ الشحنة؛ يجب أن يكون مسار التفريغ عبر أجزاء موصلة/مبددة للشحنة ومؤرضة.");
+    }
+
+    const metallicConduction = /موصل(?:ات)?\s+فلز|الموصلات\s+الفلزية/u.test(student);
+    if (metallicConduction && /البروتون/u.test(content.answer) && !/الإلكترون/u.test(content.answer)) {
+      issues.push("رفضه محقق الفيزياء: حاملات الشحنة الحرة في الموصلات الفلزية هي الإلكترونات الحرة، لا البروتونات.");
+    }
+  }
+
+  return issues;
+}
+
 function selectEvidenceAnchor(context: ContextBlock[], requestedIds: string[]): Record<string, unknown> {
   const requested = requestedIds.map((id) => context.find((block) => block.id === id)).filter((block): block is ContextBlock => Boolean(block));
   const chosen = requested[0] ?? context[0];
@@ -704,9 +771,11 @@ function selectEvidenceAnchor(context: ContextBlock[], requestedIds: string[]): 
   };
 }
 
-function buildVisualSpec(visual: VisualProposal, contract: ItemContract): Record<string, unknown> {
+function buildVisualSpec(visual: VisualProposal, contract: ItemContract, requirement: VisualRequirement): Record<string, unknown> {
+  const normalizedRequirement: VisualRequirement = visual.mode === "none" || requirement === "none" ? "none" : requirement;
   const base = {
     visualId: `visual-${contract.planItemId}`,
+    requirement: normalizedRequirement,
     purpose: visual.brief,
     title: contract.lessonLabel,
     altText: visual.brief || `مرئي علمي مساعد لسؤال في ${contract.lessonLabel}`,
@@ -715,7 +784,7 @@ function buildVisualSpec(visual: VisualProposal, contract: ItemContract): Record
     points: [], series: [], labels: [], values: [], components: [], annotations: [],
     tableColumns: [], tableRows: [], tableCells: [], hiddenCells: [], vectors: [],
   };
-  if (visual.mode === "none") return { ...base, type: "none", purpose: "", altText: "" };
+  if (visual.mode === "none" || normalizedRequirement === "none") return { ...base, type: "none", requirement: "none", purpose: "", altText: "" };
   if (visual.mode === "illustration_2d") {
     return { ...base, type: "context_scene" };
   }

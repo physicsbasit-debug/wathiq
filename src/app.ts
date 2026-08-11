@@ -19,7 +19,7 @@ import {
 import { clearDraft, loadDraft, loadDrafts, loadProfile, saveDraft, saveProfile, setActiveDraftId } from "./storage.js";
 import type { ExamDraft, ExamTitleOption, PlanItem, QuestionVisualJobSnapshot, ViewName, WizardStep } from "./types.js";
 import { escapeHtml, formatArabicDate, icon } from "./ui.js";
-import { questionVisualAssetRequirement, questionVisualTypeLabel, renderQuestionVisualSvg, stripQuestionVisualIllustration, validateQuestionVisualSpec } from "./question-visual.js";
+import { questionVisualAssetRequirement, questionVisualTypeLabel, renderQuestionVisualForPaper, renderQuestionVisualSvg, stripQuestionVisualIllustration, validateQuestionVisualSpec } from "./question-visual.js";
 import { buildStandaloneExamDocument, downloadWordHtml, interleaveAssessmentItems, printHtmlDocument, safeExportFileName } from "./exam-export.js";
 import { getRuntimeConfig, isCentralStorageConfigured } from "./runtime-config.js";
 import { OwnerSessionService } from "./owner-session.js";
@@ -38,8 +38,9 @@ import {
   type AssessmentGenerationRunSnapshot,
   type AssessmentItemContract,
 } from "./assessment-engine/index.js";
-import { VisualJobService, isVisualJobPending, requiredVisualJobItems } from "./visual-jobs.js";
+import { VisualJobService, isVisualJobPending, visualJobItems } from "./visual-jobs.js";
 import { EXAM_TITLE_OPTIONS, assessmentSpecification } from "./cambridge-assessment.js";
+import { validateScienceItem } from "./science-validation.js";
 import {
   CAMBRIDGE_LEVEL_OPTIONS,
   curriculumDisplayName,
@@ -589,22 +590,30 @@ function renderPlanVisual(item: PlanItem, compact = false): string {
   const ready = Boolean(job?.status === "ready" && job.asset?.validated && item.visual.illustration?.validated);
   const pending = Boolean(job && isVisualJobPending(job.status));
   const failed = job?.status === "failed" || job?.status === "cancelled";
-  const modeLabel = !requirement.required
+  const modeLabel = !requirement.desired
     ? "تمثيل علمي منظم دقيق"
     : ready
       ? "صورة تعليمية ثنائية الأبعاد معتمدة"
-      : pending
-        ? "مهمة بصرية دائمة قيد التنفيذ"
-        : failed
-          ? "فشل الأصل البصري المطلوب"
-          : "أصل بصري مطلوب قبل الاعتماد";
-  const controls = !compact && requirement.required ? `<div class="visual-action-row">
-    <button class="secondary-btn compact" data-action="${ready ? "regenerate-visual-job" : failed ? "retry-visual-job" : "sync-visual-job"}" data-plan-id="${escapeHtml(item.id)}" ${(pending || state.draft.status === "معتمد" || state.visualJobSyncBusy) ? "disabled" : ""}>${icon("spark")} ${pending ? "جارٍ التنفيذ…" : ready ? "إعادة توليد الأصل" : failed ? "إعادة المحاولة" : "إنشاء الأصل بصري ثنائي الأبعاد"}</button>
+      : requirement.required
+        ? pending
+          ? "أصل بصري إلزامي قيد التنفيذ"
+          : failed
+            ? "تعذر الأصل البصري الإلزامي"
+            : "أصل بصري إلزامي قبل الاعتماد"
+        : pending
+          ? "مرئي مساعد قيد التنفيذ"
+          : failed
+            ? "تعذر المرئي المساعد دون تعطيل السؤال"
+            : "مرئي مساعد غير مانع للاعتماد";
+  const controls = !compact && requirement.desired ? `<div class="visual-action-row">
+    <button class="secondary-btn compact" data-action="${ready ? "regenerate-visual-job" : failed ? "retry-visual-job" : "sync-visual-job"}" data-plan-id="${escapeHtml(item.id)}" ${(pending || state.draft.status === "معتمد" || state.visualJobSyncBusy) ? "disabled" : ""}>${icon("spark")} ${pending ? "جارٍ التنفيذ…" : ready ? "إعادة توليد الأصل" : failed ? "إعادة المحاولة" : "إنشاء الأصل البصري"}</button>
   </div>` : "";
-  const message = !compact && requirement.required
-    ? `<p class="visual-enhancement-message ${failed ? "error" : ready ? "success" : ""}" aria-live="polite">${escapeHtml(visualJobMessage(job))}</p>`
+  const message = !compact && requirement.desired
+    ? `<p class="visual-enhancement-message ${failed ? (requirement.required ? "error" : "") : ready ? "success" : ""}" aria-live="polite">${escapeHtml(visualJobMessage(job))}${failed && !requirement.required ? " المرئي مساعد فقط ولن يمنع الاعتماد أو التصدير." : ""}</p>`
     : "";
-  return `<section class="plan-shared-visual ${compact ? "compact" : ""}"><div class="visual-heading"><strong>${escapeHtml(questionVisualTypeLabel(item.visual.type))}</strong><span>${escapeHtml(modeLabel)}</span></div>${renderQuestionVisualSvg(item.visual)}${controls}${message}</section>`;
+  const visualHtml = compact ? renderQuestionVisualForPaper(item.visual) : renderQuestionVisualSvg(item.visual);
+  if (compact && !visualHtml) return "";
+  return `<section class="plan-shared-visual ${compact ? "compact" : ""}"><div class="visual-heading"><strong>${escapeHtml(questionVisualTypeLabel(item.visual.type))}</strong><span>${escapeHtml(modeLabel)}</span></div>${visualHtml}${controls}${message}</section>`;
 }
 
 function renderGenerationPlaceholder(item: PlanItem): string {
@@ -632,7 +641,7 @@ function renderPlanItem(item: PlanItem, index: number): string {
     ? `<div class="proposal-grid">${item.proposals.map((proposal, proposalIndex) => {
       const selected = chosen === proposal.id || item.proposals.length === 1;
       const hasMultipleProposals = item.proposals.length > 1;
-      return `<${hasMultipleProposals ? "label" : "div"} class="proposal-card ${selected ? "selected" : ""} ${hasMultipleProposals ? "" : "progressive-single-proposal"}">${hasMultipleProposals ? `<input type="radio" name="proposal-${item.id}" data-plan-id="${item.id}" value="${proposal.id}" ${selected ? "checked" : ""} ${state.draft.status === "معتمد" ? "disabled" : ""}/>` : ""}<div class="proposal-top"><span>${hasMultipleProposals ? `البديل ${proposalIndex + 1}` : "المفردة المعتمدة من المحرك"}</span><div class="proposal-badges"><b class="generation-item-badge ${generationItemStatusClass(status)}">${escapeHtml(generationItemStatusLabel(status))}</b>${false ? `<b class="review-needed-badge">يحتاج تدقيقًا أدق</b>` : ""}</div></div>${proposal.stimulus ? `<div class="proposal-stimulus">${escapeHtml(proposal.stimulus)}</div>` : ""}<p>${escapeHtml(proposal.text)}</p>${renderProposalOptions(proposal.options)}<details class="proposal-evidence"><summary>الإجابة ونموذج التصحيح والمراجعة العلمية</summary><p class="proposal-answer"><strong>الإجابة:</strong> ${escapeHtml(proposal.answer)}</p>${renderMarkScheme(proposal.markScheme)}${proposal.rationale ? `<p><strong>سبب الإجابة:</strong> ${escapeHtml(proposal.rationale)}</p>` : ""}${proposal.reviewSupport ? `<blockquote>${escapeHtml(proposal.reviewSupport)}</blockquote>` : ""}</details>${hasMultipleProposals ? `<span class="choose-label">${selected ? `${icon("check")} تم الاختيار` : "اختر هذا السؤال"}</span>` : `<span class="choose-label">${icon("check")} حُفظت خادميًا واختيرت تلقائيًا</span>`}</${hasMultipleProposals ? "label" : "div"}>`;
+      return `<${hasMultipleProposals ? "label" : "div"} class="proposal-card ${selected ? "selected" : ""} ${hasMultipleProposals ? "" : "progressive-single-proposal"}">${hasMultipleProposals ? `<input type="radio" name="proposal-${item.id}" data-plan-id="${item.id}" value="${proposal.id}" ${selected ? "checked" : ""} ${state.draft.status === "معتمد" ? "disabled" : ""}/>` : ""}<div class="proposal-top"><span>${hasMultipleProposals ? `البديل ${proposalIndex + 1}` : "المفردة المعتمدة من المحرك"}</span><div class="proposal-badges"><b class="generation-item-badge ${generationItemStatusClass(status)}">${escapeHtml(generationItemStatusLabel(status))}</b>${false ? `<b class="review-needed-badge">يحتاج تدقيقًا أدق</b>` : ""}</div></div>${proposal.stimulus ? `<div class="proposal-stimulus">${escapeHtml(proposal.stimulus)}</div>` : ""}<p>${escapeHtml(proposal.text)}</p>${renderProposalOptions(proposal.options)}<details class="proposal-evidence"><summary>الإجابة ونموذج التصحيح</summary><p class="proposal-answer"><strong>الإجابة:</strong> ${escapeHtml(proposal.answer)}</p>${renderMarkScheme(proposal.markScheme)}${proposal.rationale || proposal.reviewSupport ? `<details class="proposal-science-details"><summary>التفسير العلمي وملاحظات المراجع</summary>${proposal.rationale ? `<p><strong>التفسير العلمي:</strong> ${escapeHtml(proposal.rationale)}</p>` : ""}${proposal.reviewSupport ? `<blockquote>${escapeHtml(proposal.reviewSupport)}</blockquote>` : ""}</details>` : ""}</details>${hasMultipleProposals ? `<span class="choose-label">${selected ? `${icon("check")} تم الاختيار` : "اختر هذا السؤال"}</span>` : `<span class="choose-label">${icon("check")} حُفظت خادميًا واختيرت تلقائيًا</span>`}</${hasMultipleProposals ? "label" : "div"}>`;
     }).join("")}</div>`
     : renderGenerationPlaceholder(item);
   const footer = task?.status === "failed"
@@ -665,8 +674,20 @@ function renderPaperResponseArea(item: PlanItem, proposal: SelectedPaperItem["pr
   return `${proposal.workingRequired ? `<p class="working-note">أظهر خطوات الحل بوضوح.</p>` : ""}<div class="answer-lines">${Array.from({ length: lineCount }, () => "<span></span>").join("")}</div>`;
 }
 
+function studentPaperStimulus(proposal: SelectedPaperItem["proposal"]): string {
+  const stimulus = proposal.stimulus?.trim() ?? "";
+  if (!stimulus) return "";
+  const stem = proposal.text.trim();
+  if (/^(?:عر[ّ]?ف|اذكر|سم[ِّ]?|حدد\s+المصطلح|ما\s+المقصود|ما\s+هو)\b/u.test(stem)) return "";
+  const genericTeachingLead = /^(?:يتم|يستخدم|تختلف|تعتمد|تُستخدم|يحدث)\b/u.test(stimulus);
+  const stemAlreadyCarriesScenario = /(?:عند|أثناء|إذا|لوحظ|قُرّب|قرب|عُلّقت|علقت|وُضع|وضع)\b/u.test(stem);
+  if (genericTeachingLead && stemAlreadyCarriesScenario) return "";
+  return stimulus;
+}
+
 function renderPaperPrompt(item: PlanItem, proposal: SelectedPaperItem["proposal"], label: string, subpart: boolean): string {
-  return `<div class="${subpart ? "paper-subpart" : "paper-question"}">${proposal.stimulus ? `<div class="paper-stimulus">${escapeHtml(proposal.stimulus)}</div>` : ""}${renderPlanVisual(item, true)}<div class="paper-question-title"><b>${escapeHtml(label)}</b><span>${escapeHtml(proposal.text)}</span><strong>[${item.marks}]</strong></div>${renderPaperResponseArea(item, proposal)}</div>`;
+  const stimulus = studentPaperStimulus(proposal);
+  return `<div class="${subpart ? "paper-subpart" : "paper-question"}">${stimulus ? `<div class="paper-stimulus">${escapeHtml(stimulus)}</div>` : ""}${renderPlanVisual(item, true)}<div class="paper-question-title"><b>${escapeHtml(label)}</b><span>${escapeHtml(proposal.text)}</span><strong>[${item.marks}]</strong></div>${renderPaperResponseArea(item, proposal)}</div>`;
 }
 
 function buildPaperLayout(selected: SelectedPaperItem[]): PaperLayout {
@@ -725,8 +746,12 @@ function renderAnswerKeyArticles(selected: SelectedPaperItem[], labels: Map<stri
   return selected.map(({ item, proposal }) => {
     const label = labels.get(item.id) ?? "؟";
     const headClass = exportMode ? "teacher-key-head" : "answer-key-head";
-    const curriculum = curriculumDisplayName(state.draft.programmeId, state.draft.subjectId, state.draft.grade);
-    return `<article><div class="${headClass}"><strong>${escapeHtml(label)}) ${escapeHtml(proposal.answer)}</strong></div>${renderPlanVisual(item, true)}${renderMarkScheme(proposal.markScheme)}${proposal.rationale ? `<p>${escapeHtml(proposal.rationale)}</p>` : ""}<small>${escapeHtml(curriculum)} · ${escapeHtml(item.lessonLabel)}</small>${proposal.reviewSupport ? `<blockquote>${escapeHtml(proposal.reviewSupport)}</blockquote>` : ""}</article>`;
+    const explanation = proposal.rationale ? `<p class="teacher-explanation"><strong>التفسير العلمي:</strong> ${escapeHtml(proposal.rationale)}</p>` : "";
+    const reviewerNote = proposal.reviewSupport ? `<blockquote>${escapeHtml(proposal.reviewSupport)}</blockquote>` : "";
+    const reviewDetails = exportMode
+      ? `${explanation}`
+      : (explanation || reviewerNote ? `<details class="proposal-science-details"><summary>التفسير العلمي وملاحظات المراجع</summary>${explanation}${reviewerNote}</details>` : "");
+    return `<article><div class="${headClass}"><strong>${escapeHtml(label)}) ${escapeHtml(proposal.answer)}</strong></div>${renderPlanVisual(item, true)}${renderMarkScheme(proposal.markScheme)}${reviewDetails}<small>${escapeHtml(item.lessonLabel)}</small></article>`;
   }).join("");
 }
 
@@ -741,6 +766,7 @@ function renderTeacherAnswerKey(selected: SelectedPaperItem[], labels: Map<strin
 interface ReviewReadiness {
   ready: boolean;
   checks: Array<{ label: string; okay: boolean }>;
+  blockingIssues: string[];
 }
 
 function selectedPaperItems(): SelectedPaperItem[] {
@@ -785,6 +811,13 @@ function reviewReadiness(selected: SelectedPaperItem[]): ReviewReadiness {
       && Boolean(illustration?.validated)
       && job.asset?.assetPath === illustration?.assetPath;
   });
+  const subject = SUBJECTS.find((entry) => entry.id === state.draft.subjectId)?.label ?? "المادة";
+  const scienceIssues = selected.flatMap(({ item, proposal }) => validateScienceItem({
+    subject,
+    topic: state.draft.topic,
+    lessonLabel: item.lessonLabel,
+    proposal,
+  }).map((issue) => `المفردة ${state.draft.plan.findIndex((planItem) => planItem.id === item.id) + 1}: ${issue.message}`));
   const checks = [
     { label: "هوية كامبريدج", okay: Boolean(state.draft.programmeId && state.draft.syllabusCode && state.draft.subjectId) },
     { label: "مجموع الدرجات", okay: markTotal === state.draft.totalMarks },
@@ -793,16 +826,23 @@ function reviewReadiness(selected: SelectedPaperItem[]): ReviewReadiness {
     { label: "نموذج تصحيح لكل درجة", okay: markSchemesComplete },
     { label: `العناصر البصرية العلمية (${visualItems.length})`, okay: visualValidity && visualsUnique },
     { label: `الأصول البصرية المطلوبة (${requiredVisualItems.length})`, okay: requiredVisualsReady },
+    { label: `المحقق العلمي الحتمي${scienceIssues.length ? ` (${scienceIssues.length} ملاحظة)` : ""}`, okay: scienceIssues.length === 0 },
     { label: "بيانات الاختبار والمواصفة", okay: setupValid },
   ];
-  return { ready: checks.every((check) => check.okay), checks };
+  return { ready: checks.every((check) => check.okay), checks, blockingIssues: scienceIssues };
+}
+
+function compactPaperCurriculumLabel(): string {
+  if (state.draft.programmeId === "igcse") return `كامبريدج IGCSE (${state.draft.syllabusCode})`;
+  if (state.draft.programmeId === "lower_secondary") return `كامبريدج Lower Secondary (${state.draft.syllabusCode})`;
+  return `كامبريدج Primary (${state.draft.syllabusCode})`;
 }
 
 function renderStudentPaper(subject: string, paperLayout: PaperLayout): string {
-  const curriculum = curriculumDisplayName(state.draft.programmeId, state.draft.subjectId, state.draft.grade);
+  const grade = state.draft.grade ? `الصف ${state.draft.grade}` : stageLabel(state.draft.programmeId, state.draft.grade);
   return `<section class="paper-preview">
-    <header class="paper-header cambridge-paper-header"><div class="wathiq-paper-mark">واثق</div><div><strong>${escapeHtml(curriculum)}</strong>${state.draft.school ? `<span>${escapeHtml(state.draft.school)}</span>` : ""}<span>اختبار علوم مُنشأ ومراجع داخل واثق</span></div></header>
-    <div class="paper-title"><h2>${escapeHtml(state.draft.title)}</h2><p>${subject} · ${stageLabel(state.draft.programmeId, state.draft.grade)} · ${escapeHtml(state.draft.syllabusCode)}</p></div>
+    <header class="paper-header cambridge-paper-header"><div class="wathiq-paper-mark">واثق</div><div><strong>${state.draft.school ? escapeHtml(state.draft.school) : "واثق"}</strong><span>${escapeHtml(subject)} · ${escapeHtml(grade)} · ${escapeHtml(compactPaperCurriculumLabel())}</span></div></header>
+    <div class="paper-title"><h2>${escapeHtml(state.draft.title)}</h2></div>
     <div class="student-row"><span>اسم الطالب: ____________________</span><span>التاريخ: ${formatArabicDate(state.draft.examDate)}</span><span>الزمن: ${state.draft.durationMinutes} دقيقة</span><span>الدرجة: ${state.draft.totalMarks}</span></div>
     <div class="paper-questions">${paperLayout.html}</div>
     <footer class="paper-footer">انتهت الأسئلة</footer>
@@ -875,6 +915,7 @@ function renderReviewStep(): string {
       <aside class="review-panel">
         <div class="approval-status ${approved ? "approved" : "draft"}"><strong>${approved ? `${icon("check")} اختبار معتمد` : "اختبار غير معتمد"}</strong><span>${escapeHtml(approvalLabel)}</span></div>
         <div class="final-check"><h3>حالة ${approved ? "الاختبار" : "المسودة"}</h3>${readiness.checks.map((check) => checkRow(check.label, check.okay)).join("")}</div>
+        ${readiness.blockingIssues.length ? `<div class="review-blocking-issues"><strong>ملاحظات تمنع الاعتماد</strong><ul>${readiness.blockingIssues.map((issue) => `<li>${escapeHtml(issue)}</li>`).join("")}</ul></div>` : ""}
         <div class="review-summary"><span>الدرجة</span><strong>${state.draft.totalMarks}</strong><span>الأسئلة</span><strong>${state.draft.plan.length}</strong><span>الحالة</span><strong>${state.draft.status}</strong></div>
         ${renderAnswerKey(selected, paperLayout.labels)}
         <section class="export-panel"><h3>${approved ? "التصدير النهائي" : "تصدير نسخة مسودة للمراجعة"}</h3><div class="export-grid"><button class="secondary-btn" data-action="export-student-word">ورقة الطالب بصيغة وورد (.doc)</button><button class="secondary-btn" data-action="export-student-pdf">ورقة الطالب بي دي إف / طباعة</button><button class="secondary-btn" data-action="export-answer-word">نموذج الإجابة بصيغة وورد (.doc)</button><button class="secondary-btn" data-action="export-answer-pdf">نموذج الإجابة بي دي إف / طباعة</button></div></section>
@@ -1145,7 +1186,7 @@ function applyVisualJobSnapshots(jobs: QuestionVisualJobSnapshot[]): boolean {
 function currentAutoVisualEnqueueSignature(): string {
   if (state.authStatus !== "متصل" || state.draft.grade === null) return "";
   // هوية الحاجة البصرية لا تتغير عند وصول الأصل؛ هذا يمنع إعادة enqueue بعد الجاهزية.
-  return requiredVisualJobItems(state.draft, visualJobSubject())
+  return visualJobItems(state.draft, visualJobSubject())
     .map((item) => `${item.planItemId}:${item.requiredMode}`)
     .sort()
     .join("|");
@@ -1207,7 +1248,7 @@ async function syncVisualJobs(enqueueRequired: boolean): Promise<boolean> {
   let synced = false;
   try {
     const jobs = enqueueRequired
-      ? await visualJobService.enqueue(state.draft.id, requiredVisualJobItems(state.draft, visualJobSubject()))
+      ? await visualJobService.enqueue(state.draft.id, visualJobItems(state.draft, visualJobSubject()))
       : await visualJobService.list(state.draft.id);
     applyVisualJobSnapshots(jobs);
     state.questionGenerationMessage = jobs.some((job) => isVisualJobPending(job.status))

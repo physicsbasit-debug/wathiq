@@ -913,3 +913,12 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
   .assessment-spec-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .assessment-spec-grid { grid-template-columns: 1fr; }
 }
+
+/* Root quality guards: compact scientific review and blocking diagnostics */
+.proposal-science-details { margin-top: 10px; border-top: 1px solid #e3e9f1; padding-top: 8px; }
+.proposal-science-details > summary { color: #43546a; font-size: 11px; font-weight: 800; cursor: pointer; }
+.proposal-science-details blockquote { margin-top: 8px; }
+.teacher-explanation { color: #33465f; line-height: 1.75; }
+.review-blocking-issues { border: 1px solid #e7b2aa; background: #fff7f5; border-radius: 14px; padding: 12px 14px; color: #8b2d21; }
+.review-blocking-issues strong { display: block; margin-bottom: 6px; }
+.review-blocking-issues ul { margin: 0; padding-inline-start: 20px; line-height: 1.7; font-size: 12px; }

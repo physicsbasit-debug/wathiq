@@ -37,11 +37,11 @@ export function isVisualJobPending(status: VisualJobStatus): boolean {
   return PENDING_STATUSES.has(status);
 }
 
-export function requiredVisualJobItems(draft: ExamDraft, subject: string): VisualJobInput[] {
+export function visualJobItems(draft: ExamDraft, subject: string): VisualJobInput[] {
   return draft.plan.flatMap((item) => {
     if (!item.visual || item.visual.type === "none") return [];
     const requirement = questionVisualAssetRequirement(item.visual);
-    if (!requirement.required || !requirement.mode) return [];
+    if (!requirement.desired || !requirement.mode) return [];
     const proposal = selectedProposalForVisual(draft, item);
     if (!proposal) return [];
     return [{
@@ -59,6 +59,9 @@ export function requiredVisualJobItems(draft: ExamDraft, subject: string): Visua
     }];
   });
 }
+
+/** @deprecated استخدم visualJobItems؛ الاسم القديم كان يوحي أن كل مرئي إلزامي. */
+export const requiredVisualJobItems = visualJobItems;
 
 function selectedProposalForVisual(draft: ExamDraft, item: PlanItem): PlanItem["proposals"][number] | undefined {
   const selectedId = draft.selectedProposalByPlanItem[item.id];

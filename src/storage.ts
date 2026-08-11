@@ -11,7 +11,7 @@ import { createEmptyDraft, toDateInputValue } from "./domain.js";
 import { CAMBRIDGE_ASSESSMENT_POLICY_ID, assessmentSpecification, assessmentTypeForTitle, isExamTitleOption } from "./cambridge-assessment.js";
 import { defaultStageForProgramme, isStageValidForProgramme, subjectProfile, syllabusCodeFor } from "./cambridge-curriculum.js";
 import { ASSESSMENT_PROGRESSIVE_GENERATION_VERSION } from "./assessment-generation-progressive.js";
-import { diversifyQuestionVisualSpec } from "./question-visual.js";
+import { diversifyQuestionVisualSpec, parseQuestionVisualSpec } from "./question-visual.js";
 
 const DRAFTS_KEY = "wathiq.examDrafts";
 const ACTIVE_DRAFT_ID_KEY = "wathiq.activeDraftId";
@@ -92,7 +92,7 @@ function normalizeStoredPlan(value: unknown): PlanItem[] {
       proposals,
     };
     if (item.visual && typeof item.visual === "object") {
-      try { normalized.visual = diversifyQuestionVisualSpec(item.visual, index, item.id); } catch { /* المرئي غير الصالح لا يُحمّل. */ }
+      try { normalized.visual = diversifyQuestionVisualSpec(parseQuestionVisualSpec(item.visual), index, item.id); } catch { /* المرئي غير الصالح لا يُحمّل. */ }
     }
     return [normalized];
   });
