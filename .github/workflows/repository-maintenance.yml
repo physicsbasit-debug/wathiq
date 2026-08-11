@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 concurrency:
   group: wathiq-repository-maintenance
@@ -21,7 +22,7 @@ jobs:
   cleanup:
     name: Remove obsolete repository artifacts
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Checkout repository
@@ -30,12 +31,25 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '22'
 
-      - name: Remove known obsolete artifacts
+      - name: Preserve maintenance workflow
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cp .github/workflows/repository-maintenance.yml "$RUNNER_TEMP/repository-maintenance.yml"
+
+      - name: Apply repository cleanup or pending Wathiq reset
         run: npm run repo:clean
+
+      - name: Keep the fixed maintenance workflow after reset
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p .github/workflows
+          cp "$RUNNER_TEMP/repository-maintenance.yml" .github/workflows/repository-maintenance.yml
 
       - name: Install dependencies
         run: npm install --no-package-lock --no-audit --no-fund
@@ -46,20 +60,77 @@ jobs:
       - name: Remove generated build output after verification
         run: npm run repo:clean
 
-      - name: Verify repository hygiene
-        run: npm run repo:check
-
-      - name: Commit cleanup when needed
+      - name: Restore maintenance workflow after final cleanup
         shell: bash
         run: |
           set -Eeuo pipefail
-          if [[ -z "$(git status --porcelain)" ]]; then
-            echo "Repository already clean."
-            exit 0
-          fi
+          mkdir -p .github/workflows
+          cp "$RUNNER_TEMP/repository-maintenance.yml" .github/workflows/repository-maintenance.yml
+
+      - name: Verify repository hygiene
+        run: npm run repo:check
+
+      - name: Publish verified repository tree safely
+        id: publish
+        shell: bash
+        run: |
+          set -Eeuo pipefail
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "chore: remove obsolete repository artifacts"
-          git push origin HEAD:main
+
+          VERIFIED_TREE="$(git write-tree)"
+          git fetch origin main
+          REMOTE_TREE="$(git rev-parse origin/main^{tree})"
+
+          if [[ "$VERIFIED_TREE" == "$REMOTE_TREE" ]]; then
+            echo "Repository already matches the verified tree."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          MESSAGE="chore: apply Wathiq Cambridge-first repository reset"
+          pushed=false
+
+          for attempt in 1 2 3 4; do
+            git fetch origin main
+            parent="$(git rev-parse origin/main)"
+            commit="$(printf '%s\n' "$MESSAGE" | git commit-tree "$VERIFIED_TREE" -p "$parent")"
+
+            echo "Push attempt $attempt using latest main $parent"
+            if git push origin "$commit:refs/heads/main"; then
+              pushed=true
+              echo "changed=true" >> "$GITHUB_OUTPUT"
+              echo "commit=$commit" >> "$GITHUB_OUTPUT"
+              break
+            fi
+
+            sleep $((attempt * 2))
+          done
+
+          if [[ "$pushed" != "true" ]]; then
+            echo "ERROR: main kept changing while maintenance was publishing the verified tree." >&2
+            exit 1
+          fi
+
+      - name: Trigger Wathiq verification and Pages deployment
+        if: steps.publish.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for workflow in ci.yml pages.yml; do
+            for attempt in 1 2 3; do
+              if gh workflow run "$workflow" --ref main; then
+                echo "Triggered $workflow"
+                break
+              fi
+              if [[ "$attempt" == "3" ]]; then
+                echo "ERROR: failed to trigger $workflow" >&2
+                exit 1
+              fi
+              sleep $((attempt * 2))
+            done
+          done
