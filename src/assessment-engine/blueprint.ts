@@ -1,7 +1,4 @@
-import type {
-  AssessmentType,
-  Difficulty,
-} from "../types.js";
+import type { AssessmentType, CambridgeProgrammeId, Difficulty } from "../types.js";
 import {
   ASSESSMENT_BLUEPRINT_VERSION,
   ASSESSMENT_CONTRACT_VERSION,
@@ -13,7 +10,7 @@ import {
   type AssessmentSourceSnapshot,
 } from "./contracts.js";
 import { AssessmentEngineError } from "./errors.js";
-import { deterministicNumericSeed, sha256Hex } from "./hashing.js";
+import { sha256Hex } from "./hashing.js";
 import { assertBlueprintIntegrity, assertItemContractIntegrity } from "./invariants.js";
 
 export interface AssessmentBlueprintBuildInput {
@@ -21,6 +18,9 @@ export interface AssessmentBlueprintBuildInput {
   generationEpoch: number;
   assessmentType: AssessmentType;
   assessmentPolicyId: string;
+  programmeId: CambridgeProgrammeId;
+  syllabusCode: string;
+  stageLabel: string;
   grade: number;
   subject: string;
   topic: string;
@@ -29,40 +29,44 @@ export interface AssessmentBlueprintBuildInput {
   sourcesByReferenceId: ReadonlyMap<string, AssessmentSourceSnapshot>;
 }
 
-function blueprintItemFromSeed(
+async function globalCurriculumSnapshot(input: AssessmentBlueprintBuildInput, item: AssessmentItemSeed): Promise<AssessmentSourceSnapshot> {
+  const identity = `${input.programmeId}|${input.syllabusCode}|${input.stageLabel}|${input.subject}|${item.lessonLabel}`;
+  return {
+    mode: "global_curriculum",
+    sourceId: `cambridge:${input.syllabusCode || input.programmeId}`.slice(0, 180),
+    sourceTitle: `Cambridge curriculum · ${input.stageLabel} · ${input.subject} · ${item.lessonLabel}`,
+    sourceKind: "Cambridge curriculum",
+    sourceReferenceId: `global:${item.planItemId}`,
+    chunkIndex: 0,
+    pageFrom: 1,
+    pageTo: 1,
+    contentHash: await sha256Hex(identity),
+    extractionVersion: "cambridge-global-v1",
+  };
+}
+
+async function blueprintItemFromSeed(
+  input: AssessmentBlueprintBuildInput,
   item: AssessmentItemSeed,
   order: number,
-  sourcesByReferenceId: ReadonlyMap<string, AssessmentSourceSnapshot>,
-): AssessmentBlueprintItem {
-  const source = sourcesByReferenceId.get(item.sourceReferenceId);
-  if (!source) {
-    throw new AssessmentEngineError(
-      "SOURCE_NOT_FOUND",
-      `لا توجد لقطة مصدر صريحة للمفردة ${item.planItemId}.`,
-      { planItemId: item.planItemId, sourceReferenceId: item.sourceReferenceId },
-    );
+): Promise<AssessmentBlueprintItem> {
+  const source = item.sourceReferenceId
+    ? input.sourcesByReferenceId.get(item.sourceReferenceId)
+    : undefined;
+  const resolvedSource = source ?? await globalCurriculumSnapshot(input, item);
+  if (item.sourceReferenceId && !source) {
+    throw new AssessmentEngineError("SOURCE_NOT_FOUND", `تعذر العثور على المصدر الاختياري للمفردة ${item.planItemId}.`);
   }
   return {
     order,
     planItemId: item.planItemId,
     lessonId: item.lessonId,
     lessonLabel: item.lessonLabel,
-    outcomeId: item.outcomeId,
-    outcomeLabel: item.outcomeLabel,
     questionType: item.questionType,
     cognitiveLevel: item.cognitiveLevel,
     ...(item.difficultyLevel ? { difficultyLevel: item.difficultyLevel } : {}),
     marks: item.marks,
-    styleTarget: item.styleTarget,
-    visualTarget: item.visualTarget,
-    scenarioTarget: item.scenarioTarget,
-    stimulusTarget: item.stimulusTarget,
-    skillTarget: item.skillTarget,
-    diversityKey: item.diversityKey,
-    numericSeed: deterministicNumericSeed({ planItemId: item.planItemId, diversityKey: item.diversityKey }),
-    scientificContractKey: item.scientificContractKey,
-    scientificRequirements: [...item.scientificRequirements],
-    source,
+    source: resolvedSource,
   };
 }
 
@@ -73,11 +77,7 @@ export async function buildAssessmentBlueprint(input: AssessmentBlueprintBuildIn
   if (input.items.length < 1 || input.items.length > 40) {
     throw new AssessmentEngineError("INVALID_BLUEPRINT", "عدد مفردات التوليد يجب أن يكون بين 1 و40.");
   }
-  const items = input.items.map((item, index) => blueprintItemFromSeed(
-    item,
-    index + 1,
-    input.sourcesByReferenceId,
-  ));
+  const items = await Promise.all(input.items.map((item, index) => blueprintItemFromSeed(input, item, index + 1)));
   const planHash = await sha256Hex(items.map(({ source: _source, ...item }) => item));
   const sourceSnapshotHash = await sha256Hex(items.map((item) => item.source));
   const blueprint: AssessmentBlueprint = {
@@ -87,6 +87,9 @@ export async function buildAssessmentBlueprint(input: AssessmentBlueprintBuildIn
     generationEpoch: input.generationEpoch,
     assessmentType: input.assessmentType,
     assessmentPolicyId: input.assessmentPolicyId,
+    programmeId: input.programmeId,
+    syllabusCode: input.syllabusCode,
+    stageLabel: input.stageLabel,
     grade: input.grade,
     subject: input.subject,
     topic: input.topic,
@@ -112,6 +115,9 @@ export async function buildAssessmentItemContracts(blueprint: AssessmentBlueprin
       planHash: blueprint.planHash,
       assessmentType: blueprint.assessmentType,
       assessmentPolicyId: blueprint.assessmentPolicyId,
+      programmeId: blueprint.programmeId,
+      syllabusCode: blueprint.syllabusCode,
+      stageLabel: blueprint.stageLabel,
       planItemId: item.planItemId,
       order: item.order,
       grade: blueprint.grade,
@@ -120,27 +126,13 @@ export async function buildAssessmentItemContracts(blueprint: AssessmentBlueprin
       difficulty: blueprint.difficulty,
       lessonId: item.lessonId,
       lessonLabel: item.lessonLabel,
-      outcomeId: item.outcomeId,
-      outcomeLabel: item.outcomeLabel,
       questionType: item.questionType,
       cognitiveLevel: item.cognitiveLevel,
       ...(item.difficultyLevel ? { difficultyLevel: item.difficultyLevel } : {}),
       marks: item.marks,
-      styleTarget: item.styleTarget,
-      visualTarget: item.visualTarget,
-      scenarioTarget: item.scenarioTarget,
-      stimulusTarget: item.stimulusTarget,
-      skillTarget: item.skillTarget,
-      diversityKey: item.diversityKey,
-      numericSeed: item.numericSeed,
-      scientificContractKey: item.scientificContractKey,
-      scientificRequirements: [...item.scientificRequirements],
       source: item.source,
     };
-    const contract: AssessmentItemContract = {
-      ...base,
-      contractHash: await sha256Hex(base),
-    };
+    const contract: AssessmentItemContract = { ...base, contractHash: await sha256Hex(base) };
     assertItemContractIntegrity(contract);
     return contract;
   }));

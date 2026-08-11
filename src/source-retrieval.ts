@@ -8,7 +8,8 @@ const STOP_WORDS = new Set([
   "درس", "موضوع", "وحدة", "اختبار", "شرح", "تعريف", "كل", "مكان", "داخل", "خارج",
 ]);
 
-export const SOURCE_RETRIEVAL_VERSION = "strict-lesson-scope-3-pdf-pages";
+export const SOURCE_RETRIEVAL_VERSION = "lesson-page-context-5";
+const MIN_RETRIEVAL_SCORE = 26;
 
 export interface SourceChunkCandidate {
   source: ManagedSource;
@@ -37,16 +38,28 @@ export function normalizeArabicSearchText(value: string): string {
     .toLowerCase();
 }
 
+function retrievalTokenKey(value: string): string {
+  let token = value.trim();
+  if (token.startsWith("ال") && token.length > 5) token = token.slice(2);
+  for (const suffix of ["يات", "ات", "ون", "ين", "ان", "ها", "هم", "هن"]) {
+    if (token.endsWith(suffix) && token.length - suffix.length >= 4) {
+      token = token.slice(0, -suffix.length);
+      break;
+    }
+  }
+  return token;
+}
+
 export function tokenizeArabicSearch(value: string): string[] {
   const tokens = normalizeArabicSearchText(value)
     .split(" ")
-    .map((token) => token.trim())
+    .map((token) => retrievalTokenKey(token.trim()))
     .filter((token) => token.length >= 2 && !STOP_WORDS.has(token));
   return [...new Set(tokens)];
 }
 
 function sourcePriority(source: ManagedSource): number {
-  const authority = source.authority === "منهج عُماني" ? 30 : source.authority === "كامبريدج" ? 20 : 10;
+  const authority = source.authority === "كامبريدج" ? 30 : source.authority === "مصدر مرفوع" ? 20 : 10;
   const kind = ({
     "نواتج التعلم": 9,
     "جدول المواصفات": 8,
@@ -74,29 +87,26 @@ export function isLikelyNavigationOrMetadataChunk(content: string): boolean {
 
 export function referenceSupportsLesson(query: string, content: string): boolean {
   if (isLikelyNavigationOrMetadataChunk(content)) return false;
-  const tokens = tokenizeArabicSearch(query);
-  if (!tokens.length) return false;
-  const normalized = normalizeArabicSearchText(content);
-  const matched = tokens.filter((token) => normalized.includes(token)).length;
-  const required = tokens.length === 1 ? 1 : Math.min(2, tokens.length);
-  return matched >= required;
+  const queryTokens = tokenizeArabicSearch(query);
+  if (!queryTokens.length) return false;
+  const contentTokens = new Set(tokenizeArabicSearch(content));
+  const matched = queryTokens.filter((token) => contentTokens.has(token)).length;
+  // Retrieval is candidate generation, not a semantic rejection gate. One strong stem match is
+  // enough to let the AI context reviewer inspect the surrounding source text.
+  return matched >= 1;
 }
 
 function scoreChunk(query: string, tokens: string[], candidate: SourceChunkCandidate): number {
+  if (!candidate.chunk.content.trim() || isLikelyNavigationOrMetadataChunk(candidate.chunk.content)) return 0;
   const normalized = normalizeArabicSearchText(candidate.chunk.content);
-  if (!normalized || !referenceSupportsLesson(query, candidate.chunk.content)) return 0;
-  let score = 0;
+  const candidateTokens = tokenizeArabicSearch(candidate.chunk.content);
+  const candidateSet = new Set(candidateTokens);
+  const matched = tokens.filter((token) => candidateSet.has(token));
+  if (!matched.length) return 0;
+  let score = matched.length * 18;
   const normalizedQuery = normalizeArabicSearchText(query);
-  const corePhrase = tokens.join(" ");
-  if (normalizedQuery.length >= 4 && normalized.includes(normalizedQuery)) score += 60;
-  else if (corePhrase.length >= 4 && normalized.includes(corePhrase)) score += 42;
-  for (const token of tokens) {
-    const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const matches = normalized.match(new RegExp(`(?:^|\\s)${escaped}(?=\\s|$)`, "g"));
-    if (matches?.length) score += 12 + Math.min(18, (matches.length - 1) * 4);
-    else if (normalized.includes(token)) score += 5;
-  }
-  if (tokens.length && tokens.every((token) => normalized.includes(token))) score += 20;
+  if (normalizedQuery.length >= 4 && normalized.includes(normalizedQuery)) score += 55;
+  if (matched.length === tokens.length) score += 24;
   if (candidate.chunk.content.length >= 500) score += 8;
   if ((candidate.chunk.content.match(/[.؟!؛]/g) ?? []).length >= 3) score += 5;
   return score + sourcePriority(candidate.source) / 10;
@@ -119,13 +129,37 @@ function excerptAroundMatch(content: string, tokens: string[], maxLength = 300):
   return `${start > 0 ? "…" : ""}${compact.slice(start, end).trim()}${end < compact.length ? "…" : ""}`;
 }
 
+
+export function pageScopedSourceReferences(
+  candidates: SourceChunkCandidate[],
+  lessonTopic: string,
+  limit = 2,
+): ExamSourceReference[] {
+  const tokens = tokenizeArabicSearch(lessonTopic);
+  return candidates
+    .filter((candidate) => !isLikelyNavigationOrMetadataChunk(candidate.chunk.content))
+    .sort((a, b) => a.chunk.pageFrom - b.chunk.pageFrom || b.chunk.content.length - a.chunk.content.length)
+    .slice(0, limit)
+    .map(({ source, chunk }) => ({
+      id: `${source.id}:${chunk.chunkIndex}`,
+      sourceId: source.id,
+      sourceTitle: source.title,
+      sourceKind: source.kind,
+      pageFrom: chunk.pageFrom,
+      pageTo: chunk.pageTo,
+      excerpt: excerptAroundMatch(chunk.content, tokens),
+      context: chunk.content,
+      score: 100,
+    }));
+}
+
 export function rankSourceChunks(query: string, candidates: SourceChunkCandidate[], limit = 6): RetrievalResult {
   const tokens = tokenizeArabicSearch(query);
   if (!tokens.length) return { references: [], matchedSourceCount: 0, searchedChunkCount: candidates.length };
 
   const scored = candidates
     .map((candidate) => ({ candidate, score: scoreChunk(query, tokens, candidate) }))
-    .filter((entry) => entry.score >= 8)
+    .filter((entry) => entry.score >= MIN_RETRIEVAL_SCORE)
     .sort((a, b) => b.score - a.score || a.candidate.chunk.pageFrom - b.candidate.chunk.pageFrom);
 
   const perSource = new Map<string, number>();

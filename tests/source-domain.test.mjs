@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  buildSourceDrivePath,
+  buildSourceCatalogPath,
   changeSourceStatus,
   createEmptySourceDraft,
   createManagedSource,
@@ -15,26 +15,15 @@ function validFileDraft() {
   draft.kind = "كتاب الطالب";
   draft.grade = 10;
   draft.subjectId = "physics";
-  draft.version = "2026";
-  draft.semester = "الفصل الأول";
   draft.fileName = "physics.pdf";
   return draft;
 }
 
-test("يبني مسار Drive للمصدر العماني بحسب الصف والمادة والنوع", () => {
-  const path = buildSourceDrivePath(validFileDraft());
-  assert.equal(path, "واثق/01_مصادر_المنصة/01_المنهج_العماني/الصف_10/الفيزياء/الفصل_الأول/كتاب_الطالب/");
+test("يبني مسارًا منطقيًا داخل فهرس واثق دون اعتماد على خدمة تخزين خارجية", () => {
+  const path = buildSourceCatalogPath(validFileDraft());
+  assert.equal(path, "wathiq://الفيزياء/igcse/كتاب-الطالب");
+  assert.doesNotMatch(path, /drive|google/iu);
 });
-
-test("يضع اختبار كامبريدج في مساره المستقل", () => {
-  const draft = validFileDraft();
-  draft.kind = "اختبار كامبريدج";
-  assert.equal(
-    buildSourceDrivePath(draft),
-    "واثق/01_مصادر_المنصة/02_اختبارات_كامبريدج/الفيزياء/الصف_10/الفصل_الأول/أوراق_الأسئلة/",
-  );
-});
-
 
 test("يرفض ملفًا ليس PDF", () => {
   const draft = validFileDraft();
@@ -49,14 +38,13 @@ test("يرفض رابطًا بلا حقوق استخدام مؤكدة", () => {
   draft.title = "مصدر عالمي";
   draft.grade = 8;
   draft.subjectId = "science";
-  draft.version = "صفحة حية";
   draft.url = "https://example.org/source";
   const validation = validateSourceDraft(draft);
   assert.equal(validation.valid, false);
   assert.ok(validation.issues.some((issue) => issue.field === "rightsConfirmed"));
 });
 
-test("ينشئ مصدرًا صالحًا بحالة جاهز للفهرسة", () => {
+test("ينشئ مصدر PDF جاهزًا للفهرسة المباشرة داخل واثق", () => {
   const source = createManagedSource(validFileDraft(), new Date("2026-07-25T10:00:00Z"));
   assert.equal(source.status, "جاهز للفهرسة");
   assert.equal(source.fileName, "physics.pdf");
@@ -72,11 +60,10 @@ test("يؤرشف المصدر دون حذفه", () => {
 
 test("يمنح المصدر رقم فهرسة وجهة وبصمة", () => {
   const source = createManagedSource(validFileDraft(), new Date("2026-07-25T10:00:00Z"));
-  assert.match(source.catalogCode, /^WTH-OM-G10-PHY-STU-S1-2026-/);
-  assert.equal(source.authority, "منهج عُماني");
-  assert.equal(source.fingerprint, "file|كتاب الطالب|10|physics|الفصل الأول|2026|physics.pdf");
+  assert.match(source.catalogCode, /^WTH-UP-IG-PHY-STU-/);
+  assert.equal(source.authority, "مصدر مرفوع");
+  assert.equal(source.fingerprint, "file|كتاب الطالب|10|physics|physics.pdf");
 });
-
 
 test("يكشف المصدر المكرر قبل الحفظ", () => {
   const existing = createManagedSource(validFileDraft(), new Date("2026-07-25T10:00:00Z"));
@@ -84,22 +71,8 @@ test("يكشف المصدر المكرر قبل الحفظ", () => {
   assert.equal(duplicate?.id, existing.id);
 });
 
-test("يبدأ المصدر الملفي بحالة غير مرفوع", () => {
+test("لا يحمل المصدر الاختياري حقول فصل دراسي أو إصدار محلي", () => {
   const source = createManagedSource(validFileDraft(), new Date("2026-07-25T10:00:00Z"));
-  assert.equal(source.uploadState, "غير مرفوع");
-});
-
-
-test("يرفض المصدر دون فصل دراسي", () => {
-  const draft = validFileDraft();
-  draft.semester = "";
-  const validation = validateSourceDraft(draft);
-  assert.equal(validation.valid, false);
-  assert.ok(validation.issues.some((issue) => issue.field === "semester"));
-});
-
-test("يفصل مسار الفصل الثاني عن الفصل الأول", () => {
-  const draft = validFileDraft();
-  draft.semester = "الفصل الثاني";
-  assert.match(buildSourceDrivePath(draft), /الفصل_الثاني/);
+  assert.equal("semester" in source, false);
+  assert.equal("version" in source, false);
 });

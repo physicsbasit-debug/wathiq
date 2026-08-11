@@ -47,6 +47,9 @@ export function assertBlueprintIntegrity(blueprint: AssessmentBlueprint): void {
   if (blueprint.engineSchemaVersion !== ASSESSMENT_ENGINE_SCHEMA_VERSION
     || blueprint.blueprintVersion !== ASSESSMENT_BLUEPRINT_VERSION
     || !blueprint.draftId.trim()
+    || !blueprint.programmeId
+    || !blueprint.syllabusCode.trim()
+    || !blueprint.stageLabel.trim()
     || !Number.isInteger(blueprint.generationEpoch)
     || blueprint.generationEpoch < 1
     || blueprint.itemCount < 1
@@ -63,10 +66,14 @@ export function assertItemContractIntegrity(contract: AssessmentItemContract): v
   if (contract.engineSchemaVersion !== ASSESSMENT_ENGINE_SCHEMA_VERSION
     || contract.contractVersion !== ASSESSMENT_CONTRACT_VERSION
     || !contract.draftId.trim()
+    || !contract.programmeId
+    || !contract.syllabusCode.trim()
+    || !contract.stageLabel.trim()
     || !contract.planItemId.trim()
     || !contract.contractHash.trim()
     || contract.marks < 1
     || contract.marks > 20
+    || !["global_curriculum", "uploaded_source"].includes(source.mode)
     || !Number.isInteger(source.chunkIndex)
     || source.chunkIndex < 0
     || source.pageFrom < 1

@@ -47,6 +47,8 @@ export interface OcrPdfAccess {
   httpHeaders: Record<string, string>;
 }
 
+export type OcrPdfInput = OcrPdfAccess | File;
+
 export interface OcrProgress {
   pageNumber: number;
   totalPages: number;
@@ -102,7 +104,7 @@ export function buildOcrExtractionResult(pages: SourceOcrPage[]): SourceExtracti
   const result = buildExtractionResult(ordered.map((page) => page.content));
   return {
     ...result,
-    method: "google-vision-ocr",
+    method: "gemini-ocr",
   };
 }
 
@@ -130,7 +132,7 @@ async function renderPageToJpeg(page: PdfOcrPageLike): Promise<Blob> {
 
 export async function extractPdfWithArabicOcr(
   sourceId: string,
-  access: OcrPdfAccess,
+  input: OcrPdfInput,
   existingPages: SourceOcrPage[],
   sendPage: OcrPageSender,
   onProgress?: (progress: OcrProgress) => void,
@@ -138,15 +140,23 @@ export async function extractPdfWithArabicOcr(
   renderPage: OcrPageRenderer = renderPageToJpeg,
 ): Promise<SourceExtractionResult> {
   const pdfjs = await loadPdfJs();
-  const loadingTask = pdfjs.getDocument({
-    url: access.url,
-    httpHeaders: access.httpHeaders,
-    withCredentials: false,
-    rangeChunkSize: 1024 * 1024,
-    disableAutoFetch: false,
-    disableStream: false,
-    isEvalSupported: false,
-  });
+  const loadingOptions = input instanceof File
+    ? {
+        data: new Uint8Array(await input.arrayBuffer()),
+        disableAutoFetch: false,
+        disableStream: false,
+        isEvalSupported: false,
+      }
+    : {
+        url: input.url,
+        httpHeaders: input.httpHeaders,
+        withCredentials: false,
+        rangeChunkSize: 1024 * 1024,
+        disableAutoFetch: false,
+        disableStream: false,
+        isEvalSupported: false,
+      };
+  const loadingTask = pdfjs.getDocument(loadingOptions);
   const document = await loadingTask.promise;
   if (!Number.isSafeInteger(document.numPages) || document.numPages <= 0) {
     throw new Error("ملف PDF لا يحتوي صفحات قابلة للمعالجة عبر OCR.");
@@ -206,7 +216,7 @@ export async function extractPdfWithArabicOcr(
       content: "",
       characterCount: 0,
       confidence: null,
-      provider: "google-cloud-vision",
+      provider: "gemini-ocr",
       processedAt: new Date().toISOString(),
     });
     onProgress?.({

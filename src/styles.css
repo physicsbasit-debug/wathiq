@@ -312,7 +312,7 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
 }
 
 
-/* Phase 0-C: source manager UX */
+/* Source manager UX */
 .source-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 18px; }
 .source-stats article { background: #fff; border: 1px solid var(--border); border-radius: 16px; padding: 17px 18px; }
 .source-stats span { display: block; color: var(--muted); font-size: 12px; margin-bottom: 8px; }
@@ -324,11 +324,10 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
 .rights-check { display: flex; align-items: start; gap: 10px; padding: 13px; border: 1px solid var(--border); border-radius: 12px; background: #f8fafc; line-height: 1.6; }
 .rights-check input { margin-top: 4px; }
 .field-error { color: var(--red) !important; font-weight: 700 !important; }
-.drive-path-preview { margin-top: 18px; padding: 15px; border: 1px solid #d6dfeb; border-radius: 14px; background: #f7f9fc; }
-.drive-path-preview > span, .drive-path-preview > small { display: block; }
-.drive-path-preview > span { font-weight: 800; color: var(--navy-deep); margin-bottom: 9px; }
-.drive-path-preview code { display: block; direction: ltr; text-align: left; overflow-wrap: anywhere; padding: 11px 12px; background: #11213a; color: #e5eef9; border-radius: 9px; }
-.drive-path-preview small { margin-top: 8px; color: var(--muted); }
+.source-intake-note { margin-top: 18px; padding: 14px 15px; border: 1px solid #d6dfeb; border-radius: 14px; background: #f7f9fc; }
+.source-intake-note strong, .source-intake-note small { display: block; }
+.source-intake-note strong { color: var(--navy-deep); margin-bottom: 6px; }
+.source-intake-note small { color: var(--muted); line-height: 1.65; }
 .source-list-heading { display: flex; align-items: end; justify-content: space-between; gap: 18px; }
 .source-filter-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 18px 0 13px; }
 .filter-chip { border: 1px solid var(--border); background: #fff; color: #506079; border-radius: 999px; padding: 8px 12px; }
@@ -366,7 +365,7 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
   .source-actions { flex-direction: row; justify-content: start; flex-wrap: wrap; }
 }
 
-/* Phase 0-D: سجل المصادر والنسخ الاحتياطية */
+/* سجل المصادر والنسخ الاحتياطية */
 .registry-actions,
 .source-details-card {
   margin-top: 18px;
@@ -486,7 +485,7 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
   .source-details-grid { grid-template-columns: 1fr; }
 }
 
-/* Phase 0-E: التخزين المركزي لسجل المصادر */
+/* التخزين المركزي لسجل المصادر */
 .central-storage-card {
   margin-top: 18px;
   display: flex;
@@ -559,93 +558,7 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
   .storage-actions { flex-direction: column; }
 }
 
-/* Phase 0-F1: ربط Google Drive وإنشاء المجلدات الأساسية */
-.drive-connection-card {
-  margin-top: 14px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 22px;
-  padding: 20px 22px;
-  border-radius: 18px;
-  border: 1px solid var(--border);
-  background: #fff;
-}
-
-.drive-connection-card h2 {
-  margin: 5px 0 7px;
-  color: var(--navy-deep);
-}
-
-.drive-connection-card p {
-  margin: 0;
-  color: var(--muted);
-  line-height: 1.7;
-}
-
-.drive-connection-card.setup-mode { background: #fffaf0; border-color: #e7d09b; }
-.drive-connection-card.waiting-mode { background: #f7faff; border-color: #b9cbe0; }
-.drive-connection-card.disconnected-mode { background: #f8f9fc; border-color: #c9d3e0; }
-.drive-connection-card.connected-mode { background: #f1fbf6; border-color: #9ed6b4; }
-.drive-connection-card.error-mode { background: #fff5f5; border-color: #e4b2b2; }
-
-.drive-folder-summary {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 12px;
-}
-
-.drive-folder-summary span {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 6px 9px;
-  border-radius: 999px;
-  background: rgba(20, 120, 73, .08);
-  color: #17673f;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.danger-link {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 0;
-  background: transparent;
-  color: #a83232;
-  font: inherit;
-  font-weight: 800;
-  cursor: pointer;
-}
-
-.danger-link:hover { text-decoration: underline; }
-.danger-link:disabled { opacity: .55; cursor: not-allowed; }
-
-@media (max-width: 900px) {
-  .drive-connection-card { flex-direction: column; align-items: stretch; }
-}
-
-@media (max-width: 640px) {
-  .drive-connection-card .storage-actions > * { width: 100%; justify-content: center; }
-}
-
-/* Phase 0-F2: رفع ملفات PDF الفعلي واستكماله */
-.pending-upload-card {
-  margin-top: 14px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 22px;
-  padding: 20px 22px;
-  border-radius: 18px;
-  border: 1px solid #e1bf74;
-  background: #fffaf0;
-}
-
-.pending-upload-card h2 { margin: 5px 0 7px; color: var(--navy-deep); }
-.pending-upload-card p { margin: 0; color: var(--muted); line-height: 1.7; }
+/* Source indexing progress */
 .upload-progress-track { height: 9px; border-radius: 99px; background: #e5eaf0; overflow: hidden; margin-top: 12px; }
 .upload-progress-track span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--navy), #2b77bd); transition: width .2s ease; }
 .source-upload-progress { margin-top: 14px; padding: 14px 15px; border: 1px solid #b9cbe0; border-radius: 13px; background: #f7faff; }
@@ -657,18 +570,12 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
 .upload-state.upload-done { color: #17673f; background: #e8f5ef; }
 .upload-state.upload-archived { color: #5f6876; background: #eceff3; }
 .upload-state.upload-pending { color: #725713; background: var(--gold-soft); }
-.source-drive-link { margin-top: 12px; width: fit-content; }
-
-@media (max-width: 900px) {
-  .pending-upload-card { flex-direction: column; align-items: stretch; }
-}
 
 @media (max-width: 640px) {
-  .pending-upload-card .storage-actions > * { width: 100%; justify-content: center; }
   .source-state-stack { justify-items: stretch; }
 }
 
-/* Phase 0-G: استخراج النص القابل للتحديد وفهرسته */
+/* استخراج النص القابل للتحديد وفهرسته */
 .source-indexing-card {
   margin-top: 14px;
   display: flex;
@@ -716,91 +623,7 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
   .source-detail-actions > * { width: 100%; justify-content: center; }
 }
 
-/* Phase 0-H1: مراجعة هيكل الكتاب */
-.source-structure-card { margin-top: 18px; padding: 18px; border: 1px solid var(--border); border-radius: 16px; background: #fbfdff; display: grid; gap: 16px; }
-.source-structure-card > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-.source-structure-card h3 { margin: 4px 0 6px; color: var(--navy); font-size: 20px; }
-.source-structure-card p { margin: 0; color: var(--muted); line-height: 1.7; }
-.source-structure-card.empty, .source-structure-card.loading, .source-structure-card.unavailable { grid-template-columns: 1fr auto; align-items: center; }
-.structure-empty-actions { display: grid; gap: 10px; justify-items: start; min-width: min(100%, 420px); }
-.manual-toc-controls { display: flex; gap: 8px; align-items: end; flex-wrap: wrap; padding: 10px; border: 1px dashed #cbd7e8; border-radius: 12px; background: #f7faff; }
-.manual-toc-controls label { display: grid; gap: 5px; min-width: 220px; }
-.manual-toc-controls label > span { color: var(--muted); font-size: 11px; font-weight: 800; }
-.manual-toc-controls input { width: 100%; padding: 9px 10px; border: 1px solid var(--border); border-radius: 9px; background: #fff; color: var(--text); font: inherit; }
-.structure-review-badge { border-radius: 999px; padding: 7px 11px; font-size: 12px; font-weight: 800; white-space: nowrap; }
-.structure-review-badge.approved { background: #e6f6ec; color: #17643a; }
-.structure-review-badge.draft { background: #fff4dc; color: #8a5a00; }
-.structure-validation { padding: 13px 15px; border-radius: 12px; background: #fff4f1; color: #8a2c1f; }
-.structure-validation ul { margin: 7px 0 0; padding-right: 20px; }
-.structure-tree { display: grid; gap: 9px; }
-.structure-node-row { display: grid; grid-template-columns: auto 110px minmax(210px, 1.7fr) 170px 92px 92px 70px auto; gap: 8px; align-items: end; padding: 12px; border: 1px solid var(--border); border-radius: 13px; background: #fff; }
-.structure-node-row.child { margin-right: 28px; border-right: 4px solid #cbdaf0; }
-.structure-node-row label { display: grid; gap: 5px; min-width: 0; }
-.structure-node-row label > span, .structure-confidence span { color: var(--muted); font-size: 11px; font-weight: 700; }
-.structure-node-row input, .structure-node-row select { width: 100%; min-width: 0; padding: 9px 10px; border: 1px solid var(--border); border-radius: 9px; background: #fff; color: var(--text); font: inherit; }
-.structure-title-field { min-width: 220px; }
-.structure-move { display: flex; gap: 4px; align-items: center; padding-bottom: 2px; }
-.icon-btn { width: 30px; height: 30px; border: 1px solid var(--border); border-radius: 8px; background: #fff; color: var(--navy); cursor: pointer; font-weight: 900; }
-.icon-btn:disabled { opacity: .35; cursor: default; }
-.structure-confidence { display: grid; gap: 5px; align-self: center; text-align: center; }
-.structure-confidence strong { color: var(--navy); }
-.structure-toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; border-top: 1px solid var(--border); padding-top: 14px; }
-.structure-spacer { flex: 1; }
-
-@media (max-width: 1100px) {
-  .structure-node-row { grid-template-columns: auto 100px minmax(180px, 1fr) 150px 82px 82px; }
-  .structure-confidence, .structure-node-row > .danger-link { grid-column: auto; }
-}
-
-@media (max-width: 760px) {
-  .source-structure-card > header, .source-structure-card.empty, .source-structure-card.loading, .source-structure-card.unavailable { grid-template-columns: 1fr; display: grid; }
-  .structure-node-row, .structure-node-row.child { grid-template-columns: 1fr 1fr; margin-right: 0; }
-  .structure-move, .structure-title-field, .structure-node-row > .danger-link { grid-column: 1 / -1; }
-  .structure-spacer { display: none; }
-  .structure-toolbar > button { flex: 1 1 160px; }
-  .manual-toc-controls, .manual-toc-controls label { width: 100%; }
-  .manual-toc-controls > button { width: 100%; justify-content: center; }
-}
-
-/* Phase 0-H2: منشئ الفهرس المنظم */
-.structure-validation.success { background: #edf8f1; color: #17643a; }
-.structure-node-row { grid-template-columns: auto 100px 88px minmax(210px, 1.7fr) 160px 86px 86px 70px auto; }
-.toc-builder { background: linear-gradient(180deg, #fbfdff 0%, #f7faff 100%); }
-.toc-draft-table { display: grid; gap: 8px; overflow-x: auto; }
-.toc-draft-head, .toc-draft-row { min-width: 930px; display: grid; grid-template-columns: 72px 105px 92px minmax(280px, 1fr) 90px 105px 70px; gap: 8px; align-items: center; }
-.toc-draft-head { padding: 0 12px; color: var(--muted); font-size: 12px; font-weight: 800; }
-.toc-draft-row { padding: 11px 12px; border: 1px solid var(--border); border-radius: 13px; background: #fff; }
-.toc-draft-row.ignored { opacity: .62; background: #f6f7f9; }
-.toc-draft-row label { display: grid; gap: 5px; min-width: 0; }
-.toc-draft-row input, .toc-draft-row select { width: 100%; min-width: 0; padding: 9px 10px; border: 1px solid var(--border); border-radius: 9px; background: #fff; color: var(--text); font: inherit; }
-.toc-draft-title { min-width: 260px; }
-.toc-draft-origin { display: grid; gap: 3px; text-align: center; color: var(--muted); }
-.toc-draft-origin small { color: var(--navy); font-weight: 800; }
-.toc-draft-row .mobile-label { display: none; }
-.toc-reference-lines { border-top: 1px solid var(--border); padding-top: 14px; }
-.toc-reference-lines summary { cursor: pointer; color: var(--navy); font-weight: 800; }
-.toc-reference-lines > div { max-height: 330px; overflow: auto; margin-top: 10px; border: 1px solid var(--border); border-radius: 12px; background: #fff; }
-.toc-reference-lines p { display: grid; grid-template-columns: 105px 1fr; gap: 12px; margin: 0; padding: 9px 12px; border-bottom: 1px solid #edf1f6; color: var(--text); }
-.toc-reference-lines p:last-child { border-bottom: 0; }
-.toc-reference-lines small { color: var(--muted); font-weight: 700; }
-
-@media (max-width: 1100px) {
-  .structure-node-row { grid-template-columns: auto 96px 82px minmax(180px, 1fr) 145px 80px 80px; }
-  .structure-confidence, .structure-node-row > .danger-link { grid-column: auto; }
-}
-
-@media (max-width: 760px) {
-  .toc-draft-head { display: none; }
-  .toc-draft-table { overflow: visible; }
-  .toc-draft-row { min-width: 0; grid-template-columns: 1fr 1fr; }
-  .toc-draft-row .structure-move, .toc-draft-title, .toc-draft-row > .danger-link { grid-column: 1 / -1; }
-  .toc-draft-row .mobile-label { display: block; color: var(--muted); font-size: 11px; font-weight: 700; }
-  .toc-draft-origin { align-self: end; padding-bottom: 8px; }
-  .toc-reference-lines p { grid-template-columns: 1fr; gap: 3px; }
-}
-
-
-/* Phase 0-H3: page-first indexing. Visual TOC controls are retired from the runtime UI. */
+/* Page-first source indexing. */
 .source-readiness-card { margin-top: 18px; padding: 18px; border: 1px solid var(--border); border-radius: 16px; background: #fbfdff; display: grid; gap: 15px; }
 .source-readiness-card > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .source-readiness-card h3 { margin: 4px 0 6px; color: var(--navy); font-size: 20px; }
@@ -820,7 +643,7 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
   .source-readiness-badge { justify-self: start; }
 }
 
-/* Phase 1-A: simple source-grounded brief */
+/* Source-grounded assessment setup */
 .source-match-card,
 .compact-source-summary {
   border: 1px solid var(--border, #dbe4ef);
@@ -948,7 +771,7 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
   }
 }
 
-/* Phase 1-B2: official science assessment policy */
+/* Official science assessment policy */
 .readonly-field input {
   background: #f6f8fb;
   color: #314866;
@@ -1125,7 +948,7 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
   .policy-heading > a { width: 100%; text-align: center; }
 }
 
-/* Phase 1-B3: multiple lessons and batched generation */
+/* Multiple lesson selection */
 .lesson-topics-field {
   border: 1px solid #d6e0ec;
   border-radius: 16px;
@@ -1239,7 +1062,7 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
   }
 }
 
-/* Phase 1-B8: Cambridge-inspired item construction under Omani policy */
+/* Assessment item presentation */
 .proposal-badges { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .question-form-badge { border-radius: 999px; padding: 4px 8px; background: #eaf1fa; color: var(--navy); font-size: 11px; }
 .proposal-stimulus,
@@ -1279,7 +1102,7 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
   .answer-key { break-before: page; }
 }
 
-/* Phase 1-C1: structured SVG visual question engine */
+/* Structured exact-data visual engine */
 .plan-shared-visual {
   margin: 14px 0;
   padding: 12px;
@@ -1298,22 +1121,9 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
 .visual-heading span { color: var(--muted); font-size: 10px; }
 .question-visual { margin: 0 auto; max-width: 680px; }
 .question-visual svg { display: block; width: 100%; height: auto; max-height: 360px; font-family: "Tahoma", "Arial", sans-serif; direction: ltr; }
-.question-visual-hybrid {
-  position: relative;
-  width: 100%;
-  aspect-ratio: 4 / 3;
-  max-height: 360px;
-  overflow: hidden;
-  border-radius: 10px;
-  background: #fff;
-}
 .question-visual-illustration { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; background: #fff; }
 .question-visual-illustrated { position: relative; width: 100%; aspect-ratio: 4 / 3; max-height: 70mm; overflow: hidden; background: #fff; }
-.question-visual-composite { position: relative; width: 100%; aspect-ratio: 4 / 3; max-height: 70mm; overflow: hidden; background: #fff; }
-.question-visual-overlay { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
-.question-visual-overlay svg { width: 100%; height: 100%; max-height: none; object-fit: contain; }
-.question-visual-illustrated .question-visual-illustration, .question-visual-composite .question-visual-illustration { z-index: 1; }
-.question-visual-composite .qv-force-arrow, .question-visual-composite .qv-annotation, .question-visual-composite .qv-object-label, .question-visual-composite .qv-title { filter: drop-shadow(0 1px 2px rgba(255,255,255,.85)); }
+.question-visual-illustrated .question-visual-illustration { z-index: 1; }
 .question-visual figcaption { margin-top: 5px; color: #5a687a; font-size: 10px; line-height: 1.5; text-align: center; }
 
 .question-visual-2d-placeholder {
@@ -1360,14 +1170,13 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
   .plan-shared-visual { background: #fff; border-color: #888; padding: 6px; }
   .visual-heading { display: none; }
   .question-visual svg { max-height: 260px; }
-  .question-visual-hybrid { max-height: 260px; }
   .question-visual figcaption { color: #222; }
   .visual-action-row, .visual-enhancement-message { display: none !important; }
   .qv-grid { stroke: #bbb; }
   .qv-bar, .qv-liquid { fill: #eee; }
 }
 
-/* Phase 1-C2: exam assembly, approval, and export */
+/* Exam assembly, approval, and export */
 .constructed-standalone { border-top: 1px solid #8e98a5; padding-top: 14px; }
 .approval-status {
   display: grid;
@@ -1411,12 +1220,12 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
   .approval-toggle { display: none !important; }
 }
 
-/* Phase 1-C2 Fix 1: strict lesson scope and library exports */
+/* Lesson scope and library exports */
 .library-exam-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .55rem; }
 .library-exam-actions .primary-btn { grid-column: 1 / -1; }
 @media (max-width: 720px) { .library-exam-actions { grid-template-columns: 1fr; } .library-exam-actions .primary-btn { grid-column: auto; } }
 
-/* Phase 1-C2 Fix 2: اختيار الدروس مباشرة من فهرس المصدر */
+/* اختيار الدروس من المصدر */
 .lesson-catalog-field {
   border: 1px solid #d6e0ec;
   border-radius: 16px;
@@ -1520,7 +1329,7 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
   .lesson-catalog-option small { grid-column: 2; }
 }
 
-/* Phase 1-C2 Fix 3: شجرة الكتاب ← الوحدات ← الدروس */
+/* شجرة الكتاب والوحدات والدروس */
 .lesson-book-tree {
   display: grid;
   gap: 12px;
@@ -1637,7 +1446,7 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
   .lesson-source-tree > summary { padding: 12px; }
 }
 
-/* Phase 1-D2 Fix 1: تنقل ثابت بين الوحدات مع حفظ اختيار الدروس */
+/* تنقل ثابت بين الوحدات مع حفظ اختيار الدروس */
 .lesson-unit-navigation {
   display: grid;
   grid-template-columns: minmax(120px, auto) minmax(0, 1fr) minmax(120px, auto);
@@ -1781,7 +1590,7 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
   }
 }
 
-/* Phase 1-C3: advanced deterministic assessment visuals */
+/* Exact deterministic assessment visuals */
 .qv-series-1 { stroke-dasharray: 9 5; }
 .qv-series-2 { stroke-dasharray: 3 4; }
 .qv-series-3 { stroke-dasharray: 12 4 2 4; }
@@ -1810,7 +1619,7 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
   .qv-table-head, .qv-table-row-head, .qv-instrument-liquid, .qv-instrument-fill, .qv-flow-node, .qv-lens, .qv-prism, .qv-pivot { fill: #eee; }
 }
 
-/* Phase 1-C4: trusted curriculum enrichment */
+/* Curriculum source context */
 .trusted-enrichment-card {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -1880,7 +1689,7 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
   }
 }
 
-/* Phase 1-D2: مشاهد حياتية حتمية متنوعة تبقى خلف الصورة المولدة. */
+/* Scientific visual presentation */
 .qv-context-object,
 .qv-context-panel,
 .qv-context-instrument,
@@ -1919,7 +1728,7 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
 
 
 
-/* Phase 2-C1: Visual-first 2D scientific rendering. */
+/* Reviewed 2D scientific rendering. */
 .question-visual-2d-vector svg {
   border-radius: 12px;
   background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
@@ -1950,7 +1759,7 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
 .qv-context-emphasis { stroke: #c2410c; }
 .qv-context-motion { stroke: #0369a1; }
 
-/* Phase 2-A: whole-exam generation mode */
+/* Assessment generation workspace */
 .generation-mode-panel {
   margin: 18px 0;
   padding: 18px;
@@ -2007,7 +1816,7 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
 .visual-enhancement-message.success { color: #0f6b45; }
 .durable-visual-policy { cursor: default; }
 
-/* Phase 2-D4: progressive generation, durable progress, and resume UI. */
+/* Progressive durable generation and resume UI. */
 .progressive-engine-summary {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

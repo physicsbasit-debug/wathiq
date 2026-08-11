@@ -1,0 +1,47 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { requiredVisualJobItems, VisualJobService } from "../dist/assets/visual-jobs.js";
+
+function draftWithVisual(type, extra = {}) {
+  return {
+    id: "draft-1", grade: 10,
+    selectedProposalByPlanItem: { p1: "q1" },
+    plan: [{
+      id: "p1", lessonLabel: "الكهرباء الساكنة",
+      visual: { type, visualId: "v1", variant: "default", purpose: "توضيح", role: "interpret", title: "مرئي", altText: "مرئي علمي", xAxisLabel: "", xAxisUnit: "", yAxisLabel: "", yAxisUnit: "", xMin: 0, xMax: 1, yMin: 0, yMax: 1, points: [], series: [], labels: ["أ", "ب", "ج"], values: [], components: [], annotations: [], tableColumns: [], tableRows: [], tableCells: [], hiddenCells: [], vectors: [], ...extra },
+      proposals: [{ id: "q1", stimulus: "", text: "فسر العلاقة.", answer: "", sourceSupport: "المصدر" }],
+    }],
+  };
+}
+
+test("المرئي التوضيحي ينشئ مهمة 2D بنمط replace لا overlay", () => {
+  const items = requiredVisualJobItems(draftWithVisual("context_scene"), "الفيزياء");
+  assert.equal(items.length, 1);
+  assert.equal(items[0].requiredMode, "replace");
+});
+
+test("الرسم البياني الدقيق لا يرسل إلى نموذج الصور", () => {
+  const draft = draftWithVisual("line_graph", {
+    title: "الزمن والمسافة", altText: "رسم بيانات", xAxisLabel: "الزمن", yAxisLabel: "المسافة", xMin: 0, xMax: 1, yMin: 0, yMax: 2,
+    points: [{ x: 0, y: 0, label: "" }, { x: 1, y: 2, label: "" }], labels: [],
+  });
+  assert.equal(requiredVisualJobItems(draft, "الفيزياء").length, 0);
+});
+
+test("VisualJobService يرسل المهمة إلى الوظيفة الدائمة", async () => {
+  const calls = [];
+  const service = new VisualJobService(
+    { supabaseUrl: "https://example.supabase.co", supabasePublishableKey: "sb_publishable_test" },
+    async () => ({ accessToken: "token" }),
+    async (url, init) => {
+      calls.push({ url: String(url), init });
+      return new Response(JSON.stringify({ jobs: [{
+        id: "job-1", draftId: "draft-1", planItemId: "p1", visualHash: "h", requiredMode: "replace", status: "queued",
+        attemptCount: 0, maxAttempts: 2, errorCode: "", errorMessage: "", startedAt: "", completedAt: "", updatedAt: "now",
+      }] }), { status: 200 });
+    },
+  );
+  const jobs = await service.enqueue("draft-1", requiredVisualJobItems(draftWithVisual("context_scene"), "الفيزياء"));
+  assert.equal(jobs.length, 1);
+  assert.match(calls[0].url, /question-visual-jobs$/);
+});

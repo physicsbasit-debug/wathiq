@@ -2,7 +2,6 @@ import type { ManagedSource, SourceImportResult, SourceMergeResult, SourceRegist
 import { authorityForKind, buildSourceFingerprint } from "./source-domain.js";
 
 const VALID_STATUSES = new Set(["جاهز للفهرسة", "مفهرس", "يحتاج مراجعة", "مؤرشف"]);
-const VALID_SEMESTERS = new Set(["الفصل الأول", "الفصل الثاني", "العام الكامل", "غير محدد"]);
 const VALID_KINDS = new Set(["كتاب الطالب", "دليل المعلم", "نواتج التعلم", "جدول المواصفات", "اختبار كامبريدج", "مصدر عالمي"]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -11,9 +10,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export function normalizeManagedSource(value: unknown): ManagedSource | null {
   if (!isRecord(value)) return null;
-  const requiredStrings = ["id", "title", "kind", "mode", "subjectId", "version", "status", "drivePath", "createdAt", "updatedAt"];
+  const requiredStrings = ["id", "title", "kind", "mode", "subjectId", "status", "createdAt", "updatedAt"];
   if (requiredStrings.some((key) => typeof value[key] !== "string" || !(value[key] as string).trim())) return null;
-  if (typeof value.grade !== "number" || value.grade < 1 || value.grade > 12) return null;
+  const catalogPath = typeof value.catalogPath === "string" && value.catalogPath.trim()
+    ? value.catalogPath.trim()
+    : typeof value.drivePath === "string" && value.drivePath.trim()
+      ? value.drivePath.trim()
+      : "";
+  if (!catalogPath) return null;
+  if (typeof value.grade !== "number" || value.grade < 1 || value.grade > 10) return null;
   if (!VALID_KINDS.has(value.kind as string) || !VALID_STATUSES.has(value.status as string)) return null;
   if (value.mode !== "file" && value.mode !== "url") return null;
   if (value.mode === "file" && typeof value.fileName !== "string") return null;
@@ -27,8 +32,6 @@ export function normalizeManagedSource(value: unknown): ManagedSource | null {
         kind: partial.kind,
         grade: partial.grade,
         subjectId: partial.subjectId,
-        version: partial.version,
-        semester: partial.semester ?? "غير محدد",
         fileName: partial.fileName ?? "",
         url: partial.url ?? "",
       });
@@ -37,43 +40,31 @@ export function normalizeManagedSource(value: unknown): ManagedSource | null {
     : `WTH-LEGACY-${partial.id.slice(-8).toUpperCase()}`;
 
   const optionalStrings = [
-    "contentFingerprint",
-    "mimeType",
-    "driveFileId",
-    "driveParentFolderId",
-    "driveOriginalParentFolderId",
-    "driveWebViewLink",
-    "driveMd5Checksum",
-    "uploadState",
-    "uploadedAt",
-    "extractionStatus",
-    "extractionMessage",
-    "extractedLanguage",
-    "extractionPreview",
-    "extractedAt",
-    "extractionVersion",
+    "contentFingerprint", "mimeType", "extractionStatus", "extractionMessage", "extractedLanguage",
+    "extractionPreview", "extractedAt", "extractionVersion",
   ] as const;
   const optionalValues: Record<string, string | number> = {};
   optionalStrings.forEach((key) => {
     if (typeof value[key] === "string" && value[key]) optionalValues[key] = value[key] as string;
   });
-  if (typeof value.fileSizeBytes === "number" && Number.isFinite(value.fileSizeBytes) && value.fileSizeBytes >= 0) {
-    optionalValues.fileSizeBytes = value.fileSizeBytes;
-  }
-  if (typeof value.extractedPageCount === "number" && Number.isFinite(value.extractedPageCount) && value.extractedPageCount >= 0) {
-    optionalValues.extractedPageCount = value.extractedPageCount;
-  }
-  if (typeof value.extractedCharacterCount === "number" && Number.isFinite(value.extractedCharacterCount) && value.extractedCharacterCount >= 0) {
-    optionalValues.extractedCharacterCount = value.extractedCharacterCount;
-  }
+  if (typeof value.fileSizeBytes === "number" && Number.isFinite(value.fileSizeBytes) && value.fileSizeBytes >= 0) optionalValues.fileSizeBytes = value.fileSizeBytes;
+  if (typeof value.extractedPageCount === "number" && Number.isFinite(value.extractedPageCount) && value.extractedPageCount >= 0) optionalValues.extractedPageCount = value.extractedPageCount;
+  if (typeof value.extractedCharacterCount === "number" && Number.isFinite(value.extractedCharacterCount) && value.extractedCharacterCount >= 0) optionalValues.extractedCharacterCount = value.extractedCharacterCount;
 
+  const {
+    drivePath: _legacyDrivePath,
+    version: _legacyVersion,
+    semester: _legacySemester,
+    authority: _legacyAuthority,
+    ...current
+  } = value as Record<string, unknown>;
   return {
-    ...partial,
+    ...(current as unknown as ManagedSource),
     ...optionalValues,
     catalogCode,
     fingerprint,
+    catalogPath,
     authority: authorityForKind(partial.kind),
-    semester: typeof value.semester === "string" && VALID_SEMESTERS.has(value.semester) ? value.semester as ManagedSource["semester"] : "غير محدد",
     rightsConfirmed: Boolean(value.rightsConfirmed),
     ...(Array.isArray(value.detectedHeadings) && value.detectedHeadings.some((item) => typeof item === "string")
       ? { detectedHeadings: value.detectedHeadings.filter((item): item is string => typeof item === "string") }

@@ -3,13 +3,11 @@ import type {
   PlanItem,
   QuestionVisualIllustration,
   QuestionVisualJobSnapshot,
-  ScientificItemModel,
   VisualJobRequiredMode,
   VisualJobStatus,
 } from "./types.js";
 import type { WathiqRuntimeConfig } from "./runtime-config.js";
 import { questionVisualAssetRequirement, stripQuestionVisualIllustration } from "./question-visual.js";
-import { scientificItemMatchesVisual } from "./scientific-item.js";
 
 interface OwnerSessionLike { accessToken: string }
 type SessionProvider = () => Promise<OwnerSessionLike>;
@@ -24,7 +22,6 @@ interface VisualJobInput {
   sourceSupport: string;
   previousAssetPath: string;
   requiredMode: VisualJobRequiredMode;
-  scientificItem: ScientificItemModel;
   visual: Record<string, unknown>;
 }
 
@@ -44,17 +41,16 @@ export function requiredVisualJobItems(draft: ExamDraft, subject: string): Visua
     const requirement = questionVisualAssetRequirement(item.visual);
     if (!requirement.required || !requirement.mode) return [];
     const proposal = selectedProposalForVisual(draft, item);
-    if (!proposal?.scientificItem || !scientificItemMatchesVisual(proposal.scientificItem, item.visual)) return [];
+    if (!proposal) return [];
     return [{
       planItemId: item.id,
       grade: draft.grade!,
       subject,
       lessonLabel: item.lessonLabel,
       questionText: `${proposal.stimulus ? `${proposal.stimulus} ` : ""}${proposal.text}`.trim(),
-      sourceSupport: proposal.sourceSupport || item.outcomeLabel || item.lessonLabel,
+      sourceSupport: proposal.sourceSupport || item.lessonLabel,
       previousAssetPath: item.visual.illustration?.assetPath ?? "",
       requiredMode: requirement.mode,
-      scientificItem: proposal.scientificItem,
       visual: stripQuestionVisualIllustration(item.visual) as unknown as Record<string, unknown>,
     }];
   });
@@ -92,8 +88,8 @@ function parseAsset(value: unknown): QuestionVisualIllustration | undefined {
     generatedAt: record.generatedAt,
     promptVersion: record.promptVersion,
     validated: true,
-    assetKind: record.assetKind === "scene_2d_overlay" ? "scene_2d_overlay" : "scene_2d",
-    renderMode: record.renderMode === "overlay" ? "overlay" : "replace",
+    assetKind: "scene_2d",
+    renderMode: "replace",
   };
 }
 
@@ -112,7 +108,7 @@ function parseJob(value: unknown): QuestionVisualJobSnapshot | null {
     draftId: record.draftId,
     planItemId: record.planItemId,
     visualHash: record.visualHash,
-    requiredMode: record.requiredMode,
+    requiredMode: "replace",
     status: record.status as VisualJobStatus,
     attemptCount: record.attemptCount,
     maxAttempts: record.maxAttempts,

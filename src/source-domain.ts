@@ -5,11 +5,8 @@ import type {
   SourceDraft,
   SourceKind,
   SourceMode,
-  SourceSemester,
   SourceValidation,
 } from "./types.js";
-
-export const SOURCE_SEMESTERS: Exclude<SourceSemester, "غير محدد">[] = ["الفصل الأول", "الفصل الثاني", "العام الكامل"];
 
 export const SOURCE_KINDS: SourceKind[] = [
   "كتاب الطالب",
@@ -25,6 +22,8 @@ const SUBJECT_CODES: Record<string, string> = {
   physics: "PHY",
   chemistry: "CHM",
   biology: "BIO",
+  combined_science: "CMB",
+  coordinated_sciences: "CRD",
 };
 
 const KIND_CODES: Record<SourceKind, string> = {
@@ -39,7 +38,7 @@ const KIND_CODES: Record<SourceKind, string> = {
 export function authorityForKind(kind: SourceKind): SourceAuthority {
   if (kind === "اختبار كامبريدج") return "كامبريدج";
   if (kind === "مصدر عالمي") return "مصدر عالمي";
-  return "منهج عُماني";
+  return "مصدر مرفوع";
 }
 
 function normalizeFingerprintPart(value: string): string {
@@ -47,7 +46,7 @@ function normalizeFingerprintPart(value: string): string {
 }
 
 export function buildSourceFingerprint(
-  source: Pick<SourceDraft, "mode" | "kind" | "grade" | "subjectId" | "version" | "semester" | "fileName" | "url">,
+  source: Pick<SourceDraft, "mode" | "kind" | "grade" | "subjectId" | "fileName" | "url">,
 ): string {
   const reference = source.mode === "file" ? source.fileName : source.url;
   return [
@@ -55,8 +54,6 @@ export function buildSourceFingerprint(
     source.kind,
     String(source.grade ?? ""),
     source.subjectId,
-    source.semester,
-    normalizeFingerprintPart(source.version),
     normalizeFingerprintPart(reference),
   ].join("|");
 }
@@ -68,8 +65,6 @@ export function findDuplicateSource(sources: ManagedSource[], draft: SourceDraft
     kind: source.kind,
     grade: source.grade,
     subjectId: source.subjectId,
-    version: source.version,
-    semester: source.semester,
     fileName: source.fileName ?? "",
     url: source.url ?? "",
   }) === fingerprint);
@@ -84,13 +79,12 @@ export function findDuplicateContentSource(
 
 function buildCatalogCode(draft: SourceDraft, now: Date): string {
   const authority = authorityForKind(draft.kind);
-  const authorityCode = authority === "منهج عُماني" ? "OM" : authority === "كامبريدج" ? "CA" : "GL";
+  const authorityCode = authority === "مصدر مرفوع" ? "UP" : authority === "كامبريدج" ? "CA" : "GL";
   const subjectCode = SUBJECT_CODES[draft.subjectId] ?? "GEN";
   const kindCode = KIND_CODES[draft.kind];
-  const semesterCode = draft.semester === "الفصل الأول" ? "S1" : draft.semester === "الفصل الثاني" ? "S2" : draft.semester === "العام الكامل" ? "FY" : "NA";
-  const versionCode = draft.version.replace(/[^0-9A-Za-z]+/g, "").slice(0, 8).toUpperCase() || "V1";
+  const stageCode = draft.grade === 10 ? "IG" : `S${String(draft.grade ?? 0).padStart(2, "0")}`;
   const sequence = now.getTime().toString(36).slice(-6).toUpperCase();
-  return `WTH-${authorityCode}-G${String(draft.grade ?? 0).padStart(2, "0")}-${subjectCode}-${kindCode}-${semesterCode}-${versionCode}-${sequence}`;
+  return `WTH-${authorityCode}-${stageCode}-${subjectCode}-${kindCode}-${sequence}`;
 }
 
 export function createEmptySourceDraft(mode: SourceMode = "file"): SourceDraft {
@@ -100,66 +94,36 @@ export function createEmptySourceDraft(mode: SourceMode = "file"): SourceDraft {
     kind: mode === "url" ? "مصدر عالمي" : "كتاب الطالب",
     grade: null,
     subjectId: "",
-    version: "الإصدار الأول",
-    semester: "",
     fileName: "",
     url: "",
     rightsConfirmed: false,
   };
 }
 
-export function folderForKind(kind: SourceKind): string {
-  if (kind === "كتاب الطالب") return "كتاب_الطالب";
-  if (kind === "دليل المعلم") return "دليل_المعلم";
-  if (kind === "نواتج التعلم") return "نواتج_التعلم";
-  if (kind === "جدول المواصفات") return "جداول_المواصفات";
-  if (kind === "اختبار كامبريدج") return "أوراق_الأسئلة";
-  return "مصادر_مساندة";
+function catalogSegment(value: string): string {
+  return value.trim().replace(/[^\p{L}\p{N}._-]+/gu, "-").replace(/^-+|-+$/g, "") || "غير-محدد";
 }
 
-
-export function semesterDriveSegment(semester: SourceSemester | ""): string {
-  if (semester === "الفصل الأول") return "الفصل_الأول";
-  if (semester === "الفصل الثاني") return "الفصل_الثاني";
-  if (semester === "العام الكامل") return "العام_الكامل";
-  return "فصل_غير_محدد";
-}
-
-export function safeDriveSegment(value: string): string {
-  return value.trim().replace(/[\/:*?"<>|]+/g, "-").replace(/\s+/g, "_") || "غير_محدد";
-}
-
-export function sourceSubjectLabel(subjectId: string): string {
-  return SUBJECTS.find((item) => item.id === subjectId)?.label ?? "مادة_غير_محددة";
-}
-
-export function buildSourceDrivePath(draft: Pick<SourceDraft, "grade" | "subjectId" | "kind" | "semester">): string {
-  const subjectSegment = safeDriveSegment(sourceSubjectLabel(draft.subjectId));
-  const gradeSegment = draft.grade ? `الصف_${String(draft.grade).padStart(2, "0")}` : "صف_غير_محدد";
-  const semesterSegment = semesterDriveSegment(draft.semester);
-
-  if (draft.kind === "اختبار كامبريدج") {
-    return `واثق/01_مصادر_المنصة/02_اختبارات_كامبريدج/${subjectSegment}/${gradeSegment}/${semesterSegment}/${folderForKind(draft.kind)}/`;
-  }
-  if (draft.kind === "مصدر عالمي") {
-    return `واثق/01_مصادر_المنصة/03_مصادر_عالمية/${subjectSegment}/${gradeSegment}/${semesterSegment}/مصادر_مساندة/`;
-  }
-  return `واثق/01_مصادر_المنصة/01_المنهج_العماني/${gradeSegment}/${subjectSegment}/${semesterSegment}/${folderForKind(draft.kind)}/`;
+/**
+ * مسار منطقي داخل فهرس واثق فقط. رفع المصادر اختياري ولا يعتمد على أي مخزن خارجي.
+ */
+export function buildSourceCatalogPath(draft: Pick<SourceDraft, "grade" | "subjectId" | "kind">): string {
+  const subject = SUBJECTS.find((item) => item.id === draft.subjectId)?.label ?? (draft.subjectId || "science");
+  const stage = draft.grade === 10 ? "igcse" : draft.grade ? `stage-${draft.grade}` : "stage-unspecified";
+  return `wathiq://${catalogSegment(subject)}/${catalogSegment(stage)}/${catalogSegment(draft.kind)}`;
 }
 
 export function validateSourceDraft(draft: SourceDraft): SourceValidation {
   const issues: SourceValidation["issues"] = [];
   if (!draft.title.trim()) issues.push({ field: "title", message: "اكتب اسمًا واضحًا للمصدر." });
-  if (!draft.grade) issues.push({ field: "grade", message: "اختر الصف المرتبط بالمصدر." });
-  if (!draft.subjectId) issues.push({ field: "subjectId", message: "اختر المادة المرتبطة بالمصدر." });
-  if (!draft.version.trim()) issues.push({ field: "version", message: "اكتب رقم الإصدار أو سنته." });
-  if (!draft.semester) issues.push({ field: "semester", message: "اختر الفصل الدراسي المرتبط بالمصدر." });
+  if (!draft.grade) issues.push({ field: "grade", message: "اختر مرحلة Cambridge المرتبطة بالمصدر." });
+  if (!draft.subjectId) issues.push({ field: "subjectId", message: "اختر مادة العلوم المرتبطة بالمصدر." });
 
   if (draft.mode === "file") {
     if (!draft.fileName.trim()) {
       issues.push({ field: "fileName", message: "اختر ملف PDF قبل الإضافة." });
     } else if (!draft.fileName.toLowerCase().endsWith(".pdf")) {
-      issues.push({ field: "fileName", message: "النسخة الأولى تقبل ملفات PDF فقط." });
+      issues.push({ field: "fileName", message: "رفع المصادر الاختيارية يقبل PDF حاليًا." });
     }
   }
   if (draft.mode === "url") {
@@ -190,12 +154,10 @@ export function createManagedSource(draft: SourceDraft, now = new Date()): Manag
     mode: draft.mode,
     grade: draft.grade,
     subjectId: draft.subjectId,
-    version: draft.version.trim(),
-    semester: draft.semester || "غير محدد",
-    ...(draft.mode === "file" ? { fileName: draft.fileName, uploadState: "غير مرفوع" as const } : { url: draft.url.trim() }),
+    ...(draft.mode === "file" ? { fileName: draft.fileName } : { url: draft.url.trim() }),
     rightsConfirmed: draft.mode === "file" ? true : draft.rightsConfirmed,
     status: "جاهز للفهرسة",
-    drivePath: buildSourceDrivePath(draft),
+    catalogPath: buildSourceCatalogPath(draft),
     createdAt: timestamp,
     updatedAt: timestamp,
   };

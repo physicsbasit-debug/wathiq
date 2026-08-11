@@ -37,7 +37,7 @@ test("يبني نتيجة OCR عربية قابلة للفهرسة", () => {
     { pageNumber: 1, content: readableArabic, characterCount: readableArabic.length, confidence: 0.94, provider: "google-cloud-vision", processedAt: "2026-07-28T10:00:00.000Z" },
     { pageNumber: 2, content: readableArabic, characterCount: readableArabic.length, confidence: 0.92, provider: "google-cloud-vision", processedAt: "2026-07-28T10:00:01.000Z" },
   ]);
-  assert.equal(result.method, "google-vision-ocr");
+  assert.equal(result.method, "gemini-ocr");
   assert.equal(result.requiresOcr, false);
   assert.ok(result.chunks.length >= 2);
 });

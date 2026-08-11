@@ -4,7 +4,7 @@ const SUPABASE_URL = requiredEnv("SUPABASE_URL");
 const SUPABASE_SERVICE_ROLE_KEY = requiredEnv("SUPABASE_SERVICE_ROLE_KEY");
 const WATHIQ_APP_URL = requiredEnv("WATHIQ_APP_URL");
 const appOrigin = new URL(WATHIQ_APP_URL).origin;
-const GENERATION_ENDPOINT = `${SUPABASE_URL}/functions/v1/generate-source-questions`;
+const GENERATION_ENDPOINT = `${SUPABASE_URL}/functions/v1/science-visual-generation`;
 const TABLE = "question_visual_jobs";
 const QUESTION_VISUAL_BUCKET = "wathiq-question-visuals";
 const MAX_ITEMS = 20;
@@ -28,7 +28,6 @@ interface VisualJobInput {
   sourceSupport: string;
   previousAssetPath: string;
   requiredMode: RequiredMode;
-  scientificItem: Record<string, unknown>;
   visual: Record<string, unknown>;
 }
 
@@ -40,7 +39,7 @@ interface VisualAsset {
   generatedAt: string;
   promptVersion: string;
   validated: true;
-  assetKind?: "scene_2d" | "scene_2d_overlay";
+  assetKind?: "scene_2d";
   renderMode?: RequiredMode;
 }
 
@@ -299,10 +298,10 @@ async function processJob(jobId: string, accessToken: string, requestId: string)
     row = claimed as JobRow;
 
     console.log(JSON.stringify({ event: "wathiq_visual_job_started", requestId, jobId, attempt }));
-    const response = await invokeGenerator(row.request_payload, accessToken, row.id);
+    const response = await invokeGenerator({ ...row.request_payload, requiredMode: "replace" }, accessToken, row.id);
     if (response.status === "ready" && response.illustration) {
-      if (response.illustration.renderMode !== row.required_mode) {
-        throw httpError("عاد مولد الصور بنمط عرض لا يطابق عقد المفردة.", 502);
+      if (response.illustration.renderMode !== "replace") {
+        throw httpError("عاد مولد الصور بنمط عرض قديم غير مدعوم.", 502);
       }
       const completedAt = new Date().toISOString();
       const { data: completed, error: completionError } = await admin.from(TABLE).update({
@@ -360,7 +359,7 @@ async function invokeGenerator(
   input: VisualJobInput,
   accessToken: string,
   jobId: string,
-): Promise<{ status: "ready" | "fallback"; illustration?: VisualAsset; reason: string }> {
+): Promise<{ status: "ready" | "failed"; illustration?: VisualAsset; reason: string }> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), INTERNAL_GENERATION_TIMEOUT_MS);
   try {
@@ -386,7 +385,6 @@ async function invokeGenerator(
         questionText: input.questionText,
         sourceSupport: input.sourceSupport,
         ...(input.previousAssetPath ? { previousAssetPath: input.previousAssetPath } : {}),
-        scientificItem: input.scientificItem,
         visual: input.visual,
       }),
       signal: controller.signal,
@@ -398,7 +396,7 @@ async function invokeGenerator(
       catch { payload = { error: text }; }
     }
     if (!response.ok) throw httpError(errorMessage(payload) || `تعذر تشغيل مولد الصور (${response.status}).`, response.status);
-    const status = payload.status === "ready" ? "ready" : "fallback";
+    const status = payload.status === "ready" ? "ready" : "failed";
     const illustration = parseVisualAsset(payload.illustration);
     const reason = typeof payload.reason === "string" ? payload.reason : "";
     return { status, ...(illustration ? { illustration } : {}), reason };
@@ -415,7 +413,7 @@ async function invokeGenerator(
 function parseJobInput(value: unknown, draftId: string): VisualJobInput {
   const record = requireRecord(value, "إحدى مهام الصور غير صالحة.");
   const visual = requireRecord(record.visual, "مواصفة الرسم غير صالحة.");
-  const requiredMode = record.requiredMode === "overlay" ? "overlay" : record.requiredMode === "replace" ? "replace" : null;
+  const requiredMode = record.requiredMode === "replace" ? "replace" : null;
   if (!requiredMode) throw httpError("نمط الأصل البصري غير صالح.", 400);
   return {
     draftId,
@@ -427,7 +425,6 @@ function parseJobInput(value: unknown, draftId: string): VisualJobInput {
     sourceSupport: requireText(record.sourceSupport, "دليل المصدر غير محدد.", 3_000),
     previousAssetPath: typeof record.previousAssetPath === "string" ? record.previousAssetPath.trim().slice(0, 300) : "",
     requiredMode,
-    scientificItem: requireRecord(record.scientificItem, "النموذج العلمي للمفردة غير صالح."),
     visual,
   };
 }
@@ -442,8 +439,8 @@ function parseVisualAsset(value: unknown): VisualAsset | undefined {
     || typeof record.generatedAt !== "string" || !record.generatedAt
     || typeof record.promptVersion !== "string" || !record.promptVersion
     || record.validated !== true) return undefined;
-  const renderMode: RequiredMode = record.renderMode === "overlay" ? "overlay" : "replace";
-  const assetKind = record.assetKind === "scene_2d_overlay" ? "scene_2d_overlay" : "scene_2d";
+  const renderMode: RequiredMode = "replace";
+  const assetKind = "scene_2d" as const;
   return {
     url: record.url,
     assetPath: record.assetPath,
@@ -463,7 +460,7 @@ function toSnapshot(row: JobRow): Record<string, unknown> {
     draftId: row.draft_id,
     planItemId: row.plan_item_id,
     visualHash: row.visual_hash,
-    requiredMode: row.required_mode,
+    requiredMode: "replace",
     status: row.status,
     attemptCount: row.attempt_count,
     maxAttempts: row.max_attempts,
@@ -485,7 +482,6 @@ async function hashInput(input: VisualJobInput): Promise<string> {
     questionText: input.questionText,
     sourceSupport: input.sourceSupport,
     requiredMode: input.requiredMode,
-    scientificItem: input.scientificItem,
     visual: input.visual,
   }));
   const digest = await crypto.subtle.digest("SHA-256", bytes);

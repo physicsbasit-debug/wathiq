@@ -12,30 +12,21 @@ globalThis.localStorage = {
 
 const source = {
   id: "source-1",
-  catalogCode: "WTH-OM-G10-PHY-STU-2026-ABC123",
-  fingerprint: "file|كتاب الطالب|10|physics|الفصل الأول|2026|physics.pdf",
-  authority: "منهج عُماني",
+  catalogCode: "WTH-UP-IG-PHY-STU-ABC123",
+  fingerprint: "file|كتاب الطالب|10|physics|physics.pdf",
+  authority: "مصدر مرفوع",
   title: "كتاب الطالب للفيزياء",
   kind: "كتاب الطالب",
   mode: "file",
   grade: 10,
   subjectId: "physics",
-  version: "2026",
-  semester: "الفصل الأول",
   fileName: "physics.pdf",
   rightsConfirmed: true,
   status: "جاهز للفهرسة",
-  drivePath: "واثق/01_مصادر_المنصة/01_المنهج_العماني/الصف_10/الفيزياء/الفصل_الأول/كتاب_الطالب/",
+  catalogPath: "wathiq://الفيزياء/igcse/كتاب-الطالب",
   contentFingerprint: "sha256-sample:abcdef",
   fileSizeBytes: 2048,
   mimeType: "application/pdf",
-  driveFileId: "drive-file-1",
-  driveParentFolderId: "folder-1",
-  driveOriginalParentFolderId: "folder-1",
-  driveWebViewLink: "https://drive.google.com/file/d/drive-file-1/view",
-  driveMd5Checksum: "abc123",
-  uploadState: "مرفوع",
-  uploadedAt: "2026-07-25T10:05:00.000Z",
   createdAt: "2026-07-25T10:00:00.000Z",
   updatedAt: "2026-07-25T10:00:00.000Z",
 };
@@ -45,17 +36,17 @@ test("يحوّل سجل واثق إلى صف Supabase ويعيده دون فقد
   assert.equal(row.owner_id, "11111111-1111-1111-1111-111111111111");
   assert.equal(row.catalog_code, source.catalogCode);
   assert.equal(row.extraction_status, "لم يبدأ");
-  assert.equal(row.semester, "الفصل الأول");
+  assert.equal(row.semester, "غير محدد");
   assert.deepEqual(rowToSource(row), { ...source, extractionStatus: "لم يبدأ" });
 });
 
 
-test("لا يرسل extraction_status فارغًا للمصادر القديمة بعد ترقية Phase 0-G", () => {
+test("يحافظ محول Supabase على أعمدة التوافق القديمة دون إعادتها إلى نموذج واثق", () => {
   const legacySource = { ...source };
   delete legacySource.extractionStatus;
   const row = sourceToRow(legacySource, "11111111-1111-1111-1111-111111111111");
   assert.equal(row.extraction_status, "لم يبدأ");
-  assert.equal(row.semester, "الفصل الأول");
+  assert.equal(row.semester, "غير محدد");
   assert.notEqual(row.extraction_status, null);
 });
 
@@ -282,7 +273,7 @@ test("يقرأ صفحات OCR المحفوظة ويدعم مسحها لإعاد�
   assert.equal(ocrCalls[1].init.method, "DELETE");
 });
 
-test("يحفظ نتيجة OCR الناجحة بإصدار Google Vision", async () => {
+test("يحفظ نتيجة OCR الناجحة بإصدار Gemini", async () => {
   memory.clear();
   const ownerId = "11111111-1111-1111-1111-111111111111";
   const calls = [];
@@ -331,90 +322,14 @@ test("يحفظ نتيجة OCR الناجحة بإصدار Google Vision", async 
   const patch = calls.filter((call) => call.init.method === "PATCH").at(-1);
   const body = JSON.parse(patch.init.body);
   assert.equal(body.extraction_status, "مكتمل");
-  assert.match(body.extraction_version, /^google-cloud-vision-ocr-1-/);
+  assert.match(body.extraction_version, /^gemini-ocr-1-/);
   assert.match(body.extraction_message, /OCR/);
 });
 
 
-test("يرقّي المصدر القديم إلى فصل غير محدد بدل رفضه", () => {
-  const legacy = { ...source };
-  delete legacy.semester;
-  const row = sourceToRow(legacy, "11111111-1111-1111-1111-111111111111");
-  assert.equal(row.semester, "غير محدد");
-  assert.equal(rowToSource(row).semester, "غير محدد");
-});
-
-test("يقرأ مقاطع المصدر وهيكله ويحفظ الهيكل المركزي", async () => {
-  memory.clear();
-  const ownerId = "11111111-1111-1111-1111-111111111111";
-  const calls = [];
-  const node = {
-    id: "structure-unit-1",
-    sourceId: "source-1",
-    parentId: null,
-    nodeType: "وحدة",
-    title: "الوحدة الأولى: الشحنة الكهربائية",
-    pageStart: 17,
-    pageEnd: 24,
-    orderIndex: 0,
-    confidence: 0.97,
-    reviewStatus: "مرشح",
-    extractionMethod: "toc-heuristic-1",
-    createdAt: "2026-07-28T10:00:00.000Z",
-    updatedAt: "2026-07-28T10:00:00.000Z",
-  };
-  const fetcher = async (url, init = {}) => {
-    calls.push({ url: String(url), init });
-    if (String(url).includes("/auth/v1/token?grant_type=password")) {
-      return Response.json({
-        access_token: "user-jwt",
-        refresh_token: "refresh-jwt",
-        expires_in: 3600,
-        user: { id: ownerId, email: "owner@example.com" },
-      });
-    }
-    if (init.method === "GET" && String(url).includes("source_chunks")) {
-      return Response.json([{
-        owner_id: ownerId,
-        source_id: "source-1",
-        chunk_index: 0,
-        page_from: 3,
-        page_to: 3,
-        content: "المحتويات",
-        character_count: 9,
-      }]);
-    }
-    if (init.method === "GET" && String(url).includes("source_structure_nodes")) {
-      return Response.json([{
-        owner_id: ownerId,
-        source_id: node.sourceId,
-        id: node.id,
-        parent_id: node.parentId,
-        node_type: node.nodeType,
-        title: node.title,
-        page_start: node.pageStart,
-        page_end: node.pageEnd,
-        order_index: node.orderIndex,
-        confidence: node.confidence,
-        review_status: node.reviewStatus,
-        extraction_method: node.extractionMethod,
-        created_at: node.createdAt,
-        updated_at: node.updatedAt,
-      }]);
-    }
-    return new Response(null, { status: 204 });
-  };
-  const store = new CentralSourceStore({
-    supabaseUrl: "https://project.supabase.co",
-    supabasePublishableKey: "sb_publishable_test",
-  }, fetcher);
-  await store.signIn("owner@example.com", "secret");
-  const chunks = await store.listSourceChunks("source-1");
-  assert.equal(chunks[0].pageFrom, 3);
-  const nodes = await store.listSourceStructure("source-1");
-  assert.deepEqual(nodes, [node]);
-  await store.replaceSourceStructure("source-1", [node]);
-  const structureCalls = calls.filter((call) => call.url.includes("source_structure_nodes"));
-  assert.equal(structureCalls.at(-2).init.method, "POST");
-  assert.equal(structureCalls.at(-1).init.method, "DELETE");
+test("لا يعيد محول Supabase حقول الفصل والإصدار القديمة إلى نموذج واثق", () => {
+  const row = sourceToRow(source, "11111111-1111-1111-1111-111111111111");
+  const restored = rowToSource(row);
+  assert.equal(restored && "semester" in restored, false);
+  assert.equal(restored && "version" in restored, false);
 });

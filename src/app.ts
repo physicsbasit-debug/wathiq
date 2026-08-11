@@ -1,6 +1,6 @@
-import { MOCK_LIBRARY, MOCK_SOURCES, SUBJECTS } from "./data.js";
+import { SUBJECTS } from "./data.js";
 import {
-  applyOfficialAssessmentTemplate,
+  applyAssessmentPreset,
   approveExamDraft,
   buildPlan,
   createEmptyDraft,
@@ -10,29 +10,26 @@ import {
   reopenExamDraft,
   isPlanComplete,
   selectedProposal,
+  setCambridgeProgramme,
+  setCambridgeSubject,
   setExamTitle,
   syncDraftTopicFromLessons,
   validateExamSetup,
 } from "./domain.js";
-import { clearDraft, loadDraft, loadDraftResumeContext, loadDrafts, loadProfile, loadSources, saveDraft, saveDraftResumeContext, saveProfile, saveSources, setActiveDraftId } from "./storage.js";
-import type { ExamDraft, ExamTitleOption, ManagedSource, PlanItem, QuestionCounts, QuestionVisualJobSnapshot, SourceDraft, SourceStatus, SourceExtractionResult, SourceStructureNode, ViewName, WizardStep } from "./types.js";
+import { clearDraft, loadDraft, loadDrafts, loadProfile, loadSources, saveDraft, saveProfile, saveSources, setActiveDraftId } from "./storage.js";
+import type { ExamDraft, ExamTitleOption, ManagedSource, PlanItem, QuestionCounts, QuestionVisualJobSnapshot, SourceDraft, SourceStatus, SourceExtractionResult, ViewName, WizardStep } from "./types.js";
 import { escapeHtml, formatArabicDate, icon } from "./ui.js";
 import { questionVisualAssetRequirement, questionVisualTypeLabel, renderQuestionVisualSvg, stripQuestionVisualIllustration, validateQuestionVisualSpec } from "./question-visual.js";
 import { buildStandaloneExamDocument, downloadWordHtml, interleaveAssessmentItems, printHtmlDocument, safeExportFileName } from "./exam-export.js";
-import { buildSourceDrivePath, changeSourceStatus, createEmptySourceDraft, createManagedSource, findDuplicateContentSource, findDuplicateSource, sourceSubjectLabel, SOURCE_KINDS, SOURCE_SEMESTERS, validateSourceDraft } from "./source-domain.js";
+import { changeSourceStatus, createEmptySourceDraft, createManagedSource, findDuplicateContentSource, findDuplicateSource, SOURCE_KINDS, validateSourceDraft } from "./source-domain.js";
 import { createRegistryBackup, mergeSourceRegistry, parseRegistryBackup } from "./source-registry.js";
 import { CentralSourceStore } from "./central-source-store.js";
-import { getRuntimeConfig, isCentralStorageConfigured, isGoogleDriveConfigured } from "./runtime-config.js";
-import { GoogleDriveService, type GoogleDriveStatus, type PendingSourceUpload, type SourceUploadProgress } from "./google-drive.js";
+import { getRuntimeConfig, isCentralStorageConfigured } from "./runtime-config.js";
 import { extractPdfText, shouldInvalidateLegacyExtraction, type PdfExtractionProgress } from "./pdf-indexer.js";
-import { extractSourceStructure } from "./source-structure.js";
 import { extractPdfWithArabicOcr } from "./ocr-indexer.js";
 import { resolveInitialView, viewFromHash, viewHash } from "./navigation.js";
 import { rankSourceChunks, SOURCE_RETRIEVAL_VERSION, type SourceChunkCandidate } from "./source-retrieval.js";
-import { buildLessonCatalog, selectedLessonIds, type LessonCatalogOption } from "./lesson-catalog.js";
-import { buildCuratedBookStructure } from "./book-content-tree.js";
-import { SOURCE_GENERATION_VERSION, shouldRequireCalculationWorking } from "./question-generation.js";
-import { ASSESSMENT_GENERATION_V2_VERSION } from "./assessment-generation-v2.js";
+import { buildLessonCatalog, type LessonCatalogOption } from "./lesson-catalog.js";
 import { AssessmentGenerationJobService } from "./assessment-generation-jobs.js";
 import { AssessmentGenerationWorkerService } from "./assessment-generation-worker.js";
 import { ProgressiveAssessmentGenerationOrchestrator } from "./assessment-generation-orchestrator.js";
@@ -48,19 +45,14 @@ import {
   type AssessmentItemContract,
 } from "./assessment-engine/index.js";
 import { VisualJobService, isVisualJobPending, requiredVisualJobItems } from "./visual-jobs.js";
-import { scientificItemIsComplete, scientificItemMatchesVisual } from "./scientific-item.js";
+import { EXAM_TITLE_OPTIONS } from "./cambridge-assessment.js";
 import {
-  ASSESSMENT_ITEM_WRITING_RULES,
-  INTERNATIONAL_SCIENCE_QUESTION_STYLE_PRINCIPLES,
-  SCIENCE_ASSESSMENT_POLICY_DOCUMENT_PATH,
-  SCIENCE_ASSESSMENT_POLICY_PUBLISHED,
-  SCIENCE_ASSESSMENT_POLICY_TITLE,
-  SCIENCE_ASSESSMENT_POLICY_VERSION,
-  EXAM_TITLE_OPTIONS,
-  getOfficialAssessmentSpec,
-  getOfficialFinalExamSpec,
-  getOfficialShortTestSpec,
-} from "./assessment-policy.js";
+  CAMBRIDGE_PROGRAMMES,
+  curriculumDisplayName,
+  stageLabel,
+  stagesForProgramme,
+  subjectsForProgramme,
+} from "./cambridge-curriculum.js";
 
 const appRoot = document.querySelector<HTMLDivElement>("#app");
 if (!appRoot) throw new Error("تعذر العثور على جذر التطبيق.");
@@ -83,17 +75,10 @@ interface AppState {
   sourceStorageMessage: string;
   sourceStorageBusy: boolean;
   ownerEmail: string;
-  driveStatus: "غير مهيأ" | "يتطلب تسجيل الدخول" | "غير متصل" | "متصل" | "خطأ";
-  driveMessage: string;
-  driveBusy: boolean;
-  driveRootFolderUrl: string;
-  driveFoldersReady: boolean;
-  driveFolders: GoogleDriveStatus["folders"];
   sourceFile: File | null;
   sourceUploadBusy: boolean;
   sourceUploadProgress: number;
   sourceUploadMessage: string;
-  pendingSourceUpload: PendingSourceUpload | null;
   sourceIndexingId: string;
   sourceIndexingProgress: number;
   sourceIndexingMessage: string;
@@ -102,11 +87,6 @@ interface AppState {
   questionGenerationBusy: boolean;
   questionGenerationMessage: string;
   assessmentGenerationRun: AssessmentGenerationRunSnapshot | null;
-  lessonCatalog: LessonCatalogOption[];
-  lessonCatalogKey: string;
-  lessonCatalogBusy: boolean;
-  lessonCatalogMessage: string;
-  lessonCatalogActiveUnitKey: string;
   visualJobSyncBusy: boolean;
 }
 
@@ -114,9 +94,6 @@ interface AppState {
 const runtimeConfig = getRuntimeConfig();
 const centralSourceStore = isCentralStorageConfigured(runtimeConfig)
   ? new CentralSourceStore(runtimeConfig)
-  : null;
-const googleDriveService = centralSourceStore && isGoogleDriveConfigured(runtimeConfig)
-  ? new GoogleDriveService(runtimeConfig, centralSourceStore)
   : null;
 const assessmentGenerationJobService = centralSourceStore
   ? new AssessmentGenerationJobService(runtimeConfig, () => centralSourceStore.getActiveSession())
@@ -136,7 +113,6 @@ const savedProfile = loadProfile();
 const initialDraft = savedDraft ?? createEmptyDraft();
 if (savedProfile) {
   initialDraft.school = savedProfile.school;
-  initialDraft.directorate = savedProfile.directorate;
 }
 
 const initialView = resolveInitialView(window.location.hash, window.sessionStorage.getItem(ACTIVE_VIEW_STORAGE_KEY));
@@ -147,7 +123,7 @@ const state: AppState = {
   saveState: savedDraft ? "محفوظ" : "غير محفوظ",
   libraryFilter: "الكل",
   toast: "",
-  sources: loadSources() ?? MOCK_SOURCES,
+  sources: loadSources() ?? [],
   sourceFormOpen: false,
   sourceDraft: createEmptySourceDraft(),
   sourceFilter: "الكل",
@@ -158,19 +134,10 @@ const state: AppState = {
     : "لم تُضبط بيانات Supabase بعد؛ يعمل السجل محليًا فقط.",
   sourceStorageBusy: false,
   ownerEmail: "",
-  driveStatus: googleDriveService ? "يتطلب تسجيل الدخول" : "غير مهيأ",
-  driveMessage: googleDriveService
-    ? "سجّل دخول مالك المنصة أولًا، ثم اربط Google Drive مرة واحدة."
-    : "لم تُضبط بيانات Google OAuth بعد.",
-  driveBusy: false,
-  driveRootFolderUrl: "",
-  driveFoldersReady: false,
-  driveFolders: [],
   sourceFile: null,
   sourceUploadBusy: false,
   sourceUploadProgress: 0,
   sourceUploadMessage: "",
-  pendingSourceUpload: googleDriveService?.getPendingUpload() ?? null,
   sourceIndexingId: "",
   sourceIndexingProgress: 0,
   sourceIndexingMessage: "",
@@ -179,11 +146,6 @@ const state: AppState = {
   questionGenerationBusy: false,
   questionGenerationMessage: "",
   assessmentGenerationRun: null,
-  lessonCatalog: [],
-  lessonCatalogKey: "",
-  lessonCatalogBusy: false,
-  lessonCatalogMessage: "",
-  lessonCatalogActiveUnitKey: "",
   visualJobSyncBusy: false,
 };
 
@@ -203,22 +165,8 @@ function persistDraftCheckpoint(showFailure = true): boolean {
   }
   try {
     state.draft.updatedAt = new Date().toISOString();
-    const existingSnapshot = state.draft.resumeContext;
-    const lessonCatalog = state.lessonCatalog.length ? state.lessonCatalog : (existingSnapshot?.lessonCatalog ?? []);
-    const resumeContext = {
-      schemaVersion: 1 as const,
-      selectionKey: lessonCatalogSelectionKey() || existingSnapshot?.selectionKey || "",
-      activeUnitKey: state.lessonCatalogActiveUnitKey || existingSnapshot?.activeUnitKey || "",
-      lessonCatalog,
-      savedAt: state.draft.updatedAt,
-    };
-    state.draft.resumeContext = resumeContext;
     saveDraft(state.draft);
-    saveDraftResumeContext({
-      ...resumeContext,
-      draftId: state.draft.id,
-    });
-    saveProfile({ school: state.draft.school, directorate: state.draft.directorate });
+    saveProfile({ school: state.draft.school });
     state.saveState = "محفوظ";
     renderTopSaveState();
     return true;
@@ -348,19 +296,15 @@ function renderHeader(): string {
     <header class="topbar">
       <button class="brand" data-nav="home" aria-label="الذهاب إلى الصفحة الرئيسية">
         <span class="brand-mark">و</span>
-        <span><strong>واثق</strong><small>اختبار علمي بلا متاهة</small></span>
+        <span><strong>واثق</strong><small>اختبارات علوم Cambridge ببساطة</small></span>
       </button>
       <nav class="desktop-nav" aria-label="التنقل الرئيسي">
         ${navButton("home", "الرئيسية", "home")}
         ${navButton("wizard", "اختبار جديد", "plus")}
         ${navButton("library", "اختباراتي", "files")}
-        ${navButton("policy", "مرجع التقويم", "book")}
-        ${navButton("admin", "إدارة المحتوى", "admin")}
+        ${navButton("admin", "مصادر اختيارية", "admin")}
       </nav>
-      <div class="header-actions">
-        <span class="credit-pill"><b>5</b> حزم متاحة</span>
-        <button class="ghost-btn compact" data-action="save-now">${icon("save")}<span id="save-label">${state.saveState}</span></button>
-      </div>
+      <div class="header-actions"><button class="ghost-btn compact" data-action="save-now">${icon("save")}<span id="save-label">${state.saveState}</span></button></div>
     </header>
   `;
 }
@@ -371,22 +315,18 @@ function navButton(view: ViewName, label: string, iconName: Parameters<typeof ic
 }
 
 function renderMobileNav(): string {
-  return `
-    <nav class="mobile-nav" aria-label="التنقل للجوال">
-      ${navButton("home", "الرئيسية", "home")}
-      ${navButton("wizard", "جديد", "plus")}
-      ${navButton("library", "اختباراتي", "files")}
-      ${navButton("policy", "المرجع", "book")}
-      ${navButton("admin", "الإدارة", "admin")}
-    </nav>
-  `;
+  return `<nav class="mobile-nav" aria-label="التنقل للجوال">
+    ${navButton("home", "الرئيسية", "home")}
+    ${navButton("wizard", "جديد", "plus")}
+    ${navButton("library", "اختباراتي", "files")}
+    ${navButton("admin", "المصادر", "admin")}
+  </nav>`;
 }
 
 function renderView(): string {
   if (state.view === "home") return renderHome();
   if (state.view === "wizard") return renderWizard();
   if (state.view === "library") return renderLibrary();
-  if (state.view === "policy") return renderPolicyReference();
   return renderAdmin();
 }
 
@@ -395,48 +335,25 @@ function renderHome(): string {
   return `
     <section class="hero-panel">
       <div class="hero-copy">
-        <span class="eyebrow">مرجع تقويم رسمي · توليد موثق من المصدر</span>
-        <h1>أنشئ اختبارك بثقة.</h1>
-        <p>أربع خطوات واضحة. المصادر والفحوص وجدول المواصفات تعمل في الخلفية، حيث تنتمي التفاصيل المزعجة.</p>
+        <span class="eyebrow">Cambridge Primary · Lower Secondary · IGCSE</span>
+        <h1>اسم الموضوع يكفي.</h1>
+        <p>اختر برنامج Cambridge والمرحلة ومادة العلوم والموضوع. واثق يؤلف بحرية، ثم يراجع العلم والقياس بصرامة. رفع الكتب أو الأدلة اختياري للتخصيص فقط.</p>
         <div class="hero-actions">
-          <button class="primary-btn" data-action="new-exam">${icon("plus")} إنشاء اختبار جديد</button>
-          ${hasDraft ? `<button class="secondary-btn" data-action="resume-draft">متابعة آخر مسودة ${icon("arrow")}</button>` : ""}
+          <button class="primary-btn" data-action="new-exam">${icon("plus")} إنشاء اختبار</button>
+          ${hasDraft ? `<button class="secondary-btn" data-action="resume-draft">متابعة المسودة ${icon("arrow")}</button>` : ""}
         </div>
       </div>
-      <div class="confidence-card" aria-label="ملخص الخدمة">
-        <div class="confidence-score">واثق</div>
-        <ul>
-          <li>${icon("check")} استرجاع المقاطع مع أرقام الصفحات</li>
-          <li>${icon("check")} ثلاثة بدائل موثقة لكل مفردة</li>
-          <li>${icon("check")} إجابة نموذجية ودليل من نص المصدر</li>
-          <li>${icon("check")} اختبار مطابق لوثيقة تقويم العلوم</li>
-        </ul>
-      </div>
+      <div class="confidence-card"><div class="confidence-score">واثق</div><ul>
+        <li>${icon("check")} Primary Science 0097 · Stages 1-6</li>
+        <li>${icon("check")} Lower Secondary Science 0893 · Stages 7-9</li>
+        <li>${icon("check")} IGCSE Physics / Chemistry / Biology / Sciences</li>
+        <li>${icon("check")} مؤلف AI حر + مراجع علمي مستقل</li>
+      </ul></div>
     </section>
-
     <section class="dashboard-grid">
-      <article class="action-card featured">
-        <span class="card-icon">${icon("plus")}</span>
-        <div><h2>إنشاء اختبار جديد</h2><p>ابدأ باختيار الصف والمادة، ثم دع واثق يرتب الباقي دون استعراض عضلاته أمام المعلم.</p></div>
-        <button class="card-link" data-action="new-exam">ابدأ الآن ${icon("arrow")}</button>
-      </article>
-      <article class="action-card">
-        <span class="card-icon">${icon("files")}</span>
-        <div><h2>اختباراتي</h2><p>مسوداتك واختباراتك المعتمدة في مكان واحد، بلا حفريات داخل المجلدات.</p></div>
-        <button class="card-link" data-nav="library">فتح المكتبة ${icon("arrow")}</button>
-      </article>
-      <article class="action-card">
-        <span class="card-icon">${icon("book")}</span>
-        <div><h2>مرجع تقويم العلوم</h2><p>ملخص عملي للوثيقة الرسمية وضوابط بناء الاختبارات القصيرة والنهائية للصفوف 5-10.</p></div>
-        <button class="card-link" data-nav="policy">فتح المرجع ${icon("arrow")}</button>
-      </article>
-    </section>
-
-    <section class="summary-strip">
-      <div><span>الرصيد الحالي</span><strong>5 حزم</strong></div>
-      <div><span>حالة الحساب</span><strong class="status-good">نشط</strong></div>
-      <div><span>آخر حفظ</span><strong>${state.saveState}</strong></div>
-      <div><span>بيانات المدرسة</span><strong>${escapeHtml(state.draft.school || "غير مكتملة")}</strong></div>
+      <article class="action-card featured"><span class="card-icon">${icon("plus")}</span><div><h2>اختبار جديد</h2><p>برنامج، مرحلة، مادة، موضوع. هذا كل ما يحتاجه المسار الأساسي.</p></div><button class="card-link" data-action="new-exam">ابدأ الآن ${icon("arrow")}</button></article>
+      <article class="action-card"><span class="card-icon">${icon("files")}</span><div><h2>اختباراتي</h2><p>المسودات والاختبارات المعتمدة في مكان واحد.</p></div><button class="card-link" data-nav="library">فتح المكتبة ${icon("arrow")}</button></article>
+      <article class="action-card"><span class="card-icon">${icon("admin")}</span><div><h2>مصادر اختيارية</h2><p>أضف PDF فقط عندما تريد تخصيص الاختبار بكتاب أو دليل محدد. التوليد لا يتوقف عليها.</p></div><button class="card-link" data-nav="admin">إدارة المصادر ${icon("arrow")}</button></article>
     </section>
   `;
 }
@@ -498,63 +415,12 @@ function eligibleSourcesForDraft(): ManagedSource[] {
   );
 }
 
-function lessonCatalogSelectionKey(): string {
-  return [state.draft.grade ?? "", state.draft.subjectId, ...eligibleSourcesForDraft().map((source) => `${source.id}:${source.updatedAt}`)].join("|");
-}
-
-interface LessonUnitGroup {
-  key: string;
-  sourceId: string;
-  sourceTitle: string;
-  unitLabel: string;
-  lessons: LessonCatalogOption[];
-}
-
-function lessonUnitKey(sourceId: string, unitLabel: string): string {
-  return `${sourceId}::${unitLabel}`;
-}
 
 function splitLessonLabel(label: string): { code: string; title: string } {
   const normalized = label.trim();
   const match = /^([0-9٠-٩۰-۹]{1,2}\s*[-.]\s*[0-9٠-٩۰-۹]{1,2})\s*[:：\-]?\s*(.+)$/u.exec(normalized);
-  if (!match) return { code: "درس", title: normalized || "درس محفوظ" };
+  if (!match) return { code: "درس", title: normalized || "درس" };
   return { code: match[1]!.replace(/\s+/g, "").replace(".", "-"), title: match[2]!.trim() };
-}
-
-function fallbackLessonCatalogFromDraft(draft: ExamDraft): LessonCatalogOption[] {
-  const byLabel = new Map<string, LessonCatalogOption>();
-  for (const reference of draft.sourceReferences) {
-    const label = reference.lessonTopic?.trim();
-    if (!label || byLabel.has(label)) continue;
-    const parsed = splitLessonLabel(label);
-    byLabel.set(label, {
-      id: `draft-snapshot:${draft.id}:${reference.id}`,
-      sourceId: reference.sourceId,
-      sourceTitle: reference.sourceTitle,
-      label,
-      code: parsed.code,
-      title: parsed.title,
-      pageStart: reference.pageFrom,
-      pageEnd: reference.pageTo,
-      unitLabel: "الدروس المحفوظة في المسودة",
-      origin: "detected-heading",
-    });
-  }
-  for (const label of normalizeLessonTopics(draft.lessonTopics)) {
-    if (byLabel.has(label)) continue;
-    const parsed = splitLessonLabel(label);
-    byLabel.set(label, {
-      id: `draft-topic:${draft.id}:${byLabel.size + 1}`,
-      sourceId: draft.sourceReferences[0]?.sourceId ?? `draft-source:${draft.id}`,
-      sourceTitle: draft.sourceReferences[0]?.sourceTitle ?? "مرجع المسودة المحفوظ",
-      label,
-      code: parsed.code,
-      title: parsed.title,
-      unitLabel: "الدروس المحفوظة في المسودة",
-      origin: "detected-heading",
-    });
-  }
-  return [...byLabel.values()];
 }
 
 function restoreDraftRuntimeContext(draft: ExamDraft): void {
@@ -562,138 +428,70 @@ function restoreDraftRuntimeContext(draft: ExamDraft): void {
   state.assessmentGenerationRun = null;
   state.questionGenerationBusy = false;
   state.questionGenerationMessage = draft.generationRunId && !isPlanComplete(draft)
-    ? "سيستعيد واثق دورة التوليد من Supabase بعد مزامنة المصادر."
+    ? "سيستعيد واثق دورة التوليد من Supabase بعد تسجيل الدخول."
     : "";
-  const storedContext = loadDraftResumeContext(draft.id);
-  const embeddedContext = draft.resumeContext;
-  const context = embeddedContext?.lessonCatalog?.length ? embeddedContext : storedContext;
-  const snapshot = context?.lessonCatalog?.length ? context.lessonCatalog : fallbackLessonCatalogFromDraft(draft);
-  state.lessonCatalog = snapshot;
-  state.lessonCatalogActiveUnitKey = context?.activeUnitKey ?? "";
-  state.lessonCatalogKey = context?.selectionKey || lessonCatalogSelectionKey();
-  state.lessonCatalogBusy = false;
-  state.lessonCatalogMessage = snapshot.length
-    ? "تمت استعادة شجرة الدروس المحفوظة مع المسودة."
-    : "لم تتضمن المسودة شجرة محفوظة؛ يمكنك متابعة الأسئلة الموجودة أو إعادة ربط المصدر عند تعديل الدروس.";
   state.sourceRetrievalMessage = draft.sourceReferences.length
     ? `تمت استعادة ${draft.sourceReferences.length} مقاطع مرجعية محفوظة مع المسودة.`
     : "لا توجد مقاطع مرجعية محفوظة في هذه المسودة.";
 }
 
-function buildLessonUnitGroups(catalog: LessonCatalogOption[]): LessonUnitGroup[] {
-  const groups = new Map<string, LessonUnitGroup>();
-  catalog.forEach((lesson) => {
-    const unitLabel = lesson.unitLabel || "دروس الكتاب";
-    const key = lessonUnitKey(lesson.sourceId, unitLabel);
-    const group = groups.get(key) ?? {
-      key,
-      sourceId: lesson.sourceId,
-      sourceTitle: lesson.sourceTitle,
-      unitLabel,
-      lessons: [],
-    };
-    group.lessons.push(lesson);
-    groups.set(key, group);
-  });
-  return [...groups.values()];
+function parseLessonInput(value: string): string[] {
+  const seen = new Set<string>();
+  const lessons: string[] = [];
+  for (const raw of value.split(/[\n،;,]+/u)) {
+    const lesson = raw.replace(/\s+/g, " ").trim();
+    if (!lesson) continue;
+    const key = lesson.normalize("NFKC").replace(/\s+/g, " ").toLocaleLowerCase("ar");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    lessons.push(lesson);
+    if (lessons.length >= MAX_LESSON_TOPICS) break;
+  }
+  return lessons;
 }
 
-function resolveActiveLessonUnitKey(groups: LessonUnitGroup[], selectedLabels: ReadonlySet<string>): string {
-  if (groups.some((group) => group.key === state.lessonCatalogActiveUnitKey)) return state.lessonCatalogActiveUnitKey;
-  const selectedGroup = groups.find((group) => group.lessons.some((lesson) => selectedLabels.has(lesson.label)));
-  return selectedGroup?.key ?? groups[0]?.key ?? "";
+function lessonSuggestions(): LessonCatalogOption[] {
+  if (state.draft.grade === null || !state.draft.subjectId) return [];
+  return buildLessonCatalog(eligibleSourcesForDraft()).slice(0, 60);
 }
 
-function renderLessonOption(
-  lesson: LessonCatalogOption,
-  selectedLabels: Set<string>,
-  selectedCount: number,
-  unitKey: string,
-): string {
-  const checked = selectedLabels.has(lesson.label);
-  const disabled = !checked && selectedCount >= MAX_LESSON_TOPICS;
-  const pages = lesson.pageStart
-    ? `<small>${lesson.pageStart === lesson.pageEnd || !lesson.pageEnd ? `ص ${lesson.pageStart}` : `ص ${lesson.pageStart}-${lesson.pageEnd}`}</small>`
-    : `<small class="lesson-page-pending">صفحات مستخرجة من عنوان الدرس</small>`;
-  return `<label class="lesson-catalog-option ${checked ? "selected" : ""} ${disabled ? "disabled" : ""}"><input type="checkbox" data-lesson-option-id="${escapeHtml(lesson.id)}" data-lesson-unit-key="${escapeHtml(unitKey)}" ${checked ? "checked" : ""} ${disabled ? "disabled" : ""}/><span><b>${escapeHtml(lesson.code)}</b><strong>${escapeHtml(lesson.title)}</strong>${pages}</span></label>`;
-}
-
-function renderLessonCatalog(): string {
-  const selectedLabels = new Set(normalizeLessonTopics(state.draft.lessonTopics));
-  const selectedCount = selectedLabels.size;
-  if (state.draft.grade === null || !state.draft.subjectId) {
-    return `<div class="lesson-catalog-empty">اختر الصف والمادة، وستظهر شجرة الكتاب هنا تلقائيًا.</div>`;
+function renderLessonSuggestions(): string {
+  const suggestions = lessonSuggestions();
+  if (!suggestions.length) {
+    return `<div class="lesson-catalog-empty">لم أجد عناوين دروس موثوقة تلقائيًا. اكتب اسم الدرس كما يظهر في الكتاب؛ هذا لا يمنع التوليد.</div>`;
   }
-  if (state.lessonCatalogBusy) {
-    return `<div class="lesson-catalog-empty">جارٍ تجهيز شجرة الكتاب والوحدات والدروس…</div>`;
-  }
-  if (!state.lessonCatalog.length) {
-    return `<div class="lesson-catalog-empty warning">${escapeHtml(state.lessonCatalogMessage || "لم يجد واثق شجرة دروس موثوقة للمصدر المطابق.")}</div>`;
-  }
-
-  const unitGroups = buildLessonUnitGroups(state.lessonCatalog);
-  const activeUnitKey = resolveActiveLessonUnitKey(unitGroups, selectedLabels);
-  state.lessonCatalogActiveUnitKey = activeUnitKey;
-  const activeIndex = Math.max(0, unitGroups.findIndex((group) => group.key === activeUnitKey));
-  const activeGroup = unitGroups[activeIndex] ?? unitGroups[0];
-  if (!activeGroup) return `<div class="lesson-catalog-empty warning">لا توجد وحدات قابلة للعرض.</div>`;
-  const previousGroup = unitGroups[activeIndex - 1];
-  const nextGroup = unitGroups[activeIndex + 1];
-  const sourceLessons = state.lessonCatalog.filter((lesson) => lesson.sourceId === activeGroup.sourceId);
-  const sourceUnits = unitGroups.filter((group) => group.sourceId === activeGroup.sourceId);
-  const selectedLessons = state.lessonCatalog.filter((lesson) => selectedLabels.has(lesson.label));
-  const multipleSources = new Set(unitGroups.map((group) => group.sourceId)).size > 1;
-
-  return `
-    <div class="lesson-unit-navigation" aria-label="التنقل بين وحدات الكتاب">
-      <button type="button" class="lesson-unit-nav-button" data-lesson-unit-target="${escapeHtml(previousGroup?.key ?? "")}" ${previousGroup ? "" : "disabled"}><span aria-hidden="true">→</span><b>الوحدة السابقة</b></button>
-      <label class="lesson-unit-jump"><span>انتقل إلى وحدة</span><select id="lesson-unit-select">${unitGroups.map((group, index) => `<option value="${escapeHtml(group.key)}" ${group.key === activeGroup.key ? "selected" : ""}>${index + 1}. ${escapeHtml(multipleSources ? `${group.sourceTitle} — ${group.unitLabel}` : group.unitLabel)}</option>`).join("")}</select><small>الوحدة ${activeIndex + 1} من ${unitGroups.length}</small></label>
-      <button type="button" class="lesson-unit-nav-button" data-lesson-unit-target="${escapeHtml(nextGroup?.key ?? "")}" ${nextGroup ? "" : "disabled"}><b>الوحدة التالية</b><span aria-hidden="true">←</span></button>
-    </div>
-    <div class="lesson-selected-summary ${selectedLessons.length ? "has-selection" : ""}">
-      <div><strong>الدروس المحددة</strong><small>${selectedLessons.length ? "تبقى اختياراتك محفوظة عند الانتقال بين الوحدات." : "حدد الدروس المطلوبة، ثم تنقل إلى أي وحدة أخرى دون فقدان الاختيار."}</small></div>
-      <div class="lesson-selected-chips">${selectedLessons.length ? selectedLessons.map((lesson) => `<button type="button" data-lesson-unit-target="${escapeHtml(lessonUnitKey(lesson.sourceId, lesson.unitLabel || "دروس الكتاب"))}">${escapeHtml(lesson.label)}</button>`).join("") : `<span>لم تحدد أي درس بعد</span>`}</div>
-    </div>
-    <div class="lesson-book-tree" data-active-unit-key="${escapeHtml(activeGroup.key)}">
-      <details class="lesson-source-tree" open>
-        <summary><span class="lesson-source-icon">${icon("book")}</span><div><strong>${escapeHtml(activeGroup.sourceTitle)}</strong><small>${sourceUnits.length} وحدات · ${sourceLessons.length} درسًا مدرجًا</small></div></summary>
-        <div class="lesson-source-units" data-source-tree-id="${escapeHtml(activeGroup.sourceId)}">
-          <details class="lesson-unit-tree" data-unit-key="${escapeHtml(activeGroup.key)}" open>
-            <summary><span>${icon("book")}</span><strong>${escapeHtml(activeGroup.unitLabel)}</strong><small>${activeGroup.lessons.length} ${activeGroup.lessons.length === 1 ? "درس" : "دروس"}</small></summary>
-            <div class="lesson-unit-items">${activeGroup.lessons.map((lesson) => renderLessonOption(lesson, selectedLabels, selectedCount, activeGroup.key)).join("")}</div>
-          </details>
-        </div>
-      </details>
-    </div>`;
+  const selected = new Set(normalizeLessonTopics(state.draft.lessonTopics));
+  return `<div class="lesson-suggestion-panel"><div><strong>اقتراحات من عناوين PDF</strong><small>اختيارية؛ اضغط لإضافة الدرس ويمكنك الكتابة يدويًا.</small></div><div class="lesson-suggestion-chips">${suggestions.map((lesson) => `<button type="button" class="lesson-suggestion-chip ${selected.has(lesson.label) ? "selected" : ""}" data-lesson-suggestion="${escapeHtml(lesson.label)}" ${selected.has(lesson.label) ? "disabled" : ""}><b>${escapeHtml(lesson.code)}</b> ${escapeHtml(lesson.title)}</button>`).join("")}</div></div>`;
 }
 
 function renderContentStep(): string {
-  const availableSubjects = SUBJECTS.filter((subject) => state.draft.grade !== null && subject.grades.includes(state.draft.grade));
-  const eligibleSources = eligibleSourcesForDraft();
+  const programme = CAMBRIDGE_PROGRAMMES.find((item) => item.id === state.draft.programmeId) ?? CAMBRIDGE_PROGRAMMES[0]!;
+  const stages = stagesForProgramme(state.draft.programmeId);
+  const subjects = subjectsForProgramme(state.draft.programmeId);
   const references = state.draft.sourceReferences;
+  const eligibleSources = eligibleSourcesForDraft();
   return `
-    <div class="section-intro"><h2>اختر دروس الاختبار</h2><p>افتح اسم الكتاب، ثم الوحدة، وحدد من درسين إلى خمسة دروس. اختيار واحد واضح، بلا كتابة يدوية.</p></div>
+    <div class="section-intro"><h2>حدد نطاق Cambridge</h2><p>لا تحتاج إلى رفع كتاب أو دليل. اختر المسار والمرحلة والمادة، ثم اكتب اسم موضوع أو أكثر كما تعرفه في منهج Cambridge.</p></div>
     <div class="form-grid two-columns">
-      <label class="field"><span>الصف</span><select id="grade-select"><option value="">اختر الصف</option>${[5, 6, 7, 8, 9, 10].map((grade) => `<option value="${grade}" ${state.draft.grade === grade ? "selected" : ""}>الصف ${grade}</option>`).join("")}</select></label>
-      <label class="field"><span>المادة</span><select id="subject-select" ${availableSubjects.length === 0 ? "disabled" : ""}><option value="">اختر المادة</option>${availableSubjects.map((item) => `<option value="${item.id}" ${state.draft.subjectId === item.id ? "selected" : ""}>${item.label}</option>`).join("")}</select></label>
+      <label class="field"><span>برنامج Cambridge</span><select id="programme-select">${CAMBRIDGE_PROGRAMMES.map((item) => `<option value="${item.id}" ${state.draft.programmeId === item.id ? "selected" : ""}>${item.label}</option>`).join("")}</select><small>${programme.note}</small></label>
+      ${state.draft.programmeId === "igcse"
+        ? `<label class="field readonly-field"><span>المرحلة</span><input value="Cambridge IGCSE" readonly/></label>`
+        : `<label class="field"><span>المرحلة</span><select id="stage-select">${stages.map((stage) => `<option value="${stage}" ${state.draft.grade === stage ? "selected" : ""}>Stage ${stage}</option>`).join("")}</select></label>`}
+      <label class="field"><span>المادة</span><select id="subject-select"><option value="">اختر المادة</option>${subjects.map((item) => `<option value="${item.id}" ${state.draft.subjectId === item.id ? "selected" : ""}>${item.label} · ${item.syllabusCode}</option>`).join("")}</select></label>
+      <label class="field readonly-field"><span>المسار الحالي</span><input value="${escapeHtml(state.draft.subjectId ? curriculumDisplayName(state.draft.programmeId, state.draft.subjectId, state.draft.grade) : programme.label)}" readonly/></label>
       <section class="field full lesson-catalog-field" aria-labelledby="lesson-topics-label">
-        <div class="lesson-topics-head"><div><span id="lesson-topics-label">شجرة محتوى الكتاب</span><small>الكتاب ← الوحدات ← الدروس</small></div><b id="lesson-topic-count">${normalizeLessonTopics(state.draft.lessonTopics).length}/${MAX_LESSON_TOPICS}</b></div>
-        ${renderLessonCatalog()}
+        <div class="lesson-topics-head"><div><span id="lesson-topics-label">الموضوعات / الدروس</span><small>موضوع واحد يكفي، وحتى ${MAX_LESSON_TOPICS} موضوعات</small></div><b>${normalizeLessonTopics(state.draft.lessonTopics).length}/${MAX_LESSON_TOPICS}</b></div>
+        <textarea id="lesson-topics-input" rows="4" placeholder="مثال: Static electricity
+أو: الاحتكاك والشحن الكهربائي">${escapeHtml(normalizeLessonTopics(state.draft.lessonTopics).join("\n"))}</textarea>
+        ${renderLessonSuggestions()}
       </section>
     </div>
-
     <section class="source-match-card ${references.length ? "ready" : ""}">
-      <div>
-        <span class="source-match-label">المصادر المتاحة</span>
-        <h3>${state.draft.grade !== null && state.draft.subjectId ? `${eligibleSources.length} مصدر مفهرس مطابق للصف والمادة` : "اختر الصف والمادة أولًا"}</h3>
-        <p>${escapeHtml(state.sourceRetrievalMessage || (references.length
-          ? `تم ربط الدروس بـ ${references.length} مقطعًا من ${new Set(references.map((reference) => reference.sourceId)).size} مصدر.`
-          : "سيبحث واثق عن صفحات كل درس عند الضغط على التالي."))}</p>
-      </div>
+      <div><span class="source-match-label">تعزيز اختياري بالمصادر</span><h3>${eligibleSources.length ? `${eligibleSources.length} مصدر مفهرس متاح` : "لا تحتاج إلى مصدر مرفوع"}</h3><p>${escapeHtml(state.sourceRetrievalMessage || (references.length ? `استخدم واثق ${references.length} مقطعًا اختياريًا لتخصيص السياق.` : "سيستخدم واثق معرفة Cambridge العالمية. يمكنك إضافة PDF لاحقًا إذا أردت تخصيصًا بكتاب معين."))}</p></div>
+      ${eligibleSources.length ? `<button class="secondary-btn compact" data-action="match-optional-sources" ${state.sourceRetrievalBusy ? "disabled" : ""}>${state.sourceRetrievalBusy ? "جارٍ المطابقة…" : "استخدام المصادر المتاحة"}</button>` : ""}
       ${references.length ? `<div class="source-reference-list">${references.map(renderSourceReference).join("")}</div>` : ""}
     </section>
-
-    ${renderWizardFooter(1, !state.sourceRetrievalBusy)}
+    ${renderWizardFooter(1, true)}
   `;
 }
 
@@ -719,86 +517,33 @@ function renderSourceContextSummary(): string {
 
 function renderSetupStep(): string {
   const validation = validateExamSetup(state.draft);
-  const officialSpec = getOfficialAssessmentSpec(state.draft.grade, state.draft.title);
-  const officialSettings = officialSpec ? `
-    <section class="official-spec-card">
-      <div class="official-spec-head">
-        <div><span class="eyebrow">قالب واثق المتوافق مع الوثيقة</span><h3>${escapeHtml(state.draft.title)} للصف ${state.draft.grade}</h3><p>${officialSpec.durationLabel} · ${officialSpec.totalMarks} درجات · ${officialSpec.minItems}-${officialSpec.maxItems} مفردات</p></div>
-        <button class="text-btn" data-nav="policy">عرض المرجع الكامل</button>
-      </div>
-      <div class="policy-metric-grid">
-        <div><span>المعرفة</span><strong>${officialSpec.cognitiveMarks.معرفة}</strong><small>40%</small></div>
-        <div><span>التطبيق</span><strong>${officialSpec.cognitiveMarks.تطبيق}</strong><small>40%</small></div>
-        <div><span>الاستدلال</span><strong>${officialSpec.cognitiveMarks.استدلال}</strong><small>20%</small></div>
-        <div><span>المجموع</span><strong>${officialSpec.totalMarks}</strong><small>درجة</small></div>
-      </div>
-      ${officialSpec.difficultyMarks ? `<div class="policy-metric-grid difficulty-metrics">
-        <div><span>منخفض الصعوبة</span><strong>${officialSpec.difficultyMarks.منخفض}</strong><small>40%</small></div>
-        <div><span>متوسط الصعوبة</span><strong>${officialSpec.difficultyMarks.متوسط}</strong><small>40%</small></div>
-        <div><span>مرتفع الصعوبة</span><strong>${officialSpec.difficultyMarks.مرتفع}</strong><small>20%</small></div>
-        <div><span>نوع التقويم</span><strong>نهائي</strong><small>رسمي</small></div>
-      </div>` : ""}
-      <div class="official-count-grid">
-        ${policyCountCard("اختيار من متعدد", officialSpec.counts.mcq, "درجة واحدة لكل مفردة")}
-        ${policyCountCard("إجابة قصيرة", officialSpec.counts.short, "درجة أو درجتان حسب الخطة")}
-        ${policyCountCard("إجابة طويلة", officialSpec.counts.long, officialSpec.counts.long ? "ثلاث أو أربع درجات حسب الخطة" : "غير مستخدمة لهذا الصف")}
-      </div>
-      <p class="policy-lock-note">اختار واثق عددًا صحيحًا داخل النطاق الرسمي، ثم وزع درجات المفردات لتحقيق 40% معرفة و40% تطبيق و20% استدلال. لا تحتاج إلى ضبط الأعداد يدويًا.</p>
-    </section>` : `
-    <div class="compact-section"><h3>مستوى الصعوبة</h3><div class="segmented">${["سهل", "متوسط", "متقدم"].map((level) => `<button data-difficulty="${level}" class="${state.draft.difficulty === level ? "active" : ""}">${level}</button>`).join("")}</div></div>
-    <div class="compact-section">
-      <div class="selection-header"><div><h3>أنواع الأسئلة</h3><p>هذا الصف خارج نطاق وثيقة العلوم للصفوف 5-10، لذلك تبقى الإعدادات يدوية.</p></div><span class="marks-summary">المجموع المحسوب: <b>${validation.computedMarks}</b></span></div>
-      <div class="count-grid">
-        ${countField("mcq", "اختيار من متعدد", state.draft.counts.mcq, "سؤال محدد بإجابة صحيحة واحدة")}
-        ${countField("short", "إجابة قصيرة", state.draft.counts.short, "كلمة أو تفسير مختصر أو إكمال")}
-        ${countField("long", "إجابة طويلة", state.draft.counts.long, "تحليل أو تفسير أو خطوات حل")}
-      </div>
-    </div>`;
-
   return `
-    <div class="section-intro"><h2>إعداد الاختبار</h2><p>${officialSpec ? "اختر عنوان الاختبار، وقد طبّق واثق مواصفاته الرسمية تلقائيًا. أكمل بيانات المدرسة والتاريخ فقط." : "حدد البيانات الأساسية وأنواع الأسئلة."}</p></div>
+    <div class="section-intro"><h2>إعداد بسيط</h2><p>قوالب واثق أدناه نقطة بداية عملية وليست ادعاءً بأنها مواصفة ورقة Cambridge رسمية. يمكنك تعديل الزمن والدرجة وأنواع الأسئلة.</p></div>
     ${renderSourceContextSummary()}
     <div class="form-grid two-columns">
       ${examTitleSelect()}
       ${inputField("date-input", "تاريخ الاختبار", state.draft.examDate, "date")}
-      ${inputField("school-input", "المدرسة", state.draft.school, "text")}
-      ${inputField("directorate-input", "المديرية", state.draft.directorate, "text")}
+      ${inputField("school-input", "المدرسة (اختياري)", state.draft.school, "text")}
       ${inputField("academic-year-input", "العام الدراسي", state.draft.academicYear, "text")}
-      <label class="field"><span>الفصل الدراسي</span><select id="semester-select"><option ${state.draft.semester === "الأول" ? "selected" : ""}>الأول</option><option ${state.draft.semester === "الثاني" ? "selected" : ""}>الثاني</option></select></label>
-      ${officialSpec
-        ? `<label class="field readonly-field"><span>الزمن</span><input value="${officialSpec.durationLabel}" readonly/></label><label class="field readonly-field"><span>الدرجة الكلية</span><input value="${officialSpec.totalMarks}" readonly/></label>`
-        : `${inputField("duration-input", "الزمن بالدقائق", state.draft.durationMinutes, "number", "", "10")}${inputField("marks-input", "الدرجة الكلية", state.draft.totalMarks, "number", "", "5")}`}
+      ${inputField("duration-input", "الزمن بالدقائق", state.draft.durationMinutes, "number", "", "5")}
+      ${inputField("marks-input", "الدرجة الكلية", state.draft.totalMarks, "number", "", "5")}
     </div>
-
-    <section class="generation-mode-panel progressive-engine-panel">
-      <div class="generation-mode-heading"><div><span class="eyebrow">طريقة إنشاء الاختبار</span><h3>التوليد التدريجي الدائم</h3></div><span class="generation-mode-badge">Engine v1</span></div>
-      <div class="progressive-engine-summary">
-        <div><strong>مهمة مستقلة لكل مفردة</strong><small>يولد واثق سؤالين بالتوازي، ويحفظ كل سؤال في Supabase قبل عرضه.</small></div>
-        <div><strong>استكمال بعد الانقطاع</strong><small>تحديث الصفحة أو إغلاقها لا يعيد الأسئلة المكتملة ولا يضيّع التقدم.</small></div>
-        <div><strong>مصدر مقيد خادميًا</strong><small>كل مفردة ترى مقطعها فقط، ولا يختار النموذج معرف الدليل أو الرسم أو الدرجة.</small></div>
-      </div>
-    </section>
-
-    <label class="trusted-enrichment-card ${state.draft.trustedEnrichmentEnabled ? "enabled" : ""}">
-      <input id="trusted-enrichment-toggle" type="checkbox" ${state.draft.trustedEnrichmentEnabled ? "checked" : ""}/>
-      <span class="trusted-enrichment-check">${state.draft.trustedEnrichmentEnabled ? icon("check") : ""}</span>
-      <span><strong>الإثراء من مصادر علمية رسمية وموثوقة</strong><small>يبقى الكتاب المدرسي المرجع الحاكم، ويستخدم واثق البحث الموثق فقط لتنويع السياقات والبيانات والرسوم دون إضافة معرفة مطلوبة خارج المنهج.</small></span>
-    </label>
-
-    <div class="trusted-enrichment-card visual-enhancement-card enabled durable-visual-policy">
-      <span class="trusted-enrichment-check">${icon("check")}</span>
-      <span><strong>منظومة الأصول البصرية الدائمة</strong><small>المشاهد المؤهلة ومخططات القوى لا تُعامل كزينة اختيارية: ينشئ واثق لها مهامًا محفوظة في Supabase، ويستأنفها بعد الانقطاع، ولا يسمح باعتماد الاختبار أو تصديره قبل اكتمال الصورة المطلوبة وفحصها علميًا.</small></span>
-    </div>
-
-    ${officialSettings}
+    <div class="compact-section"><h3>مستوى التحدي</h3><div class="segmented">${["سهل", "متوسط", "متقدم"].map((level) => `<button data-difficulty="${level}" class="${state.draft.difficulty === level ? "active" : ""}">${level}</button>`).join("")}</div></div>
+    <div class="compact-section"><div class="selection-header"><div><h3>أنواع الأسئلة</h3><p>المؤلف حر في صياغة السياق والبنية داخل النوع والدرجة المطلوبة.</p></div><span class="marks-summary">المجموع: <b>${validation.computedMarks}</b></span></div><div class="count-grid">
+      ${countField("mcq", "اختيار من متعدد", state.draft.counts.mcq, "أربعة بدائل ومشتتات علمية معقولة")}
+      ${countField("short", "إجابة قصيرة", state.draft.counts.short, "تفسير أو حساب أو قراءة بيانات")}
+      ${countField("long", "إجابة طويلة", state.draft.counts.long, "استدلال أو تفسير ممتد أو استقصاء")}
+    </div></div>
+    <section class="generation-mode-panel progressive-engine-panel"><div class="generation-mode-heading"><div><span class="eyebrow">محرك الجودة</span><h3>تأليف حر + مراجعة علمية مستقلة</h3></div><span class="generation-mode-badge">Cambridge-first</span></div><div class="progressive-engine-summary">
+      <div><strong>المؤلف يكتب بحرية</strong><small>لا قوالب خفية تفرض شكل السؤال؛ يختار المؤلف أفضل صياغة ثم يراجعها علميًا.</small></div>
+      <div><strong>المراجع يحكم على العلم</strong><small>يفحص الدقة والملاءمة للمرحلة ونموذج التصحيح، ويعيد الكتابة عند الحاجة.</small></div>
+      <div><strong>المصادر اختيارية</strong><small>الملف المرفوع يعزز السياق، لكنه لا يقرر إن كان واثق قادرًا على البدء.</small></div>
+    </div></section>
+    <div class="trusted-enrichment-card visual-enhancement-card enabled durable-visual-policy"><span class="trusted-enrichment-check">${icon("check")}</span><span><strong>مرئيات 2D علمية فقط عند الحاجة</strong><small>لا line-art احتياطي. البيانات الرقمية الدقيقة تبقى حتمية، والمرئي التوضيحي يمر بمراجعة علمية قبل الاعتماد.</small></span></div>
     ${renderCompliance(validation)}
-    ${state.questionGenerationMessage ? `<div class="generation-status ${state.questionGenerationBusy ? "busy" : "notice"}">${state.questionGenerationBusy ? icon("spark") : "!"}<div><strong>${state.questionGenerationBusy ? "مولد الأسئلة يعمل" : "حالة توليد الأسئلة"}</strong><p>${escapeHtml(state.questionGenerationMessage)}</p></div></div>` : ""}
+    ${state.questionGenerationMessage ? `<div class="generation-status ${state.questionGenerationBusy ? "busy" : "notice"}">${state.questionGenerationBusy ? icon("spark") : "!"}<div><strong>حالة التوليد</strong><p>${escapeHtml(state.questionGenerationMessage)}</p></div></div>` : ""}
     ${renderWizardFooter(2, validation.valid)}
   `;
-}
-
-function policyCountCard(label: string, count: number, note: string): string {
-  return `<div class="policy-count-card"><span>${label}</span><strong>${count}</strong><small>${note}</small></div>`;
 }
 
 function examTitleSelect(): string {
@@ -814,17 +559,15 @@ function countField(key: keyof QuestionCounts, label: string, value: number, des
 }
 
 function renderCompliance(validation: ReturnType<typeof validateExamSetup>): string {
-  if (validation.valid) {
-    return `<div class="compliance success">${icon("check")}<div><strong>الخطة مطابقة لمرجع التقويم</strong><p>يمكنك الانتقال لبناء مفردات الاختبار من صفحات المصدر.</p></div></div>`;
-  }
-  return `<div class="compliance warning"><div class="warning-mark">!</div><div><strong>تحتاج بعض البيانات إلى ضبط</strong><ul>${validation.issues.map((issue) => `<li>${escapeHtml(issue.message)}</li>`).join("")}</ul>${validation.suggestedCounts ? `<button class="secondary-btn compact" data-action="apply-suggestion">تطبيق التوزيع المقترح: ${validation.suggestedCounts.mcq} متعدد، ${validation.suggestedCounts.short} قصيرة، ${validation.suggestedCounts.long} طويلة</button>` : ""}</div></div>`;
+  if (validation.valid) return `<div class="compliance success">${icon("check")}<div><strong>جاهز للتوليد</strong><p>${escapeHtml(curriculumDisplayName(state.draft.programmeId, state.draft.subjectId, state.draft.grade))} · المصادر المرفوعة اختيارية.</p></div></div>`;
+  return `<div class="compliance warning"><div class="warning-mark">!</div><div><strong>اضبط هذه البيانات</strong><ul>${validation.issues.map((issue) => `<li>${escapeHtml(issue.message)}</li>`).join("")}</ul>${validation.suggestedCounts ? `<button class="secondary-btn compact" data-action="apply-suggestion">ضبط الأعداد لتناسب ${state.draft.totalMarks} درجة</button>` : ""}</div></div>`;
 }
 
 function generationItemStatusLabel(status: AssessmentGenerationItemSnapshot["status"] | "pending"): string {
   const labels: Record<AssessmentGenerationItemSnapshot["status"] | "pending", string> = {
     pending: "بانتظار إنشاء الدورة",
     queued: "في طابور التوليد",
-    grounding: "يربط السؤال بالمصدر",
+    grounding: "يبني سياق Cambridge",
     generating: "يكتب السؤال",
     normalizing: "يضبط بنية المفردة",
     validating: "يتحقق علميًا وتقويميًا",
@@ -921,7 +664,7 @@ function renderPlanVisual(item: PlanItem, compact = false): string {
   const modeLabel = !requirement.required
     ? "تمثيل علمي منظم دقيق"
     : ready
-      ? requirement.mode === "overlay" ? "أصل 2D مع طبقة شرح علمية" : "صورة تعليمية 2D معتمدة"
+      ? "صورة تعليمية 2D معتمدة"
       : pending
         ? "مهمة بصرية دائمة قيد التنفيذ"
         : failed
@@ -964,7 +707,7 @@ function renderPlanItem(item: PlanItem, index: number): string {
     ? `<div class="proposal-grid">${item.proposals.map((proposal, proposalIndex) => {
       const selected = chosen === proposal.id || item.proposals.length === 1;
       const legacyChoice = item.proposals.length > 1;
-      return `<${legacyChoice ? "label" : "div"} class="proposal-card ${selected ? "selected" : ""} ${legacyChoice ? "" : "progressive-single-proposal"}">${legacyChoice ? `<input type="radio" name="proposal-${item.id}" data-plan-id="${item.id}" value="${proposal.id}" ${selected ? "checked" : ""} ${state.draft.status === "معتمد" ? "disabled" : ""}/>` : ""}<div class="proposal-top"><span>${legacyChoice ? `البديل ${proposalIndex + 1}` : "المفردة المعتمدة من المحرك"}</span><div class="proposal-badges"><b class="generation-item-badge ${generationItemStatusClass(status)}">${escapeHtml(generationItemStatusLabel(status))}</b>${proposal.questionForm ? `<b class="question-form-badge">${escapeHtml(proposal.questionForm)}</b>` : ""}${proposal.needsReview ? `<b class="review-needed-badge">يحتاج تدقيقًا أدق</b>` : ""}</div></div>${proposal.stimulus ? `<div class="proposal-stimulus">${escapeHtml(proposal.stimulus)}</div>` : ""}<p>${escapeHtml(proposal.text)}</p>${renderProposalOptions(proposal.options)}<details class="proposal-evidence"><summary>الإجابة ونموذج التصحيح ودليل المصدر</summary><p class="proposal-answer"><strong>الإجابة:</strong> ${escapeHtml(proposal.answer)}</p>${renderMarkScheme(proposal.markScheme)}${proposal.rationale ? `<p><strong>سبب الإجابة:</strong> ${escapeHtml(proposal.rationale)}</p>` : ""}${proposal.sourceSupport ? `<blockquote>${escapeHtml(proposal.sourceSupport)}</blockquote>` : ""}${proposal.enrichmentSupport ? `<div class="proposal-enrichment-evidence"><strong>إثراء علمي موثوق:</strong><p>${escapeHtml(proposal.enrichmentSupport)}</p>${proposal.enrichmentSourceUrl ? `<a href="${escapeHtml(proposal.enrichmentSourceUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(proposal.enrichmentSourceTitle || "فتح المصدر الرسمي")}</a>` : ""}</div>` : ""}</details>${legacyChoice ? `<span class="choose-label">${selected ? `${icon("check")} تم الاختيار` : "اختر هذا السؤال"}</span>` : `<span class="choose-label">${icon("check")} حُفظت خادميًا واختيرت تلقائيًا</span>`}</${legacyChoice ? "label" : "div"}>`;
+      return `<${legacyChoice ? "label" : "div"} class="proposal-card ${selected ? "selected" : ""} ${legacyChoice ? "" : "progressive-single-proposal"}">${legacyChoice ? `<input type="radio" name="proposal-${item.id}" data-plan-id="${item.id}" value="${proposal.id}" ${selected ? "checked" : ""} ${state.draft.status === "معتمد" ? "disabled" : ""}/>` : ""}<div class="proposal-top"><span>${legacyChoice ? `البديل ${proposalIndex + 1}` : "المفردة المعتمدة من المحرك"}</span><div class="proposal-badges"><b class="generation-item-badge ${generationItemStatusClass(status)}">${escapeHtml(generationItemStatusLabel(status))}</b>${false ? `<b class="review-needed-badge">يحتاج تدقيقًا أدق</b>` : ""}</div></div>${proposal.stimulus ? `<div class="proposal-stimulus">${escapeHtml(proposal.stimulus)}</div>` : ""}<p>${escapeHtml(proposal.text)}</p>${renderProposalOptions(proposal.options)}<details class="proposal-evidence"><summary>الإجابة ونموذج التصحيح ودليل المصدر</summary><p class="proposal-answer"><strong>الإجابة:</strong> ${escapeHtml(proposal.answer)}</p>${renderMarkScheme(proposal.markScheme)}${proposal.rationale ? `<p><strong>سبب الإجابة:</strong> ${escapeHtml(proposal.rationale)}</p>` : ""}${proposal.sourceSupport ? `<blockquote>${escapeHtml(proposal.sourceSupport)}</blockquote>` : ""}</details>${legacyChoice ? `<span class="choose-label">${selected ? `${icon("check")} تم الاختيار` : "اختر هذا السؤال"}</span>` : `<span class="choose-label">${icon("check")} حُفظت خادميًا واختيرت تلقائيًا</span>`}</${legacyChoice ? "label" : "div"}>`;
     }).join("")}</div>`
     : renderGenerationPlaceholder(item);
   const footer = task?.status === "failed"
@@ -1059,7 +802,7 @@ function renderAnswerKeyArticles(selected: SelectedPaperItem[], labels: Map<stri
     const pages = reference ? (reference.pageFrom === reference.pageTo ? `ص ${reference.pageFrom}` : `ص ${reference.pageFrom}-${reference.pageTo}`) : "مرجع غير محدد";
     const label = labels.get(item.id) ?? "؟";
     const headClass = exportMode ? "teacher-key-head" : "answer-key-head";
-    return `<article><div class="${headClass}"><strong>${escapeHtml(label)}) ${escapeHtml(proposal.answer)}</strong>${proposal.questionForm ? `<span>${escapeHtml(proposal.questionForm)}</span>` : ""}</div>${renderPlanVisual(item, true)}${renderMarkScheme(proposal.markScheme)}${proposal.rationale ? `<p>${escapeHtml(proposal.rationale)}</p>` : ""}<small>${escapeHtml(reference?.sourceTitle ?? "المصدر")} · ${pages}</small>${proposal.sourceSupport ? `<blockquote>${escapeHtml(proposal.sourceSupport)}</blockquote>` : ""}</article>`;
+    return `<article><div class="${headClass}"><strong>${escapeHtml(label)}) ${escapeHtml(proposal.answer)}</strong></div>${renderPlanVisual(item, true)}${renderMarkScheme(proposal.markScheme)}${proposal.rationale ? `<p>${escapeHtml(proposal.rationale)}</p>` : ""}<small>${escapeHtml(reference?.sourceTitle ?? "المصدر")} · ${pages}</small>${proposal.sourceSupport ? `<blockquote>${escapeHtml(proposal.sourceSupport)}</blockquote>` : ""}</article>`;
   }).join("");
 }
 
@@ -1092,14 +835,9 @@ function visualSignature(item: PlanItem): string {
 function reviewReadiness(selected: SelectedPaperItem[]): ReviewReadiness {
   const setupValid = validateExamSetup(state.draft).valid;
   const markTotal = state.draft.plan.reduce((sum, item) => sum + item.marks, 0);
-  const groundedGeneration = state.draft.generationVersion === ASSESSMENT_PROGRESSIVE_GENERATION_VERSION
-    || state.draft.generationVersion === SOURCE_GENERATION_VERSION
-    || state.draft.generationVersion === ASSESSMENT_GENERATION_V2_VERSION;
+  const groundedGeneration = state.draft.generationVersion === ASSESSMENT_PROGRESSIVE_GENERATION_VERSION;
   const markSchemesComplete = selected.length === state.draft.plan.length
     && selected.every(({ item, proposal }) => proposal.markScheme?.length === item.marks);
-  const scientificModelsComplete = selected.length === state.draft.plan.length
-    && selected.every(({ item, proposal }) => scientificItemIsComplete(proposal.scientificItem)
-      && scientificItemMatchesVisual(proposal.scientificItem, item.visual));
   const visualItems = state.draft.plan.filter((item) => item.visual && item.visual.type !== "none");
   const visualValidity = visualItems.every((item) => {
     try {
@@ -1124,12 +862,11 @@ function reviewReadiness(selected: SelectedPaperItem[]): ReviewReadiness {
       && job.asset?.assetPath === illustration?.assetPath;
   });
   const checks = [
-    { label: "ارتباط الدروس بالمصدر", okay: state.draft.sourceReferences.length > 0 },
+    { label: "هوية Cambridge", okay: Boolean(state.draft.programmeId && state.draft.syllabusCode && state.draft.subjectId) },
     { label: "مجموع الدرجات", okay: markTotal === state.draft.totalMarks },
     { label: "اختيار مفردات الخطة", okay: isPlanComplete(state.draft) },
-    { label: "توليد الأسئلة من المصدر", okay: groundedGeneration },
+    { label: "توليد Cambridge الحالي", okay: groundedGeneration },
     { label: "نموذج تصحيح لكل درجة", okay: markSchemesComplete },
-    { label: "النموذج العلمي الموحد لكل مفردة", okay: scientificModelsComplete },
     { label: `العناصر البصرية العلمية (${visualItems.length})`, okay: visualValidity && visualsUnique },
     { label: `الأصول البصرية المطلوبة (${requiredVisualItems.length})`, okay: requiredVisualsReady },
     { label: "بيانات الاختبار والمواصفة", okay: setupValid },
@@ -1138,10 +875,11 @@ function reviewReadiness(selected: SelectedPaperItem[]): ReviewReadiness {
 }
 
 function renderStudentPaper(subject: string, paperLayout: PaperLayout): string {
+  const curriculum = curriculumDisplayName(state.draft.programmeId, state.draft.subjectId, state.draft.grade);
   return `<section class="paper-preview">
-    <header class="paper-header"><div class="ministry-mark">شعار<br/>الخنجر</div><div><strong>سلطنة عُمان</strong><span>وزارة التعليم</span><span>${escapeHtml(state.draft.directorate)}</span><span>${escapeHtml(state.draft.school)}</span></div></header>
-    <div class="paper-title"><h2>${escapeHtml(state.draft.title)}</h2><p>${subject} · الصف ${state.draft.grade} · الفصل الدراسي ${escapeHtml(state.draft.semester)} · ${escapeHtml(state.draft.academicYear)}</p></div>
-    <div class="student-row"><span>اسم الطالب: ____________________</span><span>التاريخ: ${formatArabicDate(state.draft.examDate)}</span><span>الزمن: ${state.draft.durationMinutes} دقيقة</span></div>
+    <header class="paper-header cambridge-paper-header"><div class="wathiq-paper-mark">واثق</div><div><strong>${escapeHtml(curriculum)}</strong>${state.draft.school ? `<span>${escapeHtml(state.draft.school)}</span>` : ""}<span>اختبار علوم مُنشأ ومراجع داخل واثق</span></div></header>
+    <div class="paper-title"><h2>${escapeHtml(state.draft.title)}</h2><p>${subject} · ${stageLabel(state.draft.programmeId, state.draft.grade)} · ${escapeHtml(state.draft.syllabusCode)}</p></div>
+    <div class="student-row"><span>اسم الطالب: ____________________</span><span>التاريخ: ${formatArabicDate(state.draft.examDate)}</span><span>الزمن: ${state.draft.durationMinutes} دقيقة</span><span>الدرجة: ${state.draft.totalMarks}</span></div>
     <div class="paper-questions">${paperLayout.html}</div>
     <footer class="paper-footer">انتهت الأسئلة</footer>
   </section>`;
@@ -1149,10 +887,6 @@ function renderStudentPaper(subject: string, paperLayout: PaperLayout): string {
 
 async function verifyRequiredVisualAssetsForExport(): Promise<void> {
   const selected = selectedPaperItems();
-  if (selected.some(({ item, proposal }) => !scientificItemIsComplete(proposal.scientificItem)
-    || !scientificItemMatchesVisual(proposal.scientificItem, item.visual))) {
-    throw new Error("تعذر التصدير لأن إحدى المفردات لا تطابق نموذجها العلمي الموحد أو مرئيها المشتق منه.");
-  }
   const required = state.draft.plan.filter((item) => item.visual && questionVisualAssetRequirement(item.visual).required);
   const urls = required.map((item) => item.visual?.illustration?.url ?? "");
   if (urls.some((url) => !url)) throw new Error("تعذر التصدير لأن أحد الأصول البصرية المطلوبة غير مرتبط بالمفردة.");
@@ -1190,7 +924,7 @@ function exportDocumentHtml(kind: "student" | "answer"): { html: string; fileNam
     ? renderStudentPaper(subject, paperLayout)
     : `${renderStudentPaper(subject, paperLayout)}${renderTeacherAnswerKey(selected, paperLayout.labels)}`;
   const label = kind === "student" ? "ورقة_الطالب" : "نموذج_الإجابة";
-  const fileName = safeExportFileName(`${state.draft.title}_${subject}_الصف_${state.draft.grade}_${label}`);
+  const fileName = safeExportFileName(`${state.draft.title}_${subject}_${stageLabel(state.draft.programmeId, state.draft.grade)}_${label}`);
   return {
     html: buildStandaloneExamDocument({
       title: fileName,
@@ -1247,88 +981,6 @@ function renderWizardFooter(step: WizardStep, canContinue = true): string {
   return `<footer class="wizard-footer">${step > 1 ? `<button class="secondary-btn" data-action="previous-step" ${(busy || state.draft.status === "معتمد") ? "disabled" : ""}>السابق</button>` : `<button class="secondary-btn" data-nav="home">إلغاء</button>`}<div>${step < 4 ? `<button class="primary-btn" data-action="next-step" ${canContinue && !busy ? "" : "disabled"}>${nextLabel}</button>` : `<button class="secondary-btn" data-nav="library">الذهاب إلى اختباراتي</button>`}</div></footer>`;
 }
 
-function renderPolicyReference(): string {
-  const grades58 = getOfficialShortTestSpec(5);
-  const grade9 = getOfficialShortTestSpec(9);
-  const grade10 = getOfficialShortTestSpec(10);
-  const final58 = getOfficialFinalExamSpec(5);
-  const final9 = getOfficialFinalExamSpec(9);
-  const final10 = getOfficialFinalExamSpec(10);
-  if (!grades58 || !grade9 || !grade10 || !final58 || !final9 || !final10) throw new Error("تعذر تحميل مرجع تقويم العلوم.");
-  return `
-    <section class="page-heading policy-heading">
-      <div><span class="eyebrow">مرجع تنظيمي معتمد</span><h1>مرجع تقويم العلوم</h1><p>${escapeHtml(SCIENCE_ASSESSMENT_POLICY_TITLE)} · إصدار ${escapeHtml(SCIENCE_ASSESSMENT_POLICY_VERSION)} · ${escapeHtml(SCIENCE_ASSESSMENT_POLICY_PUBLISHED)}</p></div>
-      <a class="primary-btn" href="${SCIENCE_ASSESSMENT_POLICY_DOCUMENT_PATH}" target="_blank" rel="noreferrer">فتح الوثيقة الأصلية</a>
-    </section>
-
-    <section class="policy-reference-hero">
-      <div><h2>ما الذي يطبقه واثق الآن؟</h2><p>يستخدم واثق المرجع الرسمي لبناء الاختبار القصير أو النهائي، ثم يولد الأسئلة من صفحات الكتاب المفهرس. المرجع التقويمي يحدد البنية، والكتاب يحدد المحتوى العلمي.</p></div>
-      <div class="policy-reference-badge">5-10<br/><small>الصفوف المشمولة</small></div>
-    </section>
-
-    <section class="policy-section">
-      <div class="section-intro"><h2>أهداف التقويم</h2><p>توزع درجات الاختبار القصير بنسبة 40% معرفة، و40% تطبيق، و20% استدلال.</p></div>
-      <div class="policy-goal-grid">
-        <article><strong>المعرفة</strong><p>تذكر الحقائق والمصطلحات والقوانين ووصف الخصائص والعمليات.</p></article>
-        <article><strong>التطبيق</strong><p>استخدام المعرفة في مواقف جديدة وتفسير الجداول والرسوم وتحويل المعلومات.</p></article>
-        <article><strong>الاستدلال</strong><p>تحليل الأدلة، وتفسير النتائج، وحل المشكلات، والتبرير والتخطيط للاستقصاء.</p></article>
-      </div>
-    </section>
-
-    <section class="policy-section">
-      <div class="section-intro"><h2>مواصفات الاختبار القصير</h2><p>تعرض البطاقات النطاق الرسمي، ويستخدم واثق قالبًا ثابتًا متوافقًا داخله لتقليل التعقيد.</p></div>
-      <div class="policy-spec-grid">
-        ${renderPolicySpecCard("الصفوف 5-8", grades58)}
-        ${renderPolicySpecCard("الصف 9", grade9)}
-        ${renderPolicySpecCard("الصف 10", grade10)}
-      </div>
-    </section>
-
-    <section class="policy-section">
-      <div class="section-intro"><h2>مواصفات الاختبار النهائي</h2><p>يطبق واثق عددًا ثابتًا صالحًا داخل النطاق الرسمي مع توزيع 40% معرفة و40% تطبيق و20% استدلال، والتوزيع نفسه لمستويات الصعوبة.</p></div>
-      <div class="policy-spec-grid">
-        ${renderPolicySpecCard("الصفوف 5-8", final58)}
-        ${renderPolicySpecCard("الصف 9", final9)}
-        ${renderPolicySpecCard("الصف 10", final10)}
-      </div>
-    </section>
-
-    <section class="policy-section">
-      <div class="section-intro"><h2>ضوابط صياغة المفردات</h2><p>قواعد مختصرة يستخدمها مولد الأسئلة ويراجعها المعلم قبل الاعتماد.</p></div>
-      <div class="policy-rule-grid">
-        ${renderPolicyRuleCard("اختيار من متعدد", ASSESSMENT_ITEM_WRITING_RULES.multipleChoice)}
-        ${renderPolicyRuleCard("إجابة قصيرة", ASSESSMENT_ITEM_WRITING_RULES.shortAnswer)}
-        ${renderPolicyRuleCard("إجابة طويلة", ASSESSMENT_ITEM_WRITING_RULES.longAnswer)}
-        ${renderPolicyRuleCard("قواعد عامة", ASSESSMENT_ITEM_WRITING_RULES.general)}
-      </div>
-    </section>
-
-    <section class="policy-section">
-      <div class="section-intro"><h2>مواءمة أسلوبية مع الاختبارات الدولية</h2><p>استلهام في بناء السياق والبيانات ونقاط التصحيح، مع بقاء الوثيقة العُمانية المرجع الحاكم وعدم نسخ أسئلة خارجية.</p></div>
-      <div class="policy-rule-grid">
-        ${renderPolicyRuleCard("مبادئ المواءمة", INTERNATIONAL_SCIENCE_QUESTION_STYLE_PRINCIPLES)}
-        ${renderPolicyRuleCard("الناتج داخل واثق", ["مفردات مترابطة تحت سياق أو بيانات مشتركة عند الملاءمة.", "تنوع بين المفاهيم والحساب وقراءة البيانات والاستقصاء والمقارنة.", "نموذج تصحيح بنقطة مستقلة لكل درجة.", "مراجع المصدر للمعلم فقط، وورقة طالب نظيفة."])}
-      </div>
-    </section>
-
-    <section class="policy-section policy-note-card">
-      <h2>الفصل بين المرجعين</h2>
-      <div class="policy-source-split">
-        <div><strong>وثيقة التقويم</strong><p>تحدد عدد المفردات والدرجات وأنواعها وأهداف التقويم وضوابط الصياغة.</p></div>
-        <div><strong>كتاب الطالب والمصادر العلمية</strong><p>توفر المعلومات العلمية والدليل النصي ورقم الصفحة الذي يبنى عليه السؤال.</p></div>
-      </div>
-    </section>
-  `;
-}
-
-function renderPolicySpecCard(label: string, spec: NonNullable<ReturnType<typeof getOfficialAssessmentSpec>>): string {
-  return `<article class="policy-spec-card"><span>${label}</span><h3>${spec.totalMarks} درجات</h3><p>${spec.minItems}-${spec.maxItems} مفردات · ${spec.durationLabel}</p><div><small>قالب واثق المتوافق</small><br/><b>${spec.counts.mcq}</b> اختيار من متعدد <b>${spec.counts.short}</b> قصيرة <b>${spec.counts.long}</b> طويلة</div><ul>${spec.notes.map((note) => `<li>${escapeHtml(note)}</li>`).join("")}</ul></article>`;
-}
-
-function renderPolicyRuleCard(title: string, rules: readonly string[]): string {
-  return `<article class="policy-rule-card"><h3>${title}</h3><ul>${rules.map((rule) => `<li>${escapeHtml(rule)}</li>`).join("")}</ul></article>`;
-}
-
 interface LibraryCardExam {
   id: string;
   title: string;
@@ -1337,8 +989,6 @@ interface LibraryCardExam {
   status: "مسودة" | "معتمد";
   date: string;
   progress?: number;
-  hasModelB?: boolean;
-  isLocal: boolean;
   isComplete?: boolean;
 }
 
@@ -1351,12 +1001,9 @@ function renderLibrary(): string {
     status: draft.status === "معتمد" ? "معتمد" : "مسودة",
     date: draft.updatedAt.slice(0, 10),
     progress: draft.status === "معتمد" ? 100 : draft.currentStep * 25,
-    isLocal: true,
     isComplete: draft.currentStep >= 4 && isPlanComplete(draft),
   }));
-  const examples: LibraryCardExam[] = MOCK_LIBRARY.map((exam) => ({ ...exam, isLocal: false }));
-  const exams = [...localExam, ...examples]
-    .filter((exam) => state.libraryFilter === "الكل" || exam.status === state.libraryFilter);
+  const exams = localExam.filter((exam) => state.libraryFilter === "الكل" || exam.status === state.libraryFilter);
 
   return `
     <section class="page-heading"><div><span class="eyebrow">مكتبتك الخاصة</span><h1>اختباراتي</h1><p>افتح الاختبار المعتمد أو نزّل ورقة الطالب ونموذج الإجابة مباشرة من هنا.</p></div><button class="primary-btn" data-action="new-exam">${icon("plus")} اختبار جديد</button></section>
@@ -1366,24 +1013,18 @@ function renderLibrary(): string {
 }
 
 function renderExamCard(exam: LibraryCardExam): string {
-  const exportActions = `<button class="secondary-btn compact" data-action="library-export-student-word">الطالب Word</button>
-         <button class="secondary-btn compact" data-action="library-export-student-pdf">الطالب PDF</button>
-         <button class="secondary-btn compact" data-action="library-export-answer-word">الإجابة Word</button>
-         <button class="secondary-btn compact" data-action="library-export-answer-pdf">الإجابة PDF</button>`;
-  const draftAttr = exam.isLocal ? ` data-draft-id="${escapeHtml(exam.id)}"` : "";
-  const exportActionsWithDraft = exam.isLocal
-    ? exportActions.replaceAll("data-action=", `${draftAttr} data-action=`)
-    : exportActions;
-  const actions = exam.isLocal
-    ? exam.status === "مسودة"
-      ? exam.isComplete
-        ? `<button class="primary-btn compact"${draftAttr} data-action="preview-library-exam">معاينة المسودة</button><button class="secondary-btn compact"${draftAttr} data-action="resume-draft">متابعة التعديل</button>${exportActionsWithDraft}<button class="ghost-btn compact"${draftAttr} data-action="delete-draft">حذف</button>`
-        : `<button class="primary-btn compact"${draftAttr} data-action="resume-draft">متابعة</button><button class="ghost-btn compact"${draftAttr} data-action="delete-draft">حذف</button>`
-      : `<button class="primary-btn compact"${draftAttr} data-action="preview-library-exam">معاينة الاختبار</button>${exportActionsWithDraft}`
-    : `<button class="ghost-btn compact" data-action="mock-download">مثال توضيحي</button>`;
-  return `<article class="exam-card" data-search-text="${escapeHtml(`${exam.title} ${exam.subject} ${exam.grade}`)}"><div class="exam-card-head"><span class="status-badge ${exam.status === "معتمد" ? "approved" : "draft"}">${exam.status}</span>${exam.hasModelB ? `<span class="model-badge">أ + ب</span>` : ""}</div><h2>${escapeHtml(exam.title)}</h2><p>${escapeHtml(exam.subject)} · الصف ${exam.grade || "غير محدد"}</p><div class="exam-meta"><span>${formatArabicDate(exam.date)}</span>${exam.progress ? `<span>${exam.progress}% مكتمل</span>` : ""}</div>${exam.progress ? `<div class="progress-track"><span style="width:${exam.progress}%"></span></div>` : ""}<div class="exam-actions library-exam-actions">${actions}</div></article>`;
+  const draftAttr = ` data-draft-id="${escapeHtml(exam.id)}"`;
+  const exportActions = `<button class="secondary-btn compact"${draftAttr} data-action="library-export-student-word">الطالب Word</button>
+         <button class="secondary-btn compact"${draftAttr} data-action="library-export-student-pdf">الطالب PDF</button>
+         <button class="secondary-btn compact"${draftAttr} data-action="library-export-answer-word">الإجابة Word</button>
+         <button class="secondary-btn compact"${draftAttr} data-action="library-export-answer-pdf">الإجابة PDF</button>`;
+  const actions = exam.status === "مسودة"
+    ? exam.isComplete
+      ? `<button class="primary-btn compact"${draftAttr} data-action="preview-library-exam">معاينة المسودة</button><button class="secondary-btn compact"${draftAttr} data-action="resume-draft">متابعة التعديل</button>${exportActions}<button class="ghost-btn compact"${draftAttr} data-action="delete-draft">حذف</button>`
+      : `<button class="primary-btn compact"${draftAttr} data-action="resume-draft">متابعة</button><button class="ghost-btn compact"${draftAttr} data-action="delete-draft">حذف</button>`
+    : `<button class="primary-btn compact"${draftAttr} data-action="preview-library-exam">معاينة الاختبار</button>${exportActions}`;
+  return `<article class="exam-card" data-search-text="${escapeHtml(`${exam.title} ${exam.subject} ${exam.grade}`)}"><div class="exam-card-head"><span class="status-badge ${exam.status === "معتمد" ? "approved" : "draft"}">${exam.status}</span></div><h2>${escapeHtml(exam.title)}</h2><p>${escapeHtml(exam.subject)} · ${exam.grade ? `Stage ${exam.grade}` : "Cambridge"}</p><div class="exam-meta"><span>${formatArabicDate(exam.date)}</span>${exam.progress ? `<span>${exam.progress}% مكتمل</span>` : ""}</div>${exam.progress ? `<div class="progress-track"><span style="width:${exam.progress}%"></span></div>` : ""}<div class="exam-actions library-exam-actions">${actions}</div></article>`;
 }
-
 
 
 function renderSourceStoragePanel(): string {
@@ -1416,70 +1057,12 @@ function renderSourceStoragePanel(): string {
   </section>`;
 }
 
-function renderGoogleDrivePanel(): string {
-  const busy = state.driveBusy ? "disabled" : "";
-  if (!googleDriveService || state.driveStatus === "غير مهيأ") {
-    return `<section class="drive-connection-card setup-mode" aria-label="حالة Google Drive">
-      <div><span class="storage-state">إعداد غير مكتمل</span><h2>Google Drive غير مهيأ بعد</h2><p>${escapeHtml(state.driveMessage)}</p></div>
-      <span class="storage-note">أضف Google OAuth Client ID وانشر Edge Function لإتاحة الربط.</span>
-    </section>`;
-  }
-  if (state.sourceStorageStatus !== "متصل" || state.driveStatus === "يتطلب تسجيل الدخول") {
-    return `<section class="drive-connection-card waiting-mode" aria-label="Google Drive ينتظر تسجيل الدخول">
-      <div><span class="storage-state">Google Drive</span><h2>سجّل دخول مالك المنصة أولًا</h2><p>بعد تسجيل الدخول إلى Supabase سيظهر زر ربط Drive. خطوة واحدة، بلا مهرجان نوافذ.</p></div>
-    </section>`;
-  }
-  if (state.driveStatus === "خطأ") {
-    return `<section class="drive-connection-card error-mode" aria-label="خطأ Google Drive">
-      <div><span class="storage-state">تعذر الاتصال</span><h2>Google Drive يحتاج إعادة تحقق</h2><p>${escapeHtml(state.driveMessage)}</p></div>
-      <div class="storage-actions"><button class="secondary-btn compact" data-action="refresh-drive-status" ${busy}>إعادة المحاولة</button>${state.driveRootFolderUrl ? `<a class="ghost-btn compact" href="${escapeHtml(state.driveRootFolderUrl)}" target="_blank" rel="noreferrer">فتح المجلد</a>` : ""}</div>
-    </section>`;
-  }
-  if (state.driveStatus === "غير متصل") {
-    return `<section class="drive-connection-card disconnected-mode" aria-label="ربط Google Drive">
-      <div><span class="storage-state">Google Drive</span><h2>غير متصل</h2><p>${escapeHtml(state.driveMessage)}</p></div>
-      <button class="primary-btn" data-action="connect-google-drive" ${busy}>${state.driveBusy ? "جارٍ تجهيز الربط…" : "ربط Google Drive"}</button>
-    </section>`;
-  }
-  return `<section class="drive-connection-card connected-mode" aria-label="Google Drive متصل">
-    <div>
-      <span class="storage-state">متصل وجاهز</span>
-      <h2>مجلد واثق مرتبط بـ Google Drive</h2>
-      <p>${state.driveFoldersReady ? "تم التحقق من المجلدات الأساسية، ولن تُنشأ نسخ مكررة عند الفحص." : "الاتصال قائم، لكن يلزم التحقق من المجلدات الأساسية."}</p>
-      <div class="drive-folder-summary">${state.driveFolders.map((folder) => `<span>${icon("check")} ${escapeHtml(folder.name)}</span>`).join("")}</div>
-    </div>
-    <div class="storage-actions">
-      ${state.driveRootFolderUrl ? `<a class="secondary-btn compact" href="${escapeHtml(state.driveRootFolderUrl)}" target="_blank" rel="noreferrer">فتح مجلد واثق</a>` : ""}
-      <button class="ghost-btn compact" data-action="verify-drive-folders" ${busy}>${state.driveBusy ? "جارٍ التحقق…" : "التحقق من المجلدات"}</button>
-      <button class="danger-link compact" data-action="disconnect-google-drive" ${busy}>فصل الاتصال</button>
-    </div>
-  </section>`;
-}
-
 function formatFileSize(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 بايت";
   const units = ["بايت", "ك.ب", "م.ب", "ج.ب"];
   const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
   const value = bytes / 1024 ** index;
   return `${value >= 10 || index === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[index]}`;
-}
-
-function renderPendingSourceUpload(): string {
-  const pending = state.pendingSourceUpload;
-  if (!pending) return "";
-  const percent = pending.fileSizeBytes > 0 ? Math.round((pending.bytesUploaded / pending.fileSizeBytes) * 100) : 0;
-  return `<section class="pending-upload-card" aria-label="رفع غير مكتمل">
-    <div>
-      <span class="storage-state">رفع غير مكتمل</span>
-      <h2>${escapeHtml(pending.source.title)}</h2>
-      <p>توقف رفع <b>${escapeHtml(pending.fileName)}</b> عند ${percent}%. افتح النموذج واختر الملف نفسه لاستكماله من آخر جزء محفوظ.</p>
-      <div class="upload-progress-track"><span style="width:${percent}%"></span></div>
-    </div>
-    <div class="storage-actions">
-      <button class="secondary-btn compact" data-action="resume-pending-upload">استكمال الرفع</button>
-      <button class="danger-link compact" data-action="cancel-pending-upload">إلغاء الجلسة</button>
-    </div>
-  </section>`;
 }
 
 function renderSourceIndexingProgress(): string {
@@ -1503,11 +1086,9 @@ function renderAdmin(): string {
   const visibleSources = state.sources.filter((source) => state.sourceFilter === "الكل" || source.status === state.sourceFilter);
   const selectedSource = state.sources.find((source) => source.id === state.selectedSourceId);
   return `
-    <section class="page-heading"><div><span class="eyebrow">لوحة مالك المنصة</span><h1>إدارة المصادر</h1><p>ارفع المصادر واستخرج نصها وفهرسه حسب الصفحات والمقاطع. لا يحتاج المصدر إلى تحليل فهرس بصري كي يصبح جاهزًا للاستخدام.</p></div><span class="demo-badge">Phase 0-H3 · فهرسة حسب الصفحات</span></section>
+    <section class="page-heading"><div><span class="eyebrow">مكتبة واثق العلمية</span><h1>إدارة المصادر</h1><p>أضف ملفات PDF مباشرة. يستخرج واثق النص ويفهرسه حسب الصفحات والمقاطع، ويستخدم OCR فقط إذا كان الملف مصورًا أو مشوهًا.</p></div><span class="demo-badge">فهرسة مباشرة</span></section>
 
     ${renderSourceStoragePanel()}
-    ${renderGoogleDrivePanel()}
-    ${renderPendingSourceUpload()}
     ${renderSourceIndexingProgress()}
 
     <section class="source-stats" aria-label="ملخص المصادر">
@@ -1523,7 +1104,7 @@ function renderAdmin(): string {
     </section>
 
     <section class="registry-actions" aria-label="نسخ سجل المصادر">
-      <div><h2>نسخة احتياطية لسجل المصادر</h2><p>التصدير يحفظ بيانات السجل فقط. ملفات PDF المرفوعة تبقى داخل Google Drive ولا تُضمَّن في ملف JSON.</p></div>
+      <div><h2>نسخة احتياطية لسجل المصادر</h2><p>التصدير يحفظ سجل المصادر وبيانات الفهرسة الوصفية. ملفات PDF الأصلية لا تُحفظ داخل واثق ولا تُضمَّن في JSON.</p></div>
       <div class="registry-buttons">
         <button class="secondary-btn compact" data-action="export-source-registry">تصدير JSON</button>
         <label class="ghost-btn compact file-button">استيراد JSON<input id="source-registry-file" type="file" accept="application/json,.json"/></label>
@@ -1547,10 +1128,8 @@ function renderAdmin(): string {
 function renderSourceForm(): string {
   const draft = state.sourceDraft;
   const validation = validateSourceDraft(draft);
-  const path = buildSourceDrivePath(draft);
-  const availableSourceSubjects = draft.grade
-    ? SUBJECTS.filter((subject) => subject.grades.includes(draft.grade as number))
-    : SUBJECTS;
+  const sourceProgramme = draft.grade === 10 ? "igcse" : draft.grade && draft.grade >= 7 ? "lower_secondary" : "primary";
+  const availableSourceSubjects = SUBJECTS.filter((subject) => subject.programmes.includes(sourceProgramme));
   const issueFor = (field: string) => validation.issues.find((issue) => issue.field === field)?.message ?? "";
   return `
     <section class="source-form-card" aria-label="إضافة مصدر جديد">
@@ -1558,21 +1137,19 @@ function renderSourceForm(): string {
       <div class="form-grid two-columns">
         <label class="field full"><span>اسم المصدر</span><input id="source-title" value="${escapeHtml(draft.title)}" placeholder="مثال: كتاب الطالب للفيزياء"/>${issueFor("title") ? `<small class="field-error">${issueFor("title")}</small>` : ""}</label>
         <label class="field"><span>نوع المصدر</span><select id="source-kind">${SOURCE_KINDS.map((kind) => `<option value="${kind}" ${draft.kind === kind ? "selected" : ""}>${kind}</option>`).join("")}</select></label>
-        <label class="field"><span>الإصدار أو السنة</span><input id="source-version" value="${escapeHtml(draft.version)}" placeholder="مثال: 2026 أو الإصدار الثاني"/>${issueFor("version") ? `<small class="field-error">${issueFor("version")}</small>` : ""}</label>
-        <label class="field"><span>الفصل الدراسي</span><select id="source-semester"><option value="">اختر الفصل</option>${SOURCE_SEMESTERS.map((semester) => `<option value="${semester}" ${draft.semester === semester ? "selected" : ""}>${semester}</option>`).join("")}</select>${issueFor("semester") ? `<small class="field-error">${issueFor("semester")}</small>` : ""}</label>
-        <label class="field"><span>الصف</span><select id="source-grade"><option value="">اختر الصف</option>${Array.from({ length: 12 }, (_, index) => index + 1).map((grade) => `<option value="${grade}" ${draft.grade === grade ? "selected" : ""}>الصف ${grade}</option>`).join("")}</select>${issueFor("grade") ? `<small class="field-error">${issueFor("grade")}</small>` : ""}</label>
+        <label class="field"><span>مرحلة Cambridge</span><select id="source-grade"><option value="">اختر المرحلة</option>${Array.from({ length: 9 }, (_, index) => index + 1).map((stage) => `<option value="${stage}" ${draft.grade === stage ? "selected" : ""}>Stage ${stage}</option>`).join("")}<option value="10" ${draft.grade === 10 ? "selected" : ""}>Cambridge IGCSE</option></select>${issueFor("grade") ? `<small class="field-error">${issueFor("grade")}</small>` : ""}</label>
         <label class="field"><span>المادة</span><select id="source-subject" ${draft.grade ? "" : "disabled"}><option value="">اختر المادة</option>${availableSourceSubjects.map((subject) => `<option value="${subject.id}" ${draft.subjectId === subject.id ? "selected" : ""}>${subject.label}</option>`).join("")}</select>${issueFor("subjectId") ? `<small class="field-error">${issueFor("subjectId")}</small>` : ""}</label>
         ${draft.mode === "file" ? `
-          <label class="field full"><span>ملف PDF</span><input id="source-file" type="file" accept="application/pdf,.pdf" ${state.sourceUploadBusy ? "disabled" : ""}/><small>${state.sourceFile ? `الملف المختار: ${escapeHtml(state.sourceFile.name)} · ${formatFileSize(state.sourceFile.size)}` : draft.fileName ? `اختر الملف نفسه لاستكمال رفع: ${escapeHtml(draft.fileName)}` : "اختر ملف PDF؛ سيُرفع فعليًا إلى المجلد الصحيح في Google Drive."}</small>${issueFor("fileName") ? `<small class="field-error">${issueFor("fileName")}</small>` : ""}</label>
+          <label class="field full"><span>ملف PDF</span><input id="source-file" type="file" accept="application/pdf,.pdf" ${state.sourceUploadBusy ? "disabled" : ""}/><small>${state.sourceFile ? `الملف المختار: ${escapeHtml(state.sourceFile.name)} · ${formatFileSize(state.sourceFile.size)}` : draft.fileName ? `الملف المسجل: ${escapeHtml(draft.fileName)}` : "اختر ملف PDF وسيقوم واثق بقراءته وفهرسته مباشرة."}</small>${issueFor("fileName") ? `<small class="field-error">${issueFor("fileName")}</small>` : ""}</label>
         ` : `
           <label class="field full"><span>رابط المصدر</span><input id="source-url" type="url" value="${escapeHtml(draft.url)}" placeholder="https://example.org/source"/>${issueFor("url") ? `<small class="field-error">${issueFor("url")}</small>` : ""}</label>
           <label class="rights-check full"><input id="source-rights" type="checkbox" ${draft.rightsConfirmed ? "checked" : ""}/><span>راجعت حقوق الاستخدام وسياسة الموقع، وأسمح بتسجيل الرابط كمصدر مركزي.</span></label>
           ${issueFor("rightsConfirmed") ? `<p class="field-error full">${issueFor("rightsConfirmed")}</p>` : ""}
         `}
       </div>
-      <div class="drive-path-preview"><span>مسار الحفظ في Google Drive</span><code>${escapeHtml(path)}</code><small>${draft.mode === "file" ? "سيُنشئ واثق المجلدات الناقصة تلقائيًا ثم يرفع الملف دون تكرار." : "الرابط يُحفظ في سجل المصادر ولا يُرفع كملف."}</small></div>
+      <div class="source-intake-note"><strong>فهرسة مباشرة</strong><small>${draft.mode === "file" ? "يقرأ واثق ملف PDF من جهازك مباشرة؛ لا يحتاج حساب Google أو اتصال Drive، وتسجيل مالك واثق يكفي." : "الرابط يُحفظ كمرجع بعد تأكيد حقوق الاستخدام."}</small></div>
       ${state.sourceUploadBusy || state.sourceUploadMessage ? `<div class="source-upload-progress" aria-live="polite"><div><strong>${escapeHtml(state.sourceUploadMessage || "جارٍ تجهيز الرفع…")}</strong><span>${state.sourceUploadProgress}%</span></div><div class="upload-progress-track"><span style="width:${state.sourceUploadProgress}%"></span></div></div>` : ""}
-      <footer><button class="secondary-btn" data-action="close-source-form" ${state.sourceUploadBusy ? "disabled" : ""}>إلغاء</button><button class="primary-btn" data-action="save-source" ${state.sourceUploadBusy ? "disabled" : ""}>${state.sourceUploadBusy ? "جارٍ الرفع…" : draft.mode === "file" ? (state.pendingSourceUpload ? "استكمال الرفع والحفظ" : "رفع وحفظ المصدر") : (state.sourceStorageStatus === "متصل" ? "حفظ في السجل المركزي" : "حفظ المصدر")}</button></footer>
+      <footer><button class="secondary-btn" data-action="close-source-form" ${state.sourceUploadBusy ? "disabled" : ""}>إلغاء</button><button class="primary-btn" data-action="save-source" ${state.sourceUploadBusy ? "disabled" : ""}>${state.sourceUploadBusy ? "جارٍ الفهرسة…" : draft.mode === "file" ? "إضافة وفهرسة المصدر" : (state.sourceStorageStatus === "متصل" ? "حفظ في السجل المركزي" : "حفظ المصدر")}</button></footer>
     </section>
   `;
 }
@@ -1589,11 +1166,9 @@ function renderSourceDetails(source: ManagedSource): string {
         <div><span>رقم الفهرسة</span><strong dir="ltr">${escapeHtml(source.catalogCode)}</strong></div>
         <div><span>الجهة</span><strong>${escapeHtml(source.authority)}</strong></div>
         <div><span>النوع</span><strong>${escapeHtml(source.kind)}</strong></div>
-        <div><span>المادة والصف</span><strong>${escapeHtml(subject)} · الصف ${source.grade}</strong></div>
-        <div><span>الإصدار</span><strong>${escapeHtml(source.version)}</strong></div>
-        <div><span>الفصل الدراسي</span><strong>${escapeHtml(source.semester ?? "غير محدد")}</strong></div>
+        <div><span>المادة والمرحلة</span><strong>${escapeHtml(subject)} · ${source.grade === 10 ? "Cambridge IGCSE" : `Stage ${source.grade}`}</strong></div>
         <div><span>الحالة</span><strong>${escapeHtml(source.status)}</strong></div>
-        <div><span>حالة الملف</span><strong>${escapeHtml(source.uploadState ?? (source.mode === "url" ? "رابط" : "غير مرفوع"))}</strong></div>
+        <div><span>حالة المصدر</span><strong>${source.mode === "url" ? "رابط مسجل" : source.extractionStatus === "مكتمل" ? "مفهرس داخل واثق" : "بانتظار الفهرسة"}</strong></div>
         <div><span>حالة الاستخراج</span><strong>${escapeHtml(extractionStatus)}</strong></div>
         <div><span>حجم الملف</span><strong>${source.fileSizeBytes ? formatFileSize(source.fileSizeBytes) : "—"}</strong></div>
         <div><span>الصفحات المستخرجة</span><strong>${source.extractedPageCount ?? "—"}</strong></div>
@@ -1603,15 +1178,11 @@ function renderSourceDetails(source: ManagedSource): string {
         <div><span>آخر تحديث</span><strong>${formatArabicDate(source.updatedAt.slice(0, 10))}</strong></div>
       </div>
       <div class="source-reference"><span>${source.mode === "file" ? "اسم الملف" : "الرابط"}</span><code>${escapeHtml(reference)}</code></div>
-      <div class="source-reference"><span>مسار Google Drive</span><code>${escapeHtml(source.drivePath)}</code></div>
       ${source.extractionMessage ? `<div class="extraction-note status-${extractionStatus === "مكتمل" ? "ok" : extractionStatus === "يحتاج OCR" || extractionStatus === "فشل" ? "warn" : "idle"}"><strong>${escapeHtml(extractionStatus)}</strong><p>${escapeHtml(source.extractionMessage)}</p></div>` : ""}
       ${source.extractionPreview ? `<div class="extraction-preview"><span>معاينة النص المستخرج</span><p>${escapeHtml(source.extractionPreview)}</p></div>` : ""}
       ${headings.length ? `<div class="detected-headings"><span>عناوين مستخرجة للمساعدة في البحث، وليست فهرسًا للكتاب</span><div>${headings.slice(0, 12).map((heading) => `<small>${escapeHtml(heading)}</small>`).join("")}</div></div>` : ""}
       ${renderSourceReadinessPanel(source)}
-      <div class="source-detail-actions">
-        ${source.mode === "file" && source.driveFileId && source.status !== "مؤرشف" ? `<button class="primary-btn compact" data-action="index-source" data-source-id="${source.id}" ${state.sourceIndexingId ? "disabled" : ""}>${sourceExtractionActionLabel(source, state.sourceIndexingId === source.id)}</button>` : ""}
-        ${source.driveWebViewLink ? `<a class="secondary-btn compact source-drive-link" href="${escapeHtml(source.driveWebViewLink)}" target="_blank" rel="noreferrer">فتح الملف في Google Drive</a>` : ""}
-      </div>
+      <div class="source-detail-actions"></div>
     </section>
   `;
 }
@@ -1624,11 +1195,11 @@ function renderSourceReadinessPanel(source: ManagedSource): string {
   const characterCount = source.extractedCharacterCount ?? 0;
   const statusLabel = complete ? "جاهز للاستخدام" : needsOcr ? "يحتاج OCR" : failed ? "تعذر الاستخراج" : "بانتظار الفهرسة";
   const message = complete
-    ? `تم حفظ نص ${pageCount} صفحة مع أرقام الصفحات، وأصبح المصدر جاهزًا للبحث والاسترجاع دون تحليل فهرس بصري.`
+    ? `تم حفظ نص ${pageCount} صفحة مع أرقام الصفحات، وأصبح المصدر جاهزًا للبحث والاسترجاع.`
     : needsOcr
       ? "شغّل OCR العربي لاستخراج نص الصفحات المصورة، ثم يصبح المصدر جاهزًا للاستخدام."
       : failed
-        ? "أعد محاولة الاستخراج أو OCR. لا توجد خطوة خاصة بفهرس الوحدات والدروس."
+        ? "أعد محاولة الاستخراج أو OCR حتى يصبح نص المصدر مقروءًا وقابلًا للفهرسة."
         : "استخرج نص PDF وفهرسه حسب الصفحات. هذا هو المسار المعتمد والوحيد المطلوب حاليًا.";
   return `<section class="source-readiness-card ${complete ? "ready" : needsOcr || failed ? "warning" : "pending"}">
     <header><div><span class="eyebrow">الفهرسة المعتمدة</span><h3>${statusLabel}</h3><p>${escapeHtml(message)}</p></div><span class="source-readiness-badge">${complete ? "صفحات ومقاطع" : "لا يحتاج فهرسًا بصريًا"}</span></header>
@@ -1637,7 +1208,7 @@ function renderSourceReadinessPanel(source: ManagedSource): string {
       <div><span>الحروف المستخرجة</span><strong>${characterCount ? characterCount.toLocaleString("ar-OM") : "—"}</strong></div>
       <div><span>طريقة العمل</span><strong>استرجاع حسب الصفحة والمقطع</strong></div>
     </div>
-    <p class="source-readiness-note">الوحدات والدروس ليست شرطًا لتشغيل واثق. يمكن إضافة ربط يدوي اختياري لاحقًا عندما تحتاجه مرحلة إنشاء الاختبارات، من دون OCR للفهرس.</p>
+    <p class="source-readiness-note">يكفي النص المفهرس مع أرقام الصفحات. يكتب المعلم اسم الدرس عند إنشاء الاختبار، ويسترجع واثق سياقه من المصدر.</p>
   </section>`;
 }
 
@@ -1651,25 +1222,22 @@ function renderSourceRow(source: ManagedSource): string {
   const subject = SUBJECTS.find((item) => item.id === source.subjectId)?.label ?? "غير محددة";
   const sourceRef = source.mode === "file" ? source.fileName ?? "ملف PDF" : source.url ?? "رابط";
   const indexing = state.sourceIndexingId === source.id;
-  const canExtract = source.mode === "file" && Boolean(source.driveFileId) && source.uploadState === "مرفوع";
-  const extractLabel = sourceExtractionActionLabel(source, indexing);
   const actions = source.status === "مؤرشف"
     ? `<button class="text-btn" data-action="view-source" data-source-id="${source.id}">تفاصيل</button><button class="text-btn" data-action="restore-source" data-source-id="${source.id}">استعادة</button>`
-    : `<button class="text-btn" data-action="view-source" data-source-id="${source.id}">تفاصيل</button>${canExtract ? `<button class="text-btn" data-action="index-source" data-source-id="${source.id}" ${state.sourceIndexingId ? "disabled" : ""}>${extractLabel}</button>` : ""}<button class="text-btn danger-text" data-action="archive-source" data-source-id="${source.id}" ${indexing ? "disabled" : ""}>أرشفة</button>`;
-  return `<article class="source-row-card" data-source-search="${escapeHtml(`${source.title} ${source.catalogCode} ${source.authority} ${source.kind} ${subject} ${source.grade} ${source.semester ?? "غير محدد"} ${source.version} ${sourceRef}`)}">
+    : `<button class="text-btn" data-action="view-source" data-source-id="${source.id}">تفاصيل</button><button class="text-btn danger-text" data-action="archive-source" data-source-id="${source.id}" ${indexing ? "disabled" : ""}>أرشفة</button>`;
+  return `<article class="source-row-card" data-source-search="${escapeHtml(`${source.title} ${source.catalogCode} ${source.authority} ${source.kind} ${subject} ${source.grade} ${sourceRef}`)}">
     <div class="source-main"><span class="source-mode-icon">${source.mode === "file" ? icon("files") : icon("spark")}</span><div><strong>${escapeHtml(source.title)}</strong><small>${escapeHtml(source.catalogCode)}</small></div></div>
-    <div class="source-meta"><span>${escapeHtml(subject)} · الصف ${source.grade}</span><small>${escapeHtml(source.authority)} · ${escapeHtml(source.semester ?? "غير محدد")} · ${escapeHtml(source.version)}${source.fileSizeBytes ? ` · ${formatFileSize(source.fileSizeBytes)}` : ""}</small></div>
-    <div class="source-state-stack"><span class="source-status status-${sourceStatusSlug(source.status)}">${source.status}</span>${source.mode === "file" ? `<small class="upload-state upload-${source.uploadState === "مرفوع" ? "done" : source.uploadState === "مؤرشف" ? "archived" : "pending"}">${escapeHtml(source.uploadState ?? "غير مرفوع")}</small>` : ""}${source.mode === "file" ? `<small class="extraction-state extraction-${extractionStatusSlug(source.extractionStatus)}">${escapeHtml(source.extractionStatus ?? "لم يبدأ")}</small>` : ""}</div>
+    <div class="source-meta"><span>${escapeHtml(subject)} · ${source.grade === 10 ? "Cambridge IGCSE" : `Stage ${source.grade}`}</span><small>${escapeHtml(source.authority)}${source.fileSizeBytes ? ` · ${formatFileSize(source.fileSizeBytes)}` : ""}</small></div>
+    <div class="source-state-stack"><span class="source-status status-${sourceStatusSlug(source.status)}">${source.status}</span>${source.mode === "file" ? `<small class="extraction-state extraction-${extractionStatusSlug(source.extractionStatus)}">${escapeHtml(source.extractionStatus ?? "لم يبدأ")}</small>` : ""}</div>
     <div class="source-actions">${actions}</div>
-    <code class="source-path">${escapeHtml(source.drivePath)}</code>
   </article>`;
 }
 
 function sourceExtractionActionLabel(source: ManagedSource, busy: boolean): string {
-  if (busy) return source.extractionVersion?.startsWith("google-cloud-vision") ? "جارٍ OCR…" : "جارٍ الاستخراج…";
+  if (busy) return source.extractionVersion?.includes("ocr") ? "جارٍ OCR…" : "جارٍ الاستخراج…";
   if (source.extractionStatus === "يحتاج OCR") return "تشغيل OCR العربي";
-  if (source.extractionVersion?.startsWith("google-cloud-vision-ocr-pending")) return "استكمال OCR";
-  if (source.extractionVersion?.startsWith("google-cloud-vision")) return "إعادة OCR";
+  if (source.extractionVersion?.startsWith("gemini-ocr-pending")) return "استكمال OCR";
+  if (source.extractionVersion?.startsWith("gemini-ocr")) return "إعادة OCR";
   if (source.extractionStatus === "فشل") return "إعادة المحاولة";
   if (source.extractionStatus === "مكتمل") return "إعادة الفهرسة";
   return "استخراج وفهرسة";
@@ -1715,11 +1283,6 @@ function handleAction(action: string, element: HTMLElement): void {
     persistDraftCheckpoint(false);
     const profile = loadProfile();
     state.draft = createEmptyDraft();
-    state.lessonCatalog = [];
-    state.lessonCatalogKey = "";
-    state.lessonCatalogBusy = false;
-    state.lessonCatalogMessage = "";
-    state.lessonCatalogActiveUnitKey = "";
     state.questionGenerationBusy = false;
     state.questionGenerationMessage = "";
     state.sourceRetrievalMessage = "";
@@ -1729,7 +1292,6 @@ function handleAction(action: string, element: HTMLElement): void {
     visualJobAutoEnqueueTimer = undefined;
     if (profile) {
       state.draft.school = profile.school;
-      state.draft.directorate = profile.directorate;
     }
     saveDraft(state.draft);
     navigate("wizard");
@@ -1819,6 +1381,7 @@ function handleAction(action: string, element: HTMLElement): void {
   if (action === "previous-step") return setStep(Math.max(1, state.draft.currentStep - 1) as WizardStep);
   if (action === "next-step") { void nextStep(); return; }
   if (action === "apply-suggestion") return applySuggestedCounts();
+  if (action === "match-optional-sources") { void prepareSourceContext(); return; }
   if (action === "delete-draft") {
     const targetDraftId = requestedDraftId || state.draft.id;
     if (targetDraftId === state.draft.id) {
@@ -1834,19 +1397,12 @@ function handleAction(action: string, element: HTMLElement): void {
     state.draft = remaining ?? createEmptyDraft();
     if (remaining) restoreDraftRuntimeContext(remaining);
     else {
-      state.lessonCatalog = [];
-      state.lessonCatalogKey = "";
-      state.lessonCatalogActiveUnitKey = "";
-    }
+          }
     state.questionGenerationBusy = false;
     state.questionGenerationMessage = "";
     state.sourceRetrievalMessage = "";
     stopVisualJobPolling();
     showToast("تم حذف المسودة المحلية.");
-    return;
-  }
-  if (action === "mock-download") {
-    showToast("التصدير الحقيقي مؤجل لمرحلة التصدير.");
     return;
   }
   if (action === "owner-login") {
@@ -1859,49 +1415,6 @@ function handleAction(action: string, element: HTMLElement): void {
   }
   if (action === "refresh-central-sources") {
     void loadAndSyncCentralSources();
-    return;
-  }
-  if (action === "connect-google-drive") {
-    void connectGoogleDrive();
-    return;
-  }
-  if (action === "refresh-drive-status") {
-    void loadGoogleDriveStatus();
-    return;
-  }
-  if (action === "verify-drive-folders") {
-    void verifyGoogleDriveFolders();
-    return;
-  }
-  if (action === "disconnect-google-drive") {
-    void disconnectGoogleDrive();
-    return;
-  }
-  if (action === "resume-pending-upload") {
-    const pending = state.pendingSourceUpload;
-    if (!pending) return;
-    state.sourceDraft = {
-      mode: "file",
-      title: pending.source.title,
-      kind: pending.source.kind,
-      grade: pending.source.grade,
-      subjectId: pending.source.subjectId,
-      version: pending.source.version,
-      semester: pending.source.semester === "غير محدد" ? "" : pending.source.semester,
-      fileName: pending.fileName,
-      url: "",
-      rightsConfirmed: true,
-    };
-    state.sourceFile = null;
-    state.sourceFormOpen = true;
-    state.sourceUploadMessage = "اختر الملف نفسه ثم اضغط استكمال الرفع والحفظ.";
-    state.sourceUploadProgress = pending.fileSizeBytes > 0 ? Math.round((pending.bytesUploaded / pending.fileSizeBytes) * 100) : 0;
-    render();
-    window.setTimeout(() => document.querySelector(".source-form-card")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
-    return;
-  }
-  if (action === "cancel-pending-upload") {
-    void cancelPendingSourceUpload();
     return;
   }
   if (action === "open-source-form") {
@@ -1942,7 +1455,6 @@ function handleAction(action: string, element: HTMLElement): void {
   }
   if (action === "archive-source" && sourceId) { void archiveSource(sourceId); return; }
   if (action === "restore-source" && sourceId) { void restoreSource(sourceId); return; }
-  if (action === "index-source" && sourceId) { void extractAndIndexSource(sourceId); return; }
 }
 
 function visualJobSubject(): string {
@@ -2000,13 +1512,21 @@ function scheduleRequiredVisualJobSync(): void {
     const latest = currentAutoVisualEnqueueSignature();
     if (!latest || latest === lastAutoVisualEnqueueSignature) return;
     if (state.visualJobSyncBusy) {
-      // مزامنة سابقة لا تعني أن هذه المفردة أُرسلت؛ أعد الجدولة بدل إسقاط أصل 2D بصمت.
       scheduleRequiredVisualJobSync();
       return;
     }
-    lastAutoVisualEnqueueSignature = latest;
-    void syncVisualJobs(true);
+    void autoEnqueueVisualJobs(latest);
   }, VISUAL_JOB_AUTO_ENQUEUE_DELAY_MS);
+}
+
+async function autoEnqueueVisualJobs(signature: string): Promise<void> {
+  const synced = await syncVisualJobs(true);
+  if (synced) {
+    lastAutoVisualEnqueueSignature = signature;
+    return;
+  }
+  // A temporary network/session/race failure must not silently lose the required 2D task.
+  window.setTimeout(() => scheduleRequiredVisualJobSync(), VISUAL_JOB_AUTO_ENQUEUE_DELAY_MS * 4);
 }
 
 function hasPendingVisualJobs(): boolean {
@@ -2029,10 +1549,11 @@ function scheduleVisualJobPolling(): void {
   }, VISUAL_JOB_POLL_INTERVAL_MS);
 }
 
-async function syncVisualJobs(enqueueRequired: boolean): Promise<void> {
-  if (!visualJobService || !centralSourceStore?.currentSession || state.sourceStorageStatus !== "متصل" || state.draft.grade === null) return;
-  if (state.visualJobSyncBusy) return;
+async function syncVisualJobs(enqueueRequired: boolean): Promise<boolean> {
+  if (!visualJobService || !centralSourceStore?.currentSession || state.sourceStorageStatus !== "متصل" || state.draft.grade === null) return false;
+  if (state.visualJobSyncBusy) return false;
   state.visualJobSyncBusy = true;
+  let synced = false;
   try {
     const jobs = enqueueRequired
       ? await visualJobService.enqueue(state.draft.id, requiredVisualJobItems(state.draft, visualJobSubject()))
@@ -2043,6 +1564,7 @@ async function syncVisualJobs(enqueueRequired: boolean): Promise<void> {
       : jobs.some((job) => job.status === "failed")
         ? "اكتملت بعض المرئيات وتعذر بعضها؛ افتح المفردة لإعادة المحاولة قبل الاعتماد."
         : jobs.length ? "اكتملت الأصول البصرية المطلوبة واعتمدت علميًا." : state.questionGenerationMessage;
+    synced = true;
   } catch (error) {
     state.questionGenerationMessage = error instanceof Error ? error.message : "تعذر مزامنة مهام المرئيات.";
   } finally {
@@ -2050,6 +1572,7 @@ async function syncVisualJobs(enqueueRequired: boolean): Promise<void> {
     render();
     scheduleVisualJobPolling();
   }
+  return synced;
 }
 
 async function retryVisualJob(planItemId: string): Promise<void> {
@@ -2098,11 +1621,9 @@ async function nextStep(): Promise<void> {
   if (step === 1) {
     const lessons = normalizeLessonTopics(state.draft.lessonTopics);
     if (state.draft.grade === null || !state.draft.subjectId || lessons.length < MIN_LESSON_TOPICS || lessons.length > MAX_LESSON_TOPICS) {
-      return showToast(`اختر الصف والمادة وحدد من ${MIN_LESSON_TOPICS} إلى ${MAX_LESSON_TOPICS} دروس من القائمة.`);
+      return showToast(`اختر الصف والمادة وحدد من ${MIN_LESSON_TOPICS} إلى ${MAX_LESSON_TOPICS} دروس.`);
     }
     syncDraftTopicFromLessons(state.draft);
-    const matched = await prepareSourceContext();
-    if (!matched) return;
     return setStep(2);
   }
   if (step === 2) {
@@ -2186,11 +1707,7 @@ function applyProgressiveGenerationSnapshot(
         answer: result.content.answer,
         rationale: result.content.rationale,
         markScheme: [...result.content.markScheme],
-        questionForm: contract.styleTarget,
-        workingRequired: shouldRequireCalculationWorking(contract.styleTarget, contract.marks),
         sourceSupport: result.evidence.excerpt,
-        needsReview: result.content.needsReview,
-        ...(result.scientificItem ? { scientificItem: result.scientificItem } : {}),
       }],
     };
   });
@@ -2256,8 +1773,8 @@ async function generateQuestionsForPlan(_plan: PlanItem[]): Promise<boolean> {
   render();
   try {
     const workerHealth = await assessmentGenerationWorkerService.health();
-    if (workerHealth.engineSchemaVersion !== 1 || workerHealth.contractVersion !== 1) {
-      throw new Error("عامل توليد المفردات المنشور لا يطابق عقد المحرك الحالي. انشر نسخة Phase 2-D3 ثم أعد المحاولة.");
+    if (workerHealth.engineSchemaVersion !== 1 || workerHealth.contractVersion !== 3) {
+      throw new Error("عامل توليد المفردات المنشور لا يطابق عقد Cambridge-first الحالي. أعد نشر assessment-generation-worker ثم أعد المحاولة.");
     }
     const payload = await buildCurrentProgressivePayload();
     let finalSnapshot: AssessmentGenerationRunSnapshot | null = null;
@@ -2357,259 +1874,86 @@ async function regeneratePlanItem(item: PlanItem): Promise<void> {
 }
 
 async function prepareSourceContext(): Promise<boolean> {
-  if (!centralSourceStore?.currentSession || state.sourceStorageStatus !== "متصل") {
-    state.sourceRetrievalMessage = "يلزم تسجيل دخول مالك المنصة للوصول إلى المقاطع المفهرسة.";
-    render();
-    showToast(state.sourceRetrievalMessage);
-    return false;
-  }
   const lessons = normalizeLessonTopics(state.draft.lessonTopics);
-  if (lessons.length < MIN_LESSON_TOPICS || lessons.length > MAX_LESSON_TOPICS) {
-    state.sourceRetrievalMessage = `حدد من ${MIN_LESSON_TOPICS} إلى ${MAX_LESSON_TOPICS} دروس من القائمة قبل المتابعة.`;
-    render();
-    showToast(state.sourceRetrievalMessage);
-    return false;
-  }
-  syncDraftTopicFromLessons(state.draft);
-  const eligible = state.sources.filter((source) =>
-    source.grade === state.draft.grade &&
-    source.subjectId === state.draft.subjectId &&
-    source.status === "مفهرس" &&
-    source.extractionStatus === "مكتمل",
-  );
-  if (!eligible.length) {
+  if (!centralSourceStore?.currentSession || state.sourceStorageStatus !== "متصل") {
     state.draft.sourceReferences = [];
     state.draft.sourceRetrievalVersion = "";
-    state.sourceRetrievalMessage = "لا يوجد مصدر مفهرس مطابق لهذا الصف والمادة.";
-    render();
-    showToast(state.sourceRetrievalMessage);
-    return false;
-  }
-
-  invalidateGeneratedQuestions();
-  state.sourceRetrievalBusy = true;
-  state.sourceRetrievalMessage = `جارٍ مطابقة ${lessons.length} دروس مع صفحات المصادر…`;
-  render();
-  try {
-    const chunkGroups = await Promise.all(eligible.map(async (source) => ({
-      source,
-      chunks: await centralSourceStore.listSourceChunks(source.id),
-    })));
-    const candidates: SourceChunkCandidate[] = chunkGroups.flatMap(({ source, chunks }) =>
-      chunks.map((chunk) => ({ source, chunk })),
-    );
-    const catalogByLabel = new Map(state.lessonCatalog.map((lesson) => [lesson.label, lesson]));
-    const lessonResults = lessons.map((lesson, lessonIndex) => {
-      const catalogLesson = catalogByLabel.get(lesson);
-      const sourceScoped = catalogLesson
-        ? candidates.filter((candidate) => candidate.source.id === catalogLesson.sourceId)
-        : candidates;
-      const pageStart = catalogLesson?.pageStart;
-      const pageEnd = catalogLesson?.pageEnd ?? pageStart;
-      const exactPageScoped = pageStart && pageEnd
-        ? sourceScoped.filter((candidate) => candidate.chunk.pageFrom <= pageEnd && candidate.chunk.pageTo >= pageStart)
-        : sourceScoped;
-      // Curated TOC pages are mapped to PDF pages, but extraction boundaries may drift by a page or two.
-      // Search the exact lesson range first, then a small PDF neighbourhood, then the source with strict title matching.
-      const paddedPageScoped = pageStart && pageEnd
-        ? sourceScoped.filter((candidate) => candidate.chunk.pageFrom <= pageEnd + 3 && candidate.chunk.pageTo >= Math.max(1, pageStart - 3))
-        : sourceScoped;
-      const query = catalogLesson ? `${catalogLesson.code} ${catalogLesson.title}` : lesson;
-      const exactResult = rankSourceChunks(query, exactPageScoped, 2);
-      const paddedResult = exactResult.references.length ? exactResult : rankSourceChunks(query, paddedPageScoped, 2);
-      const result = paddedResult.references.length ? paddedResult : rankSourceChunks(query, sourceScoped, 2);
-      return {
-        lesson,
-        references: result.references.map((reference) => ({
-          ...reference,
-          id: `${reference.id}:lesson-${lessonIndex + 1}`,
-          lessonTopic: lesson,
-        })),
-      };
-    });
-    const missingLessons = lessonResults.filter((result) => result.references.length === 0).map((result) => result.lesson);
-    if (missingLessons.length) {
-      state.draft.sourceReferences = [];
-      state.draft.sourceRetrievalVersion = "";
-      state.sourceRetrievalBusy = false;
-      state.sourceRetrievalMessage = `لم يجد واثق صفحات واضحة للدروس: ${missingLessons.join("، ")}. راجع اختيار الدروس من شجرة الكتاب.`;
-      render();
-      showToast("بعض الدروس لم ترتبط بصفحات من المصدر.");
-      return false;
-    }
-    state.draft.sourceReferences = lessonResults.flatMap((result) => result.references);
-    state.draft.sourceRetrievalVersion = SOURCE_RETRIEVAL_VERSION;
-    state.sourceRetrievalBusy = false;
-    const matchedSources = new Set(state.draft.sourceReferences.map((reference) => reference.sourceId)).size;
-    state.sourceRetrievalMessage = `تم ربط ${lessons.length} دروس بـ ${state.draft.sourceReferences.length} مقاطع من ${matchedSources} مصدر.`;
-    scheduleSave();
+    state.sourceRetrievalMessage = "المصادر الاختيارية غير متصلة؛ سيستخدم واثق سياق Cambridge العالمي.";
     render();
     return true;
-  } catch (error) {
-    state.sourceRetrievalBusy = false;
-    state.draft.sourceReferences = [];
-    state.draft.sourceRetrievalVersion = "";
-    state.sourceRetrievalMessage = error instanceof Error ? error.message : "تعذر قراءة مقاطع المصادر المفهرسة.";
-    render();
-    showToast(state.sourceRetrievalMessage);
-    return false;
   }
-}
-
-async function loadLessonCatalogForCurrentSelection(force = false): Promise<void> {
-  const key = lessonCatalogSelectionKey();
-  if (!force && (state.lessonCatalogBusy || state.lessonCatalogKey === key)) return;
-  const savedSnapshot = [...state.lessonCatalog];
-  state.lessonCatalogKey = key;
-  state.lessonCatalogMessage = "";
-  if (state.draft.grade === null || !state.draft.subjectId) return;
   const eligible = eligibleSourcesForDraft();
   if (!eligible.length) {
-    state.lessonCatalogMessage = "لا يوجد مصدر مفهرس مطابق للصف والمادة.";
-    return;
+    state.draft.sourceReferences = [];
+    state.draft.sourceRetrievalVersion = "";
+    state.sourceRetrievalMessage = "لا يوجد مصدر مطابق، وهذا لا يمنع التوليد من Cambridge العالمي.";
+    render();
+    return true;
   }
-  state.lessonCatalogBusy = true;
+  state.sourceRetrievalBusy = true;
+  state.sourceRetrievalMessage = "جارٍ إضافة سياق اختياري من ملفاتك…";
   render();
   try {
-    const structures = new Map<string, SourceStructureNode[]>();
-    if (centralSourceStore?.currentSession && state.sourceStorageStatus === "متصل") {
-      const loaded = await Promise.all(eligible.map(async (source) => {
-        try {
-          const storedNodes = await centralSourceStore.listSourceStructure(source.id);
-          const curatedNodes = buildCuratedBookStructure(source);
-          let nodes = [...storedNodes, ...curatedNodes];
-          // ندمج البنية المستخرجة الموثوقة بدل استبدال شجرة بأخرى؛ فالاستبدال كان يسقط دروسًا صحيحة.
-          const chunks = await centralSourceStore.listSourceChunks(source.id);
-          const extracted = extractSourceStructure(
-            source.id,
-            chunks,
-            source.extractedPageCount ?? 0,
-            { allowUnitHeadingFallback: false },
-          );
-          if (extracted.reliableTocFound) nodes = [...nodes, ...extracted.nodes];
-          return [source.id, nodes] as const;
-        } catch {
-          return [source.id, [] as SourceStructureNode[]] as const;
-        }
-      }));
-      loaded.forEach(([sourceId, nodes]) => structures.set(sourceId, nodes));
-    }
-    const liveCatalog = buildLessonCatalog(eligible, structures);
-    state.lessonCatalog = liveCatalog.length ? liveCatalog : savedSnapshot;
-    const unitGroups = buildLessonUnitGroups(state.lessonCatalog);
-    state.lessonCatalogActiveUnitKey = resolveActiveLessonUnitKey(
-      unitGroups,
-      new Set(normalizeLessonTopics(state.draft.lessonTopics)),
-    );
-    const validLabels = new Set(state.lessonCatalog.map((lesson) => lesson.label));
-    const retained = normalizeLessonTopics(state.draft.lessonTopics).filter((label) => validLabels.has(label));
-    if (retained.length !== normalizeLessonTopics(state.draft.lessonTopics).length) {
-      state.draft.lessonTopics = retained;
-      syncDraftTopicFromLessons(state.draft);
-      invalidateSourceAndGeneratedQuestions();
-      scheduleSave();
-    }
-    const curatedCount = state.lessonCatalog.filter((lesson) => lesson.origin === "curated-book-tree").length;
-    const detectedCount = state.lessonCatalog.filter((lesson) => lesson.origin === "detected-heading").length;
-    const unitCount = buildLessonUnitGroups(state.lessonCatalog).length;
-    state.lessonCatalogMessage = liveCatalog.length
-      ? `${curatedCount ? "تم تجهيز شجرة الكتاب المعتمدة" : "تم تجهيز شجرة المصدر"}: ${unitCount} وحدات و${state.lessonCatalog.length} درسًا${detectedCount ? `، منها ${detectedCount} دروس مكتملة من عناوين المصدر` : ""}.`
-      : state.lessonCatalog.length
-        ? "تعذر تحديث الشجرة الآن؛ احتفظ واثق بنسخة الدروس المحفوظة داخل المسودة."
-        : "لا توجد شجرة محتوى موثوقة لهذا الكتاب بعد.";
+    const chunkGroups = await Promise.all(eligible.map(async (source) => ({ source, chunks: await centralSourceStore.listSourceChunks(source.id) })));
+    const candidates: SourceChunkCandidate[] = chunkGroups.flatMap(({ source, chunks }) => chunks.map((chunk) => ({ source, chunk })));
+    state.draft.sourceReferences = lessons.flatMap((lesson, lessonIndex) => rankSourceChunks(lesson, candidates, 2).references.map((reference) => ({ ...reference, id: `${reference.id}:topic-${lessonIndex + 1}`, lessonTopic: lesson })));
+    state.draft.sourceRetrievalVersion = SOURCE_RETRIEVAL_VERSION;
+    state.sourceRetrievalMessage = state.draft.sourceReferences.length
+      ? `أضيف ${state.draft.sourceReferences.length} مقطعًا اختياريًا. يظل Cambridge العالمي هو أساس المسار.`
+      : "لم أجد مطابقة مفيدة في الملفات، لذلك سيستخدم واثق Cambridge العالمي.";
+    scheduleSave();
+    return true;
+  } catch (error) {
+    state.draft.sourceReferences = [];
+    state.draft.sourceRetrievalVersion = "";
+    state.sourceRetrievalMessage = "تعذر استخدام المصدر الاختياري؛ سيواصل واثق بالمسار العالمي.";
+    console.warn(error);
+    return true;
   } finally {
-    state.lessonCatalogBusy = false;
+    state.sourceRetrievalBusy = false;
     render();
   }
 }
 
 function bindContentStep(): void {
-  const gradeSelect = document.querySelector<HTMLSelectElement>("#grade-select");
-  gradeSelect?.addEventListener("change", () => {
-    state.draft.grade = gradeSelect.value ? Number(gradeSelect.value) : null;
-    applyOfficialAssessmentTemplate(state.draft);
-    state.draft.subjectId = "";
-    state.draft.lessonTopics = [];
-    state.draft.topic = "";
-    state.lessonCatalog = [];
-    state.lessonCatalogKey = "";
-    state.lessonCatalogMessage = "";
-    state.lessonCatalogActiveUnitKey = "";
-    invalidateSourceAndGeneratedQuestions();
-    scheduleSave();
-    render();
+  document.querySelector<HTMLSelectElement>("#programme-select")?.addEventListener("change", (event) => {
+    setCambridgeProgramme(state.draft, (event.target as HTMLSelectElement).value as ExamDraft["programmeId"]);
+    invalidateSourceAndGeneratedQuestions(); scheduleSave(); render();
   });
-
-  const subjectSelect = document.querySelector<HTMLSelectElement>("#subject-select");
-  subjectSelect?.addEventListener("change", () => {
-    state.draft.subjectId = subjectSelect.value;
-    state.draft.lessonTopics = [];
-    state.draft.topic = "";
-    state.lessonCatalog = [];
-    state.lessonCatalogKey = "";
-    state.lessonCatalogMessage = "";
-    state.lessonCatalogActiveUnitKey = "";
-    invalidateSourceAndGeneratedQuestions();
-    scheduleSave();
-    render();
+  document.querySelector<HTMLSelectElement>("#stage-select")?.addEventListener("change", (event) => {
+    state.draft.grade = Number((event.target as HTMLSelectElement).value);
+    invalidateSourceAndGeneratedQuestions(); scheduleSave(); render();
   });
-
-  document.querySelectorAll<HTMLElement>("[data-lesson-unit-target]").forEach((control) => {
-    control.addEventListener("click", () => {
-      const target = control.dataset.lessonUnitTarget;
-      if (!target || target === state.lessonCatalogActiveUnitKey) return;
-      state.lessonCatalogActiveUnitKey = target;
-      render();
-      document.querySelector<HTMLElement>(".lesson-catalog-field")?.scrollIntoView({ block: "start" });
-    });
+  document.querySelector<HTMLSelectElement>("#subject-select")?.addEventListener("change", (event) => {
+    setCambridgeSubject(state.draft, (event.target as HTMLSelectElement).value);
+    invalidateSourceAndGeneratedQuestions(); scheduleSave(); render();
   });
-
-  document.querySelector<HTMLSelectElement>("#lesson-unit-select")?.addEventListener("change", (event) => {
-    state.lessonCatalogActiveUnitKey = (event.target as HTMLSelectElement).value;
-    render();
-    document.querySelector<HTMLElement>(".lesson-catalog-field")?.scrollIntoView({ block: "start" });
-  });
-
-  document.querySelectorAll<HTMLInputElement>("[data-lesson-option-id]").forEach((input) => {
-    input.addEventListener("change", () => {
-      const option = state.lessonCatalog.find((lesson) => lesson.id === input.dataset.lessonOptionId);
-      if (!option) return;
-      state.lessonCatalogActiveUnitKey = input.dataset.lessonUnitKey ?? state.lessonCatalogActiveUnitKey;
-      const selected = new Set(normalizeLessonTopics(state.draft.lessonTopics));
-      if (input.checked) {
-        if (selected.size >= MAX_LESSON_TOPICS) {
-          input.checked = false;
-          showToast(`يمكن اختيار ${MAX_LESSON_TOPICS} دروس كحد أقصى.`);
-          return;
-        }
-        selected.add(option.label);
-      } else {
-        selected.delete(option.label);
-      }
-      state.draft.lessonTopics = state.lessonCatalog.filter((lesson) => selected.has(lesson.label)).map((lesson) => lesson.label);
-      syncDraftTopicFromLessons(state.draft);
-      invalidateSourceAndGeneratedQuestions();
-      scheduleSave();
-      render();
-    });
-  });
-
-  if (state.draft.grade !== null && state.draft.subjectId && !state.lessonCatalogBusy && state.lessonCatalogKey !== lessonCatalogSelectionKey()) {
-    window.setTimeout(() => { void loadLessonCatalogForCurrentSelection(); }, 0);
-  }
+  const lessonInput = document.querySelector<HTMLTextAreaElement>("#lesson-topics-input");
+  const commit = (): void => {
+    if (!lessonInput) return;
+    const next = parseLessonInput(lessonInput.value);
+    if (next.join("\n") === normalizeLessonTopics(state.draft.lessonTopics).join("\n")) return;
+    state.draft.lessonTopics = next; syncDraftTopicFromLessons(state.draft); invalidateSourceAndGeneratedQuestions(); scheduleSave(); render();
+  };
+  lessonInput?.addEventListener("change", commit); lessonInput?.addEventListener("blur", commit);
+  document.querySelectorAll<HTMLButtonElement>("[data-lesson-suggestion]").forEach((button) => button.addEventListener("click", () => {
+    const value = button.dataset.lessonSuggestion?.trim(); if (!value) return;
+    state.draft.lessonTopics = [...normalizeLessonTopics(state.draft.lessonTopics), value].slice(0, MAX_LESSON_TOPICS);
+    syncDraftTopicFromLessons(state.draft); invalidateSourceAndGeneratedQuestions(); scheduleSave(); render();
+  }));
 }
 
 function syncSetupFieldsFromDom(): void {
-  const dateInput = document.querySelector<HTMLInputElement>("#date-input");
-  if (dateInput?.value) state.draft.examDate = dateInput.value;
-  const schoolInput = document.querySelector<HTMLInputElement>("#school-input");
-  if (schoolInput) state.draft.school = schoolInput.value;
-  const directorateInput = document.querySelector<HTMLInputElement>("#directorate-input");
-  if (directorateInput) state.draft.directorate = directorateInput.value;
-  const academicYearInput = document.querySelector<HTMLInputElement>("#academic-year-input");
-  if (academicYearInput) state.draft.academicYear = academicYearInput.value;
-  const semesterSelect = document.querySelector<HTMLSelectElement>("#semester-select");
-  if (semesterSelect) state.draft.semester = semesterSelect.value;
+  const value = (id: string): string => document.querySelector<HTMLInputElement>(`#${id}`)?.value ?? "";
+  const numberValue = (id: string, fallback: number): number => {
+    const raw = Number(value(id));
+    return Number.isFinite(raw) ? raw : fallback;
+  };
+  state.draft.examDate = value("date-input") || state.draft.examDate;
+  state.draft.school = value("school-input");
+  state.draft.academicYear = value("academic-year-input") || state.draft.academicYear;
+  state.draft.durationMinutes = numberValue("duration-input", state.draft.durationMinutes);
+  state.draft.totalMarks = numberValue("marks-input", state.draft.totalMarks);
 }
 
 function bindSetupStep(): void {
@@ -2621,10 +1965,9 @@ function bindSetupStep(): void {
     render();
   });
 
-  const inputBindings: Array<[string, keyof Pick<ExamDraft, "examDate" | "school" | "directorate" | "academicYear">]> = [
+  const inputBindings: Array<[string, keyof Pick<ExamDraft, "examDate" | "school" | "academicYear">]> = [
     ["date-input", "examDate"],
     ["school-input", "school"],
-    ["directorate-input", "directorate"],
     ["academic-year-input", "academicYear"],
   ];
   inputBindings.forEach(([id, key]) => {
@@ -2638,19 +1981,6 @@ function bindSetupStep(): void {
     input?.addEventListener("blur", update);
   });
 
-  document.querySelector<HTMLSelectElement>("#semester-select")?.addEventListener("change", (event) => {
-    state.draft.semester = (event.target as HTMLSelectElement).value;
-    scheduleSave();
-  });
-
-  document.querySelector<HTMLInputElement>("#trusted-enrichment-toggle")?.addEventListener("change", (event) => {
-    state.draft.trustedEnrichmentEnabled = (event.target as HTMLInputElement).checked;
-    state.questionGenerationMessage = state.draft.trustedEnrichmentEnabled
-      ? "سيستخدم واثق إثراءً موثقًا في المفردات الجديدة أو المعاد توليدها، مع بقاء صفحات الكتاب حاكمة للسؤال والإجابة."
-      : "تم إيقاف الإثراء الخارجي للمفردات الجديدة أو المعاد توليدها؛ ولن تُحذف الأسئلة المكتملة.";
-    scheduleSave();
-    render();
-  });
 
   document.querySelector<HTMLInputElement>("#duration-input")?.addEventListener("change", (event) => {
     state.draft.durationMinutes = Number((event.target as HTMLInputElement).value);
@@ -2697,17 +2027,10 @@ function bindSetupStep(): void {
 }
 
 function applySuggestedCounts(): void {
-  const officialSpec = getOfficialAssessmentSpec(state.draft.grade, state.draft.title);
-  if (officialSpec) {
-    applyOfficialAssessmentTemplate(state.draft);
-  } else {
-    const suggestion = validateExamSetup(state.draft).suggestedCounts;
-    if (!suggestion) return;
-    state.draft.counts = suggestion;
-  }
-  invalidateGeneratedQuestions();
-  scheduleSave();
-  render();
+  const suggestion = validateExamSetup(state.draft).suggestedCounts;
+  if (!suggestion) return;
+  state.draft.counts = suggestion;
+  invalidateGeneratedQuestions(); scheduleSave(); render();
 }
 
 function bindPlanStep(): void {
@@ -2783,22 +2106,18 @@ function bindAdmin(): void {
   });
 
   bindSourceTextInput("source-title", "title");
-  bindSourceTextInput("source-version", "version");
   bindSourceTextInput("source-url", "url");
 
   document.querySelector<HTMLSelectElement>("#source-kind")?.addEventListener("change", (event) => {
     state.sourceDraft.kind = (event.target as HTMLSelectElement).value as SourceDraft["kind"];
     render();
   });
-  document.querySelector<HTMLSelectElement>("#source-semester")?.addEventListener("change", (event) => {
-    state.sourceDraft.semester = (event.target as HTMLSelectElement).value as SourceDraft["semester"];
-    render();
-  });
   document.querySelector<HTMLSelectElement>("#source-grade")?.addEventListener("change", (event) => {
     const value = (event.target as HTMLSelectElement).value;
     state.sourceDraft.grade = value ? Number(value) : null;
+    const programme = state.sourceDraft.grade === 10 ? "igcse" : state.sourceDraft.grade && state.sourceDraft.grade >= 7 ? "lower_secondary" : "primary";
     const subjectStillValid = SUBJECTS.some(
-      (subject) => subject.id === state.sourceDraft.subjectId && state.sourceDraft.grade !== null && subject.grades.includes(state.sourceDraft.grade),
+      (subject) => subject.id === state.sourceDraft.subjectId && subject.programmes.includes(programme),
     );
     if (!subjectStillValid) state.sourceDraft.subjectId = "";
     render();
@@ -2811,7 +2130,10 @@ function bindAdmin(): void {
     const file = (event.target as HTMLInputElement).files?.[0] ?? null;
     state.sourceFile = file;
     state.sourceDraft.fileName = file?.name ?? state.sourceDraft.fileName;
-    state.sourceUploadMessage = file ? `جاهز للرفع: ${file.name}` : "";
+    if (file && !state.sourceDraft.title.trim()) {
+      state.sourceDraft.title = file.name.replace(/\.pdf$/iu, "").replace(/[_-]+/g, " ").trim();
+    }
+    state.sourceUploadMessage = file ? `جاهز للفهرسة: ${file.name}` : "";
     render();
   });
   document.querySelector<HTMLInputElement>("#source-rights")?.addEventListener("change", (event) => {
@@ -2826,10 +2148,15 @@ function bindAdmin(): void {
   });
 }
 
-function bindSourceTextInput(id: string, key: "title" | "version" | "url"): void {
+function bindSourceTextInput(id: string, key: "title" | "url"): void {
   document.querySelector<HTMLInputElement>(`#${id}`)?.addEventListener("input", (event) => {
     state.sourceDraft[key] = (event.target as HTMLInputElement).value;
   });
+}
+
+async function sha256Hex(file: File): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+  return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 async function saveSourceFromForm(): Promise<void> {
@@ -2840,12 +2167,13 @@ async function saveSourceFromForm(): Promise<void> {
     return;
   }
 
+  const duplicate = findDuplicateSource(state.sources, state.sourceDraft);
+  if (duplicate) {
+    showToast(`هذا المصدر مسجل بالفعل برقم ${duplicate.catalogCode}.`);
+    return;
+  }
+
   if (state.sourceDraft.mode === "url") {
-    const duplicate = findDuplicateSource(state.sources, state.sourceDraft);
-    if (duplicate) {
-      showToast(`هذا المصدر مسجل بالفعل برقم ${duplicate.catalogCode}.`);
-      return;
-    }
     const source = createManagedSource(state.sourceDraft);
     state.sources = [source, ...state.sources];
     saveSources(state.sources);
@@ -2853,194 +2181,111 @@ async function saveSourceFromForm(): Promise<void> {
     state.sourceDraft = createEmptySourceDraft();
     render();
     if (state.sourceStorageStatus === "متصل") await persistSourcesCentrally([source], "تم حفظ الرابط في السجل المركزي.");
-    else showToast("تم حفظ الرابط محليًا، وسيُنقل إلى السجل المركزي بعد الاتصال.");
+    else showToast("تم حفظ الرابط محليًا، وسيُنقل إلى السجل المركزي بعد تسجيل الدخول.");
     return;
   }
 
-  if (!googleDriveService || state.driveStatus !== "متصل" || state.sourceStorageStatus !== "متصل") {
-    showToast("سجّل الدخول واربط Google Drive قبل رفع ملف PDF.");
+  if (!centralSourceStore || state.sourceStorageStatus !== "متصل") {
+    showToast("سجّل دخول مالك المنصة أولًا لإضافة المصدر إلى المكتبة المركزية.");
     return;
   }
   if (!state.sourceFile) {
-    showToast(state.pendingSourceUpload ? "اختر ملف PDF نفسه لاستكمال الرفع." : "اختر ملف PDF قبل الرفع.");
+    showToast("اختر ملف PDF قبل الإضافة.");
     return;
   }
-
-  const pending = state.pendingSourceUpload;
-  const source = pending && pending.fileName === state.sourceFile.name
-    ? {
-        ...pending.source,
-        title: state.sourceDraft.title.trim(),
-        kind: state.sourceDraft.kind,
-        grade: state.sourceDraft.grade ?? pending.source.grade,
-        subjectId: state.sourceDraft.subjectId,
-        version: state.sourceDraft.version.trim(),
-        semester: state.sourceDraft.semester || "غير محدد",
-        fileName: state.sourceFile.name,
-        drivePath: buildSourceDrivePath(state.sourceDraft),
-        updatedAt: new Date().toISOString(),
-      }
-    : createManagedSource(state.sourceDraft);
-  const metadataDuplicate = findDuplicateSource(state.sources, state.sourceDraft);
-  if (!pending && metadataDuplicate) {
-    showToast(`هذا المصدر مسجل بالفعل برقم ${metadataDuplicate.catalogCode}.`);
-    return;
-  }
-
-  state.sourceUploadBusy = true;
-  state.sourceUploadProgress = pending?.fileSizeBytes ? Math.round((pending.bytesUploaded / pending.fileSizeBytes) * 100) : 0;
-  state.sourceUploadMessage = pending ? "جارٍ التحقق من آخر جزء مرفوع…" : "جارٍ حساب بصمة الملف وتجهيز المجلد…";
-  render();
-  try {
-    const uploaded = await googleDriveService.uploadPdfSource(
-      { ...source, subjectLabel: sourceSubjectLabel(source.subjectId) } as ManagedSource & { subjectLabel: string },
-      state.sourceFile,
-      updateSourceUploadProgress,
-    );
-    const contentDuplicate = uploaded.contentFingerprint ? findDuplicateContentSource(state.sources, uploaded.contentFingerprint) : undefined;
-    state.sources = [uploaded, ...state.sources.filter((item) => item.id !== uploaded.id && item.id !== contentDuplicate?.id)];
-    saveSources(state.sources);
-    state.pendingSourceUpload = null;
-    state.sourceUploadBusy = false;
-    state.sourceUploadProgress = 100;
-    state.sourceUploadMessage = "اكتمل الرفع والحفظ في Google Drive.";
-    state.sourceFormOpen = false;
-    state.sourceFile = null;
-    state.sourceDraft = createEmptySourceDraft();
-    const remoteSources = await centralSourceStore?.listSources();
-    if (remoteSources) { state.sources = remoteSources; saveSources(remoteSources); }
-    render();
-    showToast("تم رفع ملف PDF وحفظ سجله المركزي بنجاح.");
-  } catch (error) {
-    state.pendingSourceUpload = googleDriveService.getPendingUpload();
-    state.sourceUploadBusy = false;
-    state.sourceUploadMessage = error instanceof Error ? error.message : "تعذر رفع ملف PDF.";
-    render();
-    showToast(state.sourceUploadMessage);
-  }
-}
-
-function updateSourceUploadProgress(progress: SourceUploadProgress): void {
-  state.sourceUploadProgress = progress.percent;
-  state.sourceUploadMessage = progress.message;
-  state.pendingSourceUpload = googleDriveService?.getPendingUpload() ?? null;
-  const label = document.querySelector<HTMLElement>(".source-upload-progress strong");
-  const percent = document.querySelector<HTMLElement>(".source-upload-progress > div > span");
-  const bar = document.querySelector<HTMLElement>(".source-upload-progress .upload-progress-track span");
-  if (label) label.textContent = progress.message;
-  if (percent) percent.textContent = `${progress.percent}%`;
-  if (bar) bar.style.width = `${progress.percent}%`;
-}
-
-async function cancelPendingSourceUpload(): Promise<void> {
-  if (!googleDriveService) return;
-  if (!window.confirm("سيُلغى الرفع غير المكتمل فقط، ولن يُحذف أي مصدر مكتمل. هل تريد المتابعة؟")) return;
-  try {
-    await googleDriveService.cancelPendingUpload();
-    state.pendingSourceUpload = null;
-    state.sourceUploadMessage = "";
-    state.sourceUploadProgress = 0;
-    state.sourceFile = null;
-    state.sourceFormOpen = false;
-    render();
-    showToast("تم إلغاء جلسة الرفع غير المكتملة.");
-  } catch (error) {
-    showToast(error instanceof Error ? error.message : "تعذر إلغاء جلسة الرفع. أعد المحاولة.");
-  }
-}
-
-async function extractAndIndexSource(sourceId: string): Promise<void> {
-  const source = state.sources.find((item) => item.id === sourceId);
-  if (!source || source.mode !== "file" || !source.driveFileId) {
-    showToast("هذا المصدر لا يحتوي ملف PDF مرفوعًا قابلًا للاستخراج.");
-    return;
-  }
-  if (!googleDriveService || !centralSourceStore || state.driveStatus !== "متصل" || state.sourceStorageStatus !== "متصل") {
-    showToast("سجّل الدخول وتأكد من اتصال Google Drive قبل الفهرسة.");
-    return;
-  }
-  if (state.sourceIndexingId) {
+  if (state.sourceIndexingId || state.sourceUploadBusy) {
     showToast("انتظر اكتمال فهرسة المصدر الحالي أولًا.");
     return;
   }
 
-  const useOcr = source.extractionStatus === "يحتاج OCR"
-    || source.extractionStatus === "فشل"
-    || Boolean(source.extractionVersion?.startsWith("google-cloud-vision"));
-  const pendingOcr = source.extractionVersion?.startsWith("google-cloud-vision-ocr-pending") === true;
+  const file = state.sourceFile;
+  const now = new Date().toISOString();
+  const source = {
+    ...createManagedSource(state.sourceDraft),
+    contentFingerprint: await sha256Hex(file),
+    fileSizeBytes: file.size,
+    mimeType: file.type || "application/pdf",
+    extractionStatus: "جارٍ الاستخراج" as const,
+    extractionMessage: "جارٍ قراءة PDF مباشرة من جهازك…",
+    updatedAt: now,
+  };
+  const contentDuplicate = findDuplicateContentSource(state.sources, source.contentFingerprint);
+  if (contentDuplicate) {
+    showToast(`هذا الملف موجود بالفعل باسم «${contentDuplicate.title}».`);
+    return;
+  }
 
-  state.sourceIndexingId = sourceId;
-  state.sourceIndexingProgress = 1;
-  state.sourceIndexingMessage = useOcr ? "جارٍ تجهيز OCR العربي…" : "جارٍ تجهيز رابط PDF الآمن…";
-  state.sources = state.sources.map((item) => item.id === sourceId
-    ? { ...item, extractionStatus: "جارٍ الاستخراج", extractionMessage: state.sourceIndexingMessage }
-    : item);
+  state.sourceUploadBusy = true;
+  state.sourceUploadProgress = 5;
+  state.sourceUploadMessage = "جارٍ تسجيل المصدر وفهرسة PDF مباشرة…";
+  state.sourceIndexingId = source.id;
+  state.sourceIndexingProgress = 5;
+  state.sourceIndexingMessage = "جارٍ قراءة PDF مباشرة من جهازك…";
+  state.sources = [source, ...state.sources];
+  saveSources(state.sources);
   render();
 
   try {
-    const access = await googleDriveService.getPdfSourceAccess(sourceId);
-    let result: SourceExtractionResult;
-    if (useOcr) {
-      if (!pendingOcr && (source.extractionStatus === "مكتمل" || source.extractionStatus === "فشل")) {
-        await centralSourceStore.clearOcrPages(sourceId);
-      }
+    await centralSourceStore.upsertSources([source]);
+    let result = await extractPdfText(file, updateSourceIndexingProgress);
+    if (result.requiresOcr) {
+      state.sourceIndexingProgress = 35;
+      state.sourceIndexingMessage = "الصفحات مصورة؛ جارٍ تشغيل OCR العربي تلقائيًا…";
+      render();
+      await centralSourceStore.clearOcrPages(source.id);
       await centralSourceStore.updateExtractionState(
-        sourceId,
+        source.id,
         "جارٍ الاستخراج",
-        "جارٍ تشغيل OCR العربي عبر Google Cloud Vision مع حفظ كل صفحة للاستكمال بعد الانقطاع.",
-        "google-cloud-vision-ocr-pending-1",
+        "جارٍ تشغيل OCR العربي تلقائيًا داخل واثق.",
+        "gemini-ocr-pending-1",
       );
-      const existingPages = await centralSourceStore.listOcrPages(sourceId);
       result = await extractPdfWithArabicOcr(
-        sourceId,
-        access,
-        existingPages,
-        ({ sourceId: requestSourceId, pageNumber, totalPages, image }) => googleDriveService.ocrSourcePage(
-          requestSourceId,
-          pageNumber,
-          totalPages,
-          image,
-        ),
-        (progress) => updateSourceIndexingProgress(progress),
+        source.id,
+        file,
+        [],
+        ({ sourceId, pageNumber, totalPages, image }) => centralSourceStore.ocrSourcePage(sourceId, pageNumber, totalPages, image),
+        updateSourceIndexingProgress,
       );
-    } else {
-      await centralSourceStore.updateExtractionState(sourceId, "جارٍ الاستخراج", "جارٍ قراءة صفحات PDF واستخراج النص القابل للتحديد.");
-      result = await extractPdfText(access, updateSourceIndexingProgress);
     }
 
     state.sourceIndexingProgress = 96;
     state.sourceIndexingMessage = result.requiresOcr
-      ? result.method === "google-vision-ocr"
-        ? "اكتمل OCR، لكن النص الناتج لم يجتز بوابة الجودة العربية."
-        : result.quality.message
-      : `جارٍ حفظ ${result.chunks.length} مقطعًا في سجل الفهرسة…`;
+      ? "لم يجتز النص المستخرج بوابة الجودة؛ يحتاج ملفًا أوضح."
+      : `جارٍ حفظ ${result.chunks.length} مقطعًا في مكتبة واثق…`;
     render();
-    const saved = await centralSourceStore.saveSourceExtraction(sourceId, result);
+    const saved = await centralSourceStore.saveSourceExtraction(source.id, result);
     const remoteSources = await centralSourceStore.listSources();
     state.sources = remoteSources;
     saveSources(remoteSources);
+    state.sourceUploadProgress = 100;
+    state.sourceUploadMessage = "اكتملت إضافة المصدر.";
     state.sourceIndexingProgress = 100;
     state.sourceIndexingMessage = saved.requiresOcr
-      ? result.method === "google-vision-ocr"
-        ? "لم يجتز نص OCR بوابة الجودة؛ راجع جودة الملف أو أعد المسح بدقة أعلى."
-        : result.quality.message
-      : `${result.method === "google-vision-ocr" ? "اكتمل OCR والفهرسة" : "اكتملت الفهرسة"}: ${saved.pageCount} صفحة و${saved.chunkCount} مقطع.`;
+      ? "تعذر الحصول على نص موثوق من هذا الملف."
+      : `اكتملت الفهرسة: ${saved.pageCount} صفحة و${saved.chunkCount} مقطع.`;
+    state.sourceFormOpen = false;
+    state.sourceFile = null;
+    state.sourceDraft = createEmptySourceDraft();
     render();
     showToast(state.sourceIndexingMessage);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "تعذر استخراج نص PDF.";
-    await centralSourceStore.updateExtractionState(sourceId, "فشل", message).catch(() => undefined);
+    const message = error instanceof Error ? error.message : "تعذر فهرسة ملف PDF.";
+    await centralSourceStore.updateExtractionState(source.id, "فشل", message).catch(() => undefined);
     const remoteSources = await centralSourceStore.listSources().catch(() => null);
     if (remoteSources) { state.sources = remoteSources; saveSources(remoteSources); }
+    state.sourceUploadMessage = message;
     state.sourceIndexingMessage = message;
     render();
     showToast(message);
   } finally {
+    state.sourceUploadBusy = false;
     window.setTimeout(() => {
-      if (state.sourceIndexingId === sourceId) {
+      if (state.sourceIndexingId === source.id) {
         state.sourceIndexingId = "";
         state.sourceIndexingProgress = 0;
         state.sourceIndexingMessage = "";
+        state.sourceUploadProgress = 0;
+        state.sourceUploadMessage = "";
         render();
       }
     }, 900);
@@ -3048,6 +2293,8 @@ async function extractAndIndexSource(sourceId: string): Promise<void> {
 }
 
 function updateSourceIndexingProgress(progress: PdfExtractionProgress): void {
+  state.sourceUploadProgress = progress.percent;
+  state.sourceUploadMessage = progress.message;
   state.sourceIndexingProgress = progress.percent;
   state.sourceIndexingMessage = progress.message;
   const message = document.querySelector<HTMLElement>(".source-indexing-card p");
@@ -3057,22 +2304,6 @@ function updateSourceIndexingProgress(progress: PdfExtractionProgress): void {
   if (value) value.textContent = `${progress.percent}%`;
   if (bar) bar.style.width = `${progress.percent}%`;
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 function exportSourceRegistry(): void {
   const backup = createRegistryBackup(state.sources);
@@ -3109,39 +2340,14 @@ async function importSourceRegistry(file: File): Promise<void> {
 async function archiveSource(sourceId: string): Promise<void> {
   const source = state.sources.find((item) => item.id === sourceId);
   if (!source) return;
-  if (source.mode === "file" && source.driveFileId && googleDriveService && state.driveStatus === "متصل") {
-    try {
-      const updated = await googleDriveService.archiveSourceFile(sourceId);
-      state.sources = state.sources.map((item) => item.id === sourceId ? updated : item);
-      saveSources(state.sources);
-      render();
-      showToast("تم نقل الملف إلى أرشيف واثق دون حذفه.");
-      return;
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : "تعذر أرشفة ملف Drive.");
-      return;
-    }
-  }
-  updateSourceStatus(sourceId, "مؤرشف", "تمت أرشفة المصدر دون حذفه.");
+  updateSourceStatus(sourceId, "مؤرشف", "تمت أرشفة المصدر داخل واثق دون حذف بياناته المفهرسة.");
 }
 
 async function restoreSource(sourceId: string): Promise<void> {
   const source = state.sources.find((item) => item.id === sourceId);
   if (!source) return;
-  if (source.mode === "file" && source.driveFileId && googleDriveService && state.driveStatus === "متصل") {
-    try {
-      const updated = await googleDriveService.restoreSourceFile(sourceId);
-      state.sources = state.sources.map((item) => item.id === sourceId ? updated : item);
-      saveSources(state.sources);
-      render();
-      showToast("تمت استعادة الملف إلى مجلده الأصلي.");
-      return;
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : "تعذر استعادة ملف Drive.");
-      return;
-    }
-  }
-  updateSourceStatus(sourceId, "جاهز للفهرسة", "تمت استعادة المصدر إلى المكتبة.");
+  const targetStatus: SourceStatus = source.extractionStatus === "مكتمل" ? "مفهرس" : "جاهز للفهرسة";
+  updateSourceStatus(sourceId, targetStatus, "تمت استعادة المصدر إلى المكتبة.");
 }
 
 function updateSourceStatus(sourceId: string, status: SourceStatus, message: string): void {
@@ -3195,7 +2401,6 @@ async function signOutOwner(): Promise<void> {
   state.sourceStorageMessage = "تم تسجيل الخروج. تبقى النسخة المحلية متاحة على هذا الجهاز.";
   state.sourceStorageBusy = false;
   state.ownerEmail = "";
-  resetGoogleDriveState("يتطلب تسجيل الدخول", "سجّل دخول مالك المنصة أولًا، ثم اربط Google Drive مرة واحدة.");
   render();
 }
 
@@ -3222,7 +2427,6 @@ async function loadAndSyncCentralSources(): Promise<void> {
     state.ownerEmail = centralSourceStore.currentSession?.email ?? state.ownerEmail;
     render();
     showToast("تمت مزامنة سجل المصادر المركزي.");
-    void loadGoogleDriveStatus();
     if (state.draft.currentStep >= 3) {
       if (!isPlanComplete(state.draft) && state.draft.plan.length) {
         window.setTimeout(() => { void generateQuestionsForPlan(state.draft.plan); }, 0);
@@ -3270,115 +2474,6 @@ async function persistSourcesCentrally(sources: ManagedSource[], successMessage:
   }
 }
 
-function resetGoogleDriveState(
-  status: AppState["driveStatus"],
-  message: string,
-): void {
-  state.driveStatus = status;
-  state.driveMessage = message;
-  state.driveBusy = false;
-  state.driveRootFolderUrl = "";
-  state.driveFoldersReady = false;
-  state.driveFolders = [];
-}
-
-function applyGoogleDriveStatus(status: GoogleDriveStatus): void {
-  if (!status.connected) {
-    resetGoogleDriveState("غير متصل", "اربط حساب Google Drive الخاص بمالك المنصة لإنشاء مجلدات واثق الأساسية.");
-    return;
-  }
-  state.driveStatus = "متصل";
-  state.driveMessage = status.foldersReady ? "الاتصال والمجلدات الأساسية جاهزة." : "الاتصال قائم، ويلزم التحقق من المجلدات.";
-  state.driveBusy = false;
-  state.driveRootFolderUrl = status.rootFolderUrl;
-  state.driveFoldersReady = status.foldersReady;
-  state.driveFolders = status.folders;
-}
-
-async function connectGoogleDrive(): Promise<void> {
-  if (!googleDriveService || state.sourceStorageStatus !== "متصل") return;
-  state.driveBusy = true;
-  state.driveMessage = "جارٍ تجهيز صفحة موافقة Google…";
-  render();
-  try {
-    const authUrl = await googleDriveService.beginConnection();
-    window.location.assign(authUrl);
-  } catch (error) {
-    state.driveStatus = "خطأ";
-    state.driveMessage = error instanceof Error ? error.message : "تعذر بدء ربط Google Drive.";
-    state.driveBusy = false;
-    render();
-    showToast(state.driveMessage);
-  }
-}
-
-async function loadGoogleDriveStatus(): Promise<void> {
-  if (!googleDriveService) return;
-  if (!centralSourceStore?.currentSession || state.sourceStorageStatus !== "متصل") {
-    resetGoogleDriveState("يتطلب تسجيل الدخول", "سجّل دخول مالك المنصة أولًا، ثم اربط Google Drive مرة واحدة.");
-    render();
-    return;
-  }
-  state.driveBusy = true;
-  render();
-  try {
-    applyGoogleDriveStatus(await googleDriveService.getStatus());
-    render();
-  } catch (error) {
-    state.driveStatus = "خطأ";
-    state.driveMessage = error instanceof Error ? error.message : "تعذر قراءة حالة Google Drive.";
-    state.driveBusy = false;
-    render();
-  }
-}
-
-async function verifyGoogleDriveFolders(): Promise<void> {
-  if (!googleDriveService || state.driveStatus !== "متصل") return;
-  state.driveBusy = true;
-  render();
-  try {
-    applyGoogleDriveStatus(await googleDriveService.verifyFolders());
-    render();
-    showToast("تم التحقق من مجلدات واثق دون إنشاء نسخ مكررة.");
-  } catch (error) {
-    state.driveStatus = "خطأ";
-    state.driveMessage = error instanceof Error ? error.message : "تعذر التحقق من مجلدات Google Drive.";
-    state.driveBusy = false;
-    render();
-    showToast(state.driveMessage);
-  }
-}
-
-async function disconnectGoogleDrive(): Promise<void> {
-  if (!googleDriveService) return;
-  if (!window.confirm("سيُفصل اتصال Google Drive فقط، ولن تُحذف المجلدات أو الملفات. هل تريد المتابعة؟")) return;
-  state.driveBusy = true;
-  render();
-  try {
-    await googleDriveService.disconnect();
-    resetGoogleDriveState("غير متصل", "تم فصل الاتصال. بقيت مجلدات واثق وملفاتها في Google Drive دون حذف.");
-    render();
-    showToast("تم فصل Google Drive دون حذف أي ملف.");
-  } catch (error) {
-    state.driveStatus = "خطأ";
-    state.driveMessage = error instanceof Error ? error.message : "تعذر فصل Google Drive.";
-    state.driveBusy = false;
-    render();
-    showToast(state.driveMessage);
-  }
-}
-
-function consumeGoogleDriveCallback(): { state: "connected" | "error"; message: string } | null {
-  const url = new URL(window.location.href);
-  const result = url.searchParams.get("drive");
-  if (result !== "connected" && result !== "error") return null;
-  const message = url.searchParams.get("message") ?? "";
-  url.searchParams.delete("drive");
-  url.searchParams.delete("message");
-  window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
-  return { state: result, message };
-}
-
 function markCentralStorageError(error: unknown): void {
   state.sourceStorageStatus = "خطأ";
   state.sourceStorageMessage = error instanceof Error ? error.message : "تعذر الاتصال بالتخزين المركزي.";
@@ -3388,11 +2483,6 @@ function markCentralStorageError(error: unknown): void {
 }
 
 async function bootstrapCentralStorage(): Promise<void> {
-  const driveCallback = consumeGoogleDriveCallback();
-  if (driveCallback) {
-    state.view = "admin";
-    syncActiveView("admin", true);
-  }
   if (!centralSourceStore) {
     render();
     return;
@@ -3405,18 +2495,6 @@ async function bootstrapCentralStorage(): Promise<void> {
   }
   state.ownerEmail = session.email;
   await loadAndSyncCentralSources();
-  if (driveCallback?.state === "error") {
-    state.driveStatus = "خطأ";
-    state.driveMessage = driveCallback.message || "لم يكتمل ربط Google Drive.";
-    state.driveBusy = false;
-    render();
-    showToast(state.driveMessage);
-    return;
-  }
-  if (driveCallback?.state === "connected") {
-    await loadGoogleDriveStatus();
-    showToast("تم ربط Google Drive وإنشاء مجلدات واثق الأساسية.");
-  }
 }
 
 function renderTopSaveState(): void {

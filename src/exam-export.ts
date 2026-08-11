@@ -53,7 +53,7 @@ const EXPORT_STYLES = `
   body { margin: 0; font-family: Tahoma, Arial, sans-serif; color: #111; background: #fff; font-size: 13px; line-height: 1.75; }
   .export-document { width: 100%; max-width: 190mm; margin: 0 auto; }
   .paper-header { display: grid; grid-template-columns: 26mm 1fr; gap: 5mm; align-items: center; }
-  .ministry-mark { border: 1.5px solid #222; min-height: 20mm; display: grid; place-items: center; text-align: center; font-size: 10px; }
+  .ministry-mark, .wathiq-paper-mark { border: 1.5px solid #222; min-height: 20mm; display: grid; place-items: center; text-align: center; font-size: 12px; font-weight: 800; }
   .paper-header > div:last-child { display: grid; gap: 1mm; text-align: center; }
   .paper-header strong { font-size: 15px; }
   .paper-title { text-align: center; margin: 8mm 0 4mm; }
@@ -76,14 +76,7 @@ const EXPORT_STYLES = `
   .visual-heading { display: none; }
   .question-visual { margin: 0 auto; max-width: 165mm; }
   .question-visual svg, .question-visual-raster { display: block; width: 100%; height: auto; max-height: 70mm; margin: 0 auto; font-family: Tahoma, Arial, sans-serif; direction: ltr; }
-  .question-visual-context_scene svg, .question-visual-context_scene .question-visual-raster, .question-visual-context_scene .question-visual-hybrid { max-height: 52mm; }
-  .question-visual-hybrid { position: relative; width: 100%; aspect-ratio: 4 / 3; max-height: 70mm; overflow: hidden; background: #fff; }
-  .question-visual-deterministic-fallback { position: absolute; inset: 0; display: grid; place-items: center; }
-  .question-visual-deterministic-fallback svg { width: 100%; height: 100%; max-height: none; object-fit: contain; }
   .question-visual-illustrated { position: relative; width: 100%; aspect-ratio: 4 / 3; max-height: 70mm; overflow: hidden; background: #fff; }
-  .question-visual-composite { position: relative; width: 100%; aspect-ratio: 4 / 3; max-height: 70mm; overflow: hidden; background: #fff; }
-  .question-visual-overlay { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
-  .question-visual-overlay svg { width: 100%; height: 100%; max-height: none; object-fit: contain; }
   .question-visual-illustration { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; background: #fff; }
   .question-visual figcaption { display: none; text-align: center; font-size: 9px; margin-top: 1mm; }
   .qv-title { font-size: 16px; font-weight: 800; fill: #172b45; direction: rtl; unicode-bidi: plaintext; }
@@ -292,60 +285,11 @@ async function imageUrlToDataUrl(url: string): Promise<string> {
   });
 }
 
-async function dataUrlToImage(dataUrl: string): Promise<HTMLImageElement> {
-  const image = new Image();
-  image.decoding = "sync";
-  await new Promise<void>((resolve, reject) => {
-    image.onload = () => resolve();
-    image.onerror = () => reject(new Error("تعذر تجهيز الأصل البصري للتصدير."));
-    image.src = dataUrl;
-  });
-  return image;
-}
-
-async function compositeVisualToPngDataUrl(composite: HTMLElement): Promise<string> {
-  const sourceImage = composite.querySelector<HTMLImageElement>("img.question-visual-illustration");
-  const overlaySvg = composite.querySelector<SVGSVGElement>(".question-visual-overlay svg");
-  if (!sourceImage || !overlaySvg) throw new Error("الأصل البصري المركب غير مكتمل.");
-  const [baseDataUrl, overlayDataUrl] = await Promise.all([
-    imageUrlToDataUrl(sourceImage.src),
-    svgElementToPngDataUrl(overlaySvg),
-  ]);
-  const [baseImage, overlayImage] = await Promise.all([dataUrlToImage(baseDataUrl), dataUrlToImage(overlayDataUrl)]);
-  const width = 1280;
-  const height = 960;
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  const context = canvas.getContext("2d");
-  if (!context) throw new Error("المتصفح لا يدعم دمج طبقة الرسم العلمي.");
-  context.fillStyle = "#ffffff";
-  context.fillRect(0, 0, width, height);
-  const scale = Math.min(width / baseImage.naturalWidth, height / baseImage.naturalHeight);
-  const drawWidth = baseImage.naturalWidth * scale;
-  const drawHeight = baseImage.naturalHeight * scale;
-  context.drawImage(baseImage, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight);
-  context.drawImage(overlayImage, 0, 0, width, height);
-  return canvas.toDataURL("image/png");
-}
-
 export async function prepareWordHtml(html: string): Promise<string> {
   const parsed = new DOMParser().parseFromString(html, "text/html");
-  const composites = [...parsed.querySelectorAll<HTMLElement>(".question-visual-composite")];
-  for (const composite of composites) {
-    const dataUrl = await compositeVisualToPngDataUrl(composite);
-    const image = parsed.createElement("img");
-    image.src = dataUrl;
-    image.alt = composite.closest("figure")?.querySelector("figcaption")?.textContent ?? "رسم علمي مركب";
-    image.className = "question-visual-raster";
-    composite.replaceWith(image);
-  }
-
   const illustrations = [...parsed.querySelectorAll<HTMLImageElement>("img.question-visual-illustration")];
   for (const image of illustrations) {
     image.src = await imageUrlToDataUrl(image.src);
-    image.closest<HTMLElement>(".question-visual-illustrated, .question-visual-hybrid")
-      ?.querySelector(".question-visual-deterministic-fallback")?.remove();
   }
   const svgs = [...parsed.querySelectorAll("svg")];
   for (const svg of svgs) {

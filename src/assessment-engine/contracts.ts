@@ -1,114 +1,34 @@
 import type {
   AssessmentType,
+  CambridgeProgrammeId,
   CognitiveLevel,
   Difficulty,
   ItemDifficulty,
-  QuestionDesignPattern,
   QuestionType,
   QuestionVisualSpec,
-  QuestionVisualType,
-  ScientificItemModel,
 } from "../types.js";
 
 export const ASSESSMENT_ENGINE_SCHEMA_VERSION = 1 as const;
-export const ASSESSMENT_CONTRACT_VERSION = 1 as const;
-export const ASSESSMENT_BLUEPRINT_VERSION = 1 as const;
-
-export type AssessmentScenarioTarget =
-  | "scientific_abstract"
-  | "door_handle"
-  | "playground_seesaw"
-  | "wrench_tool"
-  | "bicycle_brake"
-  | "shopping_trolley"
-  | "school_bag"
-  | "water_tank"
-  | "solar_panel"
-  | "laboratory_setup"
-  | "road_safety";
-
-export type AssessmentStimulusTarget =
-  | "concise_text"
-  | "real_life_scene"
-  | "scientific_diagram"
-  | "data_table"
-  | "graph"
-  | "instrument"
-  | "experiment"
-  | "decision_case";
-
-export type AssessmentSkillTarget =
-  | "recognize"
-  | "apply"
-  | "calculate"
-  | "interpret"
-  | "compare"
-  | "evaluate"
-  | "investigate";
-
-export type ScientificContractKey =
-  | "moment"
-  | "force"
-  | "electrostatic"
-  | "pressure"
-  | "circuit"
-  | "optics"
-  | "instrument"
-  | "graph"
-  | "table"
-  | "process"
-  | "generic";
+export const ASSESSMENT_CONTRACT_VERSION = 3 as const;
+export const ASSESSMENT_BLUEPRINT_VERSION = 3 as const;
 
 export type AssessmentGenerationRunStatus =
-  | "queued"
-  | "running"
-  | "reviewing"
-  | "completed"
-  | "partial"
-  | "failed"
-  | "cancelled"
-  | "superseded";
+  | "queued" | "running" | "reviewing" | "completed" | "partial" | "failed" | "cancelled" | "superseded";
 
 export type AssessmentGenerationItemStatus =
-  | "queued"
-  | "grounding"
-  | "generating"
-  | "normalizing"
-  | "validating"
-  | "ready"
-  | "retry_pending"
-  | "failed"
-  | "cancelled"
-  | "superseded";
+  | "queued" | "grounding" | "generating" | "normalizing" | "validating" | "ready" | "retry_pending" | "failed" | "cancelled" | "superseded";
 
 export type AssessmentEngineErrorCode =
-  | "INVALID_BLUEPRINT"
-  | "INVALID_ITEM_CONTRACT"
-  | "STALE_PLAN"
-  | "STALE_SOURCE"
-  | "SOURCE_NOT_FOUND"
-  | "SOURCE_ACCESS_DENIED"
-  | "SOURCE_NOT_GROUNDED"
-  | "MODEL_TIMEOUT"
-  | "MODEL_RATE_LIMITED"
-  | "MODEL_UNAVAILABLE"
-  | "MODEL_INVALID_JSON"
-  | "MODEL_INCOMPLETE_CONTENT"
-  | "MODEL_SCIENTIFIC_MISMATCH"
-  | "MODEL_ASSESSMENT_MISMATCH"
-  | "GLOBAL_DUPLICATION"
-  | "CANCELLED_BY_USER"
-  | "SUPERSEDED_BY_NEW_RUN"
-  | "INTERNAL_ERROR";
+  | "INVALID_BLUEPRINT" | "INVALID_ITEM_CONTRACT" | "STALE_PLAN" | "STALE_SOURCE" | "SOURCE_NOT_FOUND"
+  | "SOURCE_ACCESS_DENIED" | "SOURCE_NOT_GROUNDED" | "MODEL_TIMEOUT" | "MODEL_RATE_LIMITED" | "MODEL_UNAVAILABLE"
+  | "MODEL_INVALID_JSON" | "MODEL_INCOMPLETE_CONTENT" | "MODEL_SCIENTIFIC_MISMATCH" | "MODEL_ASSESSMENT_MISMATCH"
+  | "GLOBAL_DUPLICATION" | "CANCELLED_BY_USER" | "SUPERSEDED_BY_NEW_RUN" | "INTERNAL_ERROR";
 
-export type AssessmentEngineRetryClass =
-  | "none"
-  | "transport_once"
-  | "content_once"
-  | "manual_source_refresh"
-  | "manual_authentication";
+export type AssessmentEngineRetryClass = "none" | "transport_once" | "content_once" | "manual_source_refresh" | "manual_authentication";
+export type AssessmentSourceMode = "global_curriculum" | "uploaded_source";
 
 export interface AssessmentSourceSnapshot {
+  mode: AssessmentSourceMode;
   sourceId: string;
   sourceTitle: string;
   sourceKind: string;
@@ -120,52 +40,30 @@ export interface AssessmentSourceSnapshot {
   extractionVersion: string;
 }
 
-/** مدخل نقي للنواة، مستقل عن عقود المحرك السابق. */
+/** الحد الأدنى الذي يملكه واثق قبل التأليف. المصادر المرفوعة اختيارية. */
 export interface AssessmentItemSeed {
   planItemId: string;
   lessonId: string;
   lessonLabel: string;
-  outcomeId: string;
-  outcomeLabel: string;
   questionType: QuestionType;
   cognitiveLevel: CognitiveLevel;
   difficultyLevel?: ItemDifficulty;
   marks: number;
-  styleTarget: QuestionDesignPattern;
-  visualTarget: QuestionVisualType;
-  scenarioTarget: AssessmentScenarioTarget;
-  stimulusTarget: AssessmentStimulusTarget;
-  skillTarget: AssessmentSkillTarget;
-  diversityKey: string;
-  sourceReferenceId: string;
-  scientificContractKey: ScientificContractKey;
-  scientificRequirements: string[];
+  sourceReferenceId?: string;
 }
 
-export interface AssessmentBlueprintItem {
+export interface AssessmentBlueprintItem extends Omit<AssessmentItemSeed, "sourceReferenceId"> {
   order: number;
-  planItemId: string;
-  lessonId: string;
-  lessonLabel: string;
-  outcomeId: string;
-  outcomeLabel: string;
-  questionType: QuestionType;
-  cognitiveLevel: CognitiveLevel;
-  difficultyLevel?: ItemDifficulty;
-  marks: number;
-  styleTarget: QuestionDesignPattern;
-  visualTarget: QuestionVisualType;
-  scenarioTarget: AssessmentScenarioTarget;
-  stimulusTarget: AssessmentStimulusTarget;
-  skillTarget: AssessmentSkillTarget;
-  diversityKey: string;
-  numericSeed: number;
-  scientificContractKey: ScientificContractKey;
-  scientificRequirements: string[];
   source: AssessmentSourceSnapshot;
 }
 
-export interface AssessmentBlueprint {
+export interface AssessmentCurriculumIdentity {
+  programmeId: CambridgeProgrammeId;
+  syllabusCode: string;
+  stageLabel: string;
+}
+
+export interface AssessmentBlueprint extends AssessmentCurriculumIdentity {
   engineSchemaVersion: typeof ASSESSMENT_ENGINE_SCHEMA_VERSION;
   blueprintVersion: typeof ASSESSMENT_BLUEPRINT_VERSION;
   draftId: string;
@@ -183,7 +81,7 @@ export interface AssessmentBlueprint {
   items: AssessmentBlueprintItem[];
 }
 
-export interface AssessmentItemContract {
+export interface AssessmentItemContract extends AssessmentCurriculumIdentity {
   engineSchemaVersion: typeof ASSESSMENT_ENGINE_SCHEMA_VERSION;
   contractVersion: typeof ASSESSMENT_CONTRACT_VERSION;
   draftId: string;
@@ -199,21 +97,10 @@ export interface AssessmentItemContract {
   difficulty: Difficulty;
   lessonId: string;
   lessonLabel: string;
-  outcomeId: string;
-  outcomeLabel: string;
   questionType: QuestionType;
   cognitiveLevel: CognitiveLevel;
   difficultyLevel?: ItemDifficulty;
   marks: number;
-  styleTarget: QuestionDesignPattern;
-  visualTarget: QuestionVisualType;
-  scenarioTarget: AssessmentScenarioTarget;
-  stimulusTarget: AssessmentStimulusTarget;
-  skillTarget: AssessmentSkillTarget;
-  diversityKey: string;
-  numericSeed: number;
-  scientificContractKey: ScientificContractKey;
-  scientificRequirements: string[];
   source: AssessmentSourceSnapshot;
   contractHash: string;
 }
@@ -226,7 +113,6 @@ export interface AssessmentModelContent {
   answer: string;
   rationale: string;
   markScheme: string[];
-  needsReview: boolean;
 }
 
 export interface AssessmentEvidenceAnchor {
@@ -242,84 +128,30 @@ export interface AssessmentGeneratedItemResult {
   content: AssessmentModelContent;
   evidence: AssessmentEvidenceAnchor;
   visual: QuestionVisualSpec;
-  scientificItem?: ScientificItemModel;
   model: string;
   generatedAt: string;
   requestId: string;
   durationMs: number;
 }
 
-export interface AssessmentGenerationStageTimings {
-  groundingMs: number;
-  modelMs: number;
-  normalizationMs: number;
-  validationMs: number;
-  totalMs: number;
-}
+export interface AssessmentGenerationStageTimings { groundingMs: number; modelMs: number; normalizationMs: number; validationMs: number; totalMs: number; }
 
 export interface AssessmentGenerationItemSnapshot {
-  id: string;
-  runId: string;
-  planItemId: string;
-  contractHash: string;
-  status: AssessmentGenerationItemStatus;
-  attemptCount: number;
-  maxAttempts: number;
-  errorCode: AssessmentEngineErrorCode | "";
-  errorMessage: string;
-  stageTimings: AssessmentGenerationStageTimings;
-  result?: AssessmentGeneratedItemResult;
-  startedAt: string;
-  completedAt: string;
-  updatedAt: string;
+  id: string; runId: string; planItemId: string; contractHash: string; status: AssessmentGenerationItemStatus;
+  attemptCount: number; maxAttempts: number; errorCode: AssessmentEngineErrorCode | ""; errorMessage: string;
+  stageTimings: AssessmentGenerationStageTimings; result?: AssessmentGeneratedItemResult;
+  startedAt: string; completedAt: string; updatedAt: string;
 }
 
 export interface AssessmentGenerationRunSnapshot {
-  id: string;
-  draftId: string;
-  generationEpoch: number;
-  planHash: string;
-  sourceSnapshotHash: string;
-  status: AssessmentGenerationRunStatus;
-  totalItems: number;
-  completedItems: number;
-  failedItems: number;
-  items: AssessmentGenerationItemSnapshot[];
-  startedAt: string;
-  completedAt: string;
-  updatedAt: string;
+  id: string; draftId: string; generationEpoch: number; planHash: string; sourceSnapshotHash: string;
+  status: AssessmentGenerationRunStatus; totalItems: number; completedItems: number; failedItems: number;
+  items: AssessmentGenerationItemSnapshot[]; startedAt: string; completedAt: string; updatedAt: string;
 }
 
-export const MODEL_ALLOWED_OUTPUT_FIELDS = Object.freeze([
-  "stimulus",
-  "text",
-  "options",
-  "answer",
-  "rationale",
-  "markScheme",
-  "needsReview",
-] as const);
-
+export const MODEL_ALLOWED_OUTPUT_FIELDS = Object.freeze(["stimulus", "text", "options", "answer", "rationale", "markScheme"] as const);
 export const MODEL_FORBIDDEN_OUTPUT_FIELDS = Object.freeze([
-  "planItemId",
-  "sourceEvidenceId",
-  "enrichmentEvidenceId",
-  "sourceSupport",
-  "enrichmentSupport",
-  "enrichmentSourceTitle",
-  "enrichmentSourceUrl",
-  "lessonId",
-  "sourceId",
-  "chunkIndex",
-  "visualTarget",
-  "visual",
-  "scientificItem",
-  "marks",
-  "questionType",
-  "questionForm",
-  "workingRequired",
-  "contractHash",
-  "model",
-  "generatedAt",
-  "requestId",
+  "planItemId", "sourceEvidenceId", "enrichmentEvidenceId", "sourceSupport", "enrichmentSupport", "enrichmentSourceTitle",
+  "enrichmentSourceUrl", "lessonId", "sourceId", "chunkIndex", "visualTarget", "visual", "scientificItem", "marks",
+  "questionType", "questionForm", "workingRequired", "contractHash", "model", "generatedAt", "requestId",
 ] as const);

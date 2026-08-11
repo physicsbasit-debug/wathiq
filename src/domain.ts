@@ -1,11 +1,16 @@
 import {
-  SCIENCE_ASSESSMENT_POLICY_ID,
+  CAMBRIDGE_ASSESSMENT_POLICY_ID,
+  assessmentPreset,
   assessmentTypeForTitle,
-  blueprintCounts,
-  blueprintMarks,
-  getOfficialAssessmentSpec,
   isExamTitleOption,
-} from "./assessment-policy.js";
+  suggestedCountsForMarks,
+} from "./cambridge-assessment.js";
+import {
+  defaultStageForProgramme,
+  isStageValidForProgramme,
+  subjectProfile,
+  syllabusCodeFor,
+} from "./cambridge-curriculum.js";
 import type {
   CognitiveLevel,
   Difficulty,
@@ -18,7 +23,7 @@ import type {
   SpecValidation,
 } from "./types.js";
 
-export const MIN_LESSON_TOPICS = 2;
+export const MIN_LESSON_TOPICS = 1;
 export const MAX_LESSON_TOPICS = 5;
 
 export const MARKS_BY_TYPE: Readonly<Record<keyof QuestionCounts, number>> = {
@@ -27,12 +32,11 @@ export const MARKS_BY_TYPE: Readonly<Record<keyof QuestionCounts, number>> = {
   long: 4,
 };
 
-export function getAcademicContext(date = new Date()): { academicYear: string; semester: string } {
+export function getAcademicYear(date = new Date()): string {
   const year = date.getFullYear();
   const month = date.getMonth() + 1;
   const academicStart = month >= 8 ? year : year - 1;
-  const semester = month >= 8 || month <= 1 ? "الأول" : "الثاني";
-  return { academicYear: `${academicStart}/${academicStart + 1}`, semester };
+  return `${academicStart}/${academicStart + 1}`;
 }
 
 export function toDateInputValue(date = new Date()): string {
@@ -43,36 +47,35 @@ export function toDateInputValue(date = new Date()): string {
 }
 
 export function createEmptyDraft(now = new Date()): ExamDraft {
-  const context = getAcademicContext(now);
+  const academicYear = getAcademicYear(now);
+  const programmeId = "primary" as const;
+  const grade = defaultStageForProgramme(programmeId);
+  const title: ExamTitleOption = "اختبار قصير";
+  const preset = assessmentPreset(title);
   return {
     id: `draft-${now.getTime()}`,
-    assessmentType: "اختبار قصير رسمي",
-    assessmentPolicyId: SCIENCE_ASSESSMENT_POLICY_ID,
-    grade: null,
-    subjectId: "",
-    unitId: "",
-    lessonIds: [],
-    outcomeIds: [],
-    lessonTopics: ["", ""],
+    assessmentType: assessmentTypeForTitle(title),
+    assessmentPolicyId: CAMBRIDGE_ASSESSMENT_POLICY_ID,
+    programmeId,
+    syllabusCode: syllabusCodeFor(programmeId, "science"),
+    grade,
+    subjectId: "science",
+    lessonTopics: [],
     topic: "",
     sourceReferences: [],
     sourceRetrievalVersion: "",
-    title: "الاختبار القصير الأول",
+    title,
     examDate: toDateInputValue(now),
-    school: "مدرسة الباسط للتعليم الأساسي",
-    directorate: "محافظة جنوب الباطنة",
-    academicYear: context.academicYear,
-    semester: context.semester,
-    durationMinutes: 40,
-    totalMarks: 10,
+    school: "",
+    academicYear,
+    durationMinutes: preset.durationMinutes,
+    totalMarks: preset.totalMarks,
     difficulty: "متوسط",
-    trustedEnrichmentEnabled: true,
-    visualEnhancementEnabled: true,
     visualJobs: {},
     generationMode: "progressive_items_v1",
     generationRunId: "",
     generationEpoch: 1,
-    counts: { mcq: 2, short: 3, long: 1 },
+    counts: { ...preset.counts },
     plan: [],
     selectedProposalByPlanItem: {},
     generationVersion: "",
@@ -85,15 +88,43 @@ export function createEmptyDraft(now = new Date()): ExamDraft {
   };
 }
 
-export function applyOfficialAssessmentTemplate(draft: ExamDraft): ExamDraft {
-  const spec = getOfficialAssessmentSpec(draft.grade, draft.title);
-  draft.assessmentType = assessmentTypeForTitle(draft.title);
-  draft.assessmentPolicyId = SCIENCE_ASSESSMENT_POLICY_ID;
+export function applyAssessmentPreset(draft: ExamDraft): ExamDraft {
+  const preset = assessmentPreset(draft.title);
+  draft.assessmentType = preset.assessmentType;
+  draft.assessmentPolicyId = CAMBRIDGE_ASSESSMENT_POLICY_ID;
+  draft.totalMarks = preset.totalMarks;
+  draft.durationMinutes = preset.durationMinutes;
+  draft.counts = { ...preset.counts };
   draft.difficulty = "متوسط";
-  if (!spec) return draft;
-  draft.totalMarks = spec.totalMarks;
-  draft.durationMinutes = spec.defaultDurationMinutes;
-  draft.counts = { ...spec.counts };
+  resetGeneratedState(draft);
+  return draft;
+}
+
+export function setExamTitle(draft: ExamDraft, title: ExamTitleOption): ExamDraft {
+  draft.title = title;
+  return applyAssessmentPreset(draft);
+}
+
+export function setCambridgeProgramme(draft: ExamDraft, programmeId: ExamDraft["programmeId"]): ExamDraft {
+  draft.programmeId = programmeId;
+  draft.grade = defaultStageForProgramme(programmeId);
+  draft.subjectId = programmeId === "igcse" ? "" : "science";
+  draft.syllabusCode = draft.subjectId ? syllabusCodeFor(programmeId, draft.subjectId) : "";
+  draft.lessonTopics = [];
+  draft.topic = "";
+  draft.sourceReferences = [];
+  resetGeneratedState(draft);
+  return draft;
+}
+
+export function setCambridgeSubject(draft: ExamDraft, subjectId: string): ExamDraft {
+  draft.subjectId = subjectId;
+  draft.syllabusCode = subjectId ? syllabusCodeFor(draft.programmeId, subjectId) : "";
+  resetGeneratedState(draft);
+  return draft;
+}
+
+function resetGeneratedState(draft: ExamDraft): void {
   draft.plan = [];
   draft.selectedProposalByPlanItem = {};
   draft.visualJobs = {};
@@ -104,19 +135,7 @@ export function applyOfficialAssessmentTemplate(draft: ExamDraft): ExamDraft {
   draft.generatedAt = "";
   draft.approvedAt = "";
   draft.status = "مسودة";
-  return draft;
 }
-
-export function applyOfficialShortTestTemplate(draft: ExamDraft): ExamDraft {
-  if (draft.title === "الاختبار النهائي") draft.title = "الاختبار القصير الأول";
-  return applyOfficialAssessmentTemplate(draft);
-}
-
-export function setExamTitle(draft: ExamDraft, title: ExamTitleOption): ExamDraft {
-  draft.title = title;
-  return applyOfficialAssessmentTemplate(draft);
-}
-
 
 export function approveExamDraft(draft: ExamDraft, approvedAt = new Date().toISOString()): ExamDraft {
   draft.status = "معتمد";
@@ -130,7 +149,6 @@ export function reopenExamDraft(draft: ExamDraft): ExamDraft {
   draft.approvedAt = "";
   return draft;
 }
-
 
 export function normalizeLessonTopics(values: readonly string[]): string[] {
   return values.map((value) => value.trim()).filter(Boolean);
@@ -171,93 +189,53 @@ function uniqueLessonTopics(values: readonly string[]): string[] {
 }
 
 export function computeMarks(counts: QuestionCounts): number {
-  return (
-    counts.mcq * MARKS_BY_TYPE.mcq +
-    counts.short * MARKS_BY_TYPE.short +
-    counts.long * MARKS_BY_TYPE.long
-  );
-}
-
-function countsEqual(left: QuestionCounts, right: Readonly<QuestionCounts>): boolean {
-  return left.mcq === right.mcq && left.short === right.short && left.long === right.long;
+  return counts.mcq * MARKS_BY_TYPE.mcq + counts.short * MARKS_BY_TYPE.short + counts.long * MARKS_BY_TYPE.long;
 }
 
 export function validateExamSetup(draft: ExamDraft): SpecValidation {
   const issues: SpecValidation["issues"] = [];
-  const officialSpec = getOfficialAssessmentSpec(draft.grade, draft.title);
-  const computedMarks = officialSpec ? blueprintMarks(officialSpec.blueprint) : computeMarks(draft.counts);
-
-  if (draft.grade === null) issues.push({ field: "grade", message: "اختر الصف الدراسي." });
-  if (!draft.subjectId) issues.push({ field: "subject", message: "اختر المادة." });
+  const computedMarks = computeMarks(draft.counts);
   const lessonTopics = normalizeLessonTopics(draft.lessonTopics);
   const uniqueLessons = uniqueLessonTopics(draft.lessonTopics);
-  if (lessonTopics.length < MIN_LESSON_TOPICS || lessonTopics.length > MAX_LESSON_TOPICS) {
-    issues.push({ field: "lessons", message: `أدخل من ${MIN_LESSON_TOPICS} إلى ${MAX_LESSON_TOPICS} دروس داخلة في الاختبار.` });
-  } else if (uniqueLessons.length !== lessonTopics.length) {
-    issues.push({ field: "lessons", message: "لا تكرر الدرس نفسه داخل الاختبار." });
-  }
-  if (!draft.topic.trim()) issues.push({ field: "topic", message: "أدخل الدروس الداخلة في الاختبار." });
-  if (draft.sourceReferences.length === 0) issues.push({ field: "sources", message: "لم يرتبط الاختبار بأي صفحة من المصادر المفهرسة." });
-  for (const lesson of uniqueLessons) {
-    if (!draft.sourceReferences.some((reference) => lessonTopicKey(reference.lessonTopic ?? "") === lessonTopicKey(lesson))) {
-      issues.push({ field: "sources", message: `لم يرتبط درس «${lesson}» بأي صفحة من المصدر.` });
-    }
-  }
-  if (!isExamTitleOption(draft.title)) issues.push({ field: "title", message: "اختر عنوان الاختبار من القائمة المعتمدة." });
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(draft.examDate)) issues.push({ field: "date", message: "اختر تاريخ الاختبار." });
-  if (draft.durationMinutes < 10) issues.push({ field: "duration", message: "الزمن يجب ألا يقل عن 10 دقائق." });
 
+  if (!isStageValidForProgramme(draft.programmeId, draft.grade)) {
+    issues.push({ field: "grade", message: "اختر مرحلة Cambridge صحيحة." });
+  }
+  if (!draft.subjectId || !subjectProfile(draft.programmeId, draft.subjectId)) {
+    issues.push({ field: "subject", message: "اختر مادة علوم متاحة في مسار Cambridge المحدد." });
+  }
+  if (lessonTopics.length < MIN_LESSON_TOPICS || lessonTopics.length > MAX_LESSON_TOPICS) {
+    issues.push({ field: "lessons", message: `أدخل من ${MIN_LESSON_TOPICS} إلى ${MAX_LESSON_TOPICS} موضوعات أو دروس.` });
+  } else if (uniqueLessons.length !== lessonTopics.length) {
+    issues.push({ field: "lessons", message: "لا تكرر الموضوع نفسه داخل الاختبار." });
+  }
+  if (!draft.topic.trim()) issues.push({ field: "topic", message: "أدخل موضوع الاختبار." });
+  if (!isExamTitleOption(draft.title)) issues.push({ field: "title", message: "اختر نوع الاختبار." });
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(draft.examDate)) issues.push({ field: "date", message: "اختر تاريخ الاختبار." });
+  if (draft.durationMinutes < 5 || draft.durationMinutes > 180) {
+    issues.push({ field: "duration", message: "اجعل زمن الاختبار بين 5 و180 دقيقة." });
+  }
+  if (draft.totalMarks < 5 || draft.totalMarks > 80) {
+    issues.push({ field: "marks", message: "اجعل الدرجة الكلية بين 5 و80 درجة." });
+  }
   const totalQuestions = draft.counts.mcq + draft.counts.short + draft.counts.long;
   if (totalQuestions === 0) issues.push({ field: "counts", message: "أضف سؤالًا واحدًا على الأقل." });
-
-  if (officialSpec) {
-    if (draft.assessmentPolicyId !== SCIENCE_ASSESSMENT_POLICY_ID) {
-      issues.push({ field: "policy", message: "المسودة لا تستخدم مرجع تقويم العلوم المعتمد." });
-    }
-    if (draft.totalMarks !== officialSpec.totalMarks) {
-      issues.push({ field: "marks", message: `${draft.title} للصف ${draft.grade} درجته ${officialSpec.totalMarks}.` });
-    }
-    if (totalQuestions < officialSpec.minItems || totalQuestions > officialSpec.maxItems) {
-      issues.push({ field: "counts", message: `عدد المفردات الرسمي للصف ${draft.grade} من ${officialSpec.minItems} إلى ${officialSpec.maxItems}.` });
-    }
-    if (!countsEqual(draft.counts, officialSpec.counts)) {
-      issues.push({ field: "counts", message: "أنواع المفردات لا تطابق القالب الرسمي المعتمد لهذا الصف." });
-    }
-  } else {
-    if (draft.totalMarks < 5) issues.push({ field: "marks", message: "الدرجة الكلية يجب ألا تقل عن 5 درجات." });
-    if (totalQuestions > 15) {
-      issues.push({ field: "counts", message: "يدعم التوليد حتى 15 مفردة في العملية الواحدة." });
-    }
-    if (computedMarks !== draft.totalMarks) {
-      issues.push({
-        field: "counts",
-        message: `مجموع درجات الأنواع المختارة هو ${computedMarks}، بينما الدرجة الكلية ${draft.totalMarks}.`,
-      });
-    }
+  if (totalQuestions > 30) issues.push({ field: "counts", message: "يدعم واثق حتى 30 مفردة في الاختبار الواحد." });
+  if (computedMarks !== draft.totalMarks) {
+    issues.push({ field: "counts", message: `مجموع درجات المفردات ${computedMarks}، بينما الدرجة الكلية ${draft.totalMarks}.` });
   }
 
-  const result: SpecValidation = {
-    valid: issues.length === 0,
-    issues,
-    computedMarks,
-  };
-  if (officialSpec && !countsEqual(draft.counts, officialSpec.counts)) {
-    result.suggestedCounts = { ...officialSpec.counts };
-  } else if (!officialSpec && computedMarks !== draft.totalMarks) {
-    result.suggestedCounts = suggestCountsForMarks(draft.totalMarks, draft.difficulty);
-  }
+  const expectedCode = draft.subjectId ? syllabusCodeFor(draft.programmeId, draft.subjectId) : "";
+  if (expectedCode && draft.syllabusCode !== expectedCode) draft.syllabusCode = expectedCode;
+  draft.assessmentPolicyId = CAMBRIDGE_ASSESSMENT_POLICY_ID;
+
+  const result: SpecValidation = { valid: issues.length === 0, issues, computedMarks };
+  if (computedMarks !== draft.totalMarks) result.suggestedCounts = suggestedCountsForMarks(draft.totalMarks, draft.difficulty);
   return result;
 }
 
 export function suggestCountsForMarks(totalMarks: number, difficulty: Difficulty): QuestionCounts {
-  const longTarget = difficulty === "متقدم" ? Math.max(1, Math.floor(totalMarks / 10)) : Math.floor(totalMarks / 12);
-  const longMarks = longTarget * MARKS_BY_TYPE.long;
-  const remainingAfterLong = Math.max(0, totalMarks - longMarks);
-  const shortTarget = Math.floor(remainingAfterLong / 4);
-  const shortMarks = shortTarget * MARKS_BY_TYPE.short;
-  const mcqTarget = Math.max(0, totalMarks - longMarks - shortMarks);
-
-  return { mcq: mcqTarget, short: shortTarget, long: longTarget };
+  return suggestedCountsForMarks(totalMarks, difficulty);
 }
 
 function cognitiveCycle(difficulty: Difficulty): CognitiveLevel[] {
@@ -274,32 +252,17 @@ function questionEntries(counts: QuestionCounts): Array<{ type: QuestionType; ma
   ];
 }
 
-function outcomeLabel(level: CognitiveLevel, topic: string): string {
-  if (level === "معرفة") return `يتذكر ويفهم المفاهيم الأساسية في ${topic}`;
-  if (level === "تطبيق") return `يطبق معارفه ومهاراته في ${topic}`;
-  return `يستدل ويبرر اعتمادًا على الأدلة في ${topic}`;
-}
-
 export function buildPlan(draft: ExamDraft): PlanItem[] {
   const lessons = uniqueLessonTopics(draft.lessonTopics);
   if (lessons.length < MIN_LESSON_TOPICS || lessons.length > MAX_LESSON_TOPICS) {
-    throw new Error(`تعذر بناء الخطة: يجب إدخال ${MIN_LESSON_TOPICS}-${MAX_LESSON_TOPICS} دروس مختلفة.`);
+    throw new Error(`تعذر بناء الخطة: أدخل ${MIN_LESSON_TOPICS}-${MAX_LESSON_TOPICS} موضوعات مختلفة.`);
   }
   syncDraftTopicFromLessons(draft);
-  if (!draft.sourceReferences.length) throw new Error("تعذر بناء الخطة دون مقاطع مصدر مرتبطة.");
-  const officialSpec = getOfficialAssessmentSpec(draft.grade, draft.title);
-  const entries = officialSpec
-    ? officialSpec.blueprint.map((item) => ({
-      type: item.questionType,
-      marks: item.marks,
-      level: item.cognitiveLevel,
-      difficultyLevel: item.difficultyLevel,
-    }))
-    : questionEntries(draft.counts).map((item, index) => ({
-      ...item,
-      level: cognitiveCycle(draft.difficulty)[index % cognitiveCycle(draft.difficulty).length] ?? "معرفة",
-      difficultyLevel: undefined,
-    }));
+  const cycle = cognitiveCycle(draft.difficulty);
+  const entries = questionEntries(draft.counts).map((entry, index) => ({
+    ...entry,
+    level: cycle[index % cycle.length] ?? "معرفة",
+  }));
 
   const referencesByLesson = new Map<string, ExamDraft["sourceReferences"]>();
   for (const lesson of lessons) referencesByLesson.set(lessonTopicKey(lesson), []);
@@ -308,34 +271,25 @@ export function buildPlan(draft: ExamDraft): PlanItem[] {
     const bucket = referencesByLesson.get(key);
     if (bucket) bucket.push(reference);
   }
-  for (const lesson of lessons) {
-    if (!(referencesByLesson.get(lessonTopicKey(lesson))?.length)) {
-      throw new Error(`تعذر بناء الخطة لأن درس «${lesson}» غير مرتبط بمصدر مفهرس.`);
-    }
-  }
-
   const referenceOffsets = new Map<string, number>();
+
   return entries.map((entry, index) => {
     const lessonIndex = index % lessons.length;
     const lesson = lessons[lessonIndex];
-    if (!lesson) throw new Error("تعذر توزيع مفردات الخطة على الدروس.");
+    if (!lesson) throw new Error("تعذر توزيع مفردات الخطة على الموضوعات.");
     const key = lessonTopicKey(lesson);
     const lessonReferences = referencesByLesson.get(key) ?? [];
     const offset = referenceOffsets.get(key) ?? 0;
-    const reference = lessonReferences[offset % lessonReferences.length];
-    if (!reference) throw new Error(`تعذر ربط درس «${lesson}» بمقطع مصدر.`);
-    referenceOffsets.set(key, offset + 1);
+    const reference = lessonReferences.length ? lessonReferences[offset % lessonReferences.length] : undefined;
+    if (reference) referenceOffsets.set(key, offset + 1);
     return {
       id: `plan-${index + 1}`,
-      lessonId: `lesson-${lessonIndex + 1}`,
+      lessonId: `topic-${lessonIndex + 1}`,
       lessonLabel: lesson,
-      outcomeId: `lesson-${lessonIndex + 1}-outcome-${index + 1}`,
-      outcomeLabel: outcomeLabel(entry.level, lesson),
       cognitiveLevel: entry.level,
-      ...(entry.difficultyLevel ? { difficultyLevel: entry.difficultyLevel } : {}),
       questionType: entry.type,
       marks: entry.marks,
-      sourceReferenceId: reference.id,
+      ...(reference ? { sourceReferenceId: reference.id } : {}),
       proposals: [],
     };
   });
@@ -351,9 +305,4 @@ export function isPlanComplete(draft: ExamDraft): boolean {
 export function selectedProposal(draft: ExamDraft, item: PlanItem): QuestionProposal | undefined {
   const proposalId = draft.selectedProposalByPlanItem[item.id];
   return item.proposals.find((proposal) => proposal.id === proposalId);
-}
-
-export function officialPlanCounts(draft: ExamDraft): QuestionCounts | null {
-  const spec = getOfficialAssessmentSpec(draft.grade, draft.title);
-  return spec ? blueprintCounts(spec.blueprint) : null;
 }

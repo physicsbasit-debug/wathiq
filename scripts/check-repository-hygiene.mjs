@@ -16,7 +16,6 @@ const allowedRootDirs = new Set([
   ".github",
   "docs",
   "node_modules",
-  "references",
   "scripts",
   "src",
   "supabase",
@@ -26,13 +25,11 @@ const allowedRootDirs = new Set([
 
 const allowedDocsFiles = new Set([
   "ARCHITECTURE.md",
-  "D4_LIVE_ACCEPTANCE.md",
   "DEPLOYMENT.md",
-  "DRIVE_SOURCE_LAYOUT.md",
   "HISTORY.md",
   "OPERATIONS.md",
+  "QUALITY_ACCEPTANCE.md",
   "REPOSITORY_MAINTENANCE.md",
-  "SCIENCE_ASSESSMENT_REFERENCE_2025_2026.md",
 ]);
 
 const forbiddenRootPatterns = [
@@ -46,6 +43,37 @@ const forbiddenRootPatterns = [
 ];
 
 const removed = [];
+
+const obsoleteRuntimePaths = [
+  "scripts/check-phase-3-0-readiness.mjs",
+  "src/google-drive.ts",
+  "src/question-generation.ts",
+  "src/assessment-generation-v2.ts",
+  "src/positional-toc.ts",
+  "src/toc-draft-builder.ts",
+  "src/toc-layout-ocr.ts",
+  "src/scientific-item.ts",
+  "src/assessment-engine/scientific-contracts.ts",
+  "src/assessment-engine/item-validation.ts",
+  "src/source-structure.ts",
+  "src/book-content-tree.ts",
+  "src/assessment-engine/source-grounding.ts",
+  "src/assessment-engine/normalization.ts",
+  "supabase/functions/google-drive-oauth",
+  "supabase/functions/generate-source-questions",
+];
+
+const obsoleteTestNames = new Set([
+  "assessment-generation-v2.test.mjs",
+  "gemini-generate-content-edge.test.mjs",
+  "google-drive.test.mjs",
+  "positional-toc.test.mjs",
+  "question-generation.test.mjs",
+  "toc-draft-builder.test.mjs",
+  "toc-layout-ocr-cache.test.mjs",
+  "version-assertions.mjs",
+  "source-structure.test.mjs",
+]);
 
 async function removeKnownObsoleteArtifacts() {
   const entries = await readdir(".");
@@ -72,6 +100,38 @@ async function removeKnownObsoleteArtifacts() {
     }
   } catch {
     // The validation pass below will report a missing docs directory if relevant.
+  }
+
+  for (const path of obsoleteRuntimePaths) {
+    try {
+      await stat(path);
+      await rm(path, { recursive: true, force: true });
+      removed.push(path);
+    } catch {
+      // Already absent.
+    }
+  }
+
+  try {
+    for (const name of await readdir("tests")) {
+      if (/^phase-/i.test(name) || obsoleteTestNames.has(name)) {
+        await rm(`tests/${name}`, { force: true });
+        removed.push(`tests/${name}`);
+      }
+    }
+  } catch {
+    // Validation and npm tests will expose a damaged tests directory.
+  }
+
+  try {
+    for (const name of await readdir("supabase")) {
+      if (/^phase_.*\.sql$/i.test(name)) {
+        await rm(`supabase/${name}`, { force: true });
+        removed.push(`supabase/${name}`);
+      }
+    }
+  } catch {
+    // Validation below will catch unexpected Supabase artifacts.
   }
 }
 
@@ -101,6 +161,25 @@ const docs = await readdir("docs");
 for (const name of docs) {
   if (!allowedDocsFiles.has(name)) failures.push(`unexpected documentation artifact: docs/${name}`);
 }
+
+for (const path of obsoleteRuntimePaths) {
+  try {
+    await stat(path);
+    failures.push(`obsolete runtime artifact: ${path}`);
+  } catch {
+    // Expected.
+  }
+}
+
+for (const name of await readdir("tests")) {
+  if (/^phase-/i.test(name) || obsoleteTestNames.has(name)) failures.push(`obsolete test artifact: tests/${name}`);
+}
+
+const supabaseEntries = await readdir("supabase");
+for (const name of supabaseEntries) {
+  if (/^phase_.*\.sql$/i.test(name)) failures.push(`obsolete SQL migration artifact: supabase/${name}`);
+}
+if (!supabaseEntries.includes("schema-current.sql")) failures.push("missing current Supabase schema: supabase/schema-current.sql");
 
 const gitCheck = spawnSync("git", ["rev-parse", "--is-inside-work-tree"], { encoding: "utf8" });
 if (gitCheck.status === 0 && gitCheck.stdout.trim() === "true") {

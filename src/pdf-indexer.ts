@@ -46,6 +46,8 @@ export interface PdfExtractionAccess {
   httpHeaders: Record<string, string>;
 }
 
+export type PdfExtractionInput = PdfExtractionAccess | File;
+
 export interface PdfExtractionProgress {
   pageNumber: number;
   totalPages: number;
@@ -336,20 +338,28 @@ export function buildExtractionResult(pageTexts: string[]): SourceExtractionResu
 }
 
 export async function extractPdfText(
-  access: PdfExtractionAccess,
+  input: PdfExtractionInput,
   onProgress?: (progress: PdfExtractionProgress) => void,
   loadPdfJs: PdfJsLoader = defaultPdfJsLoader,
 ): Promise<SourceExtractionResult> {
   const pdfjs = await loadPdfJs();
-  const loadingTask = pdfjs.getDocument({
-    url: access.url,
-    httpHeaders: access.httpHeaders,
-    withCredentials: false,
-    rangeChunkSize: 1024 * 1024,
-    disableAutoFetch: false,
-    disableStream: false,
-    isEvalSupported: false,
-  });
+  const loadingOptions = input instanceof File
+    ? {
+        data: new Uint8Array(await input.arrayBuffer()),
+        disableAutoFetch: false,
+        disableStream: false,
+        isEvalSupported: false,
+      }
+    : {
+        url: input.url,
+        httpHeaders: input.httpHeaders,
+        withCredentials: false,
+        rangeChunkSize: 1024 * 1024,
+        disableAutoFetch: false,
+        disableStream: false,
+        isEvalSupported: false,
+      };
+  const loadingTask = pdfjs.getDocument(loadingOptions);
   const document = await loadingTask.promise;
   if (!Number.isSafeInteger(document.numPages) || document.numPages <= 0) {
     throw new Error("ملف PDF لا يحتوي صفحات قابلة للقراءة.");

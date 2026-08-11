@@ -1,7 +1,7 @@
-[functions.google-drive-oauth]
+[functions.source-ocr]
 verify_jwt = false
 
-[functions.generate-source-questions]
+[functions.science-visual-generation]
 verify_jwt = false
 
 [functions.question-visual-jobs]

@@ -141,14 +141,14 @@ async function verifyGenerationPayload(
 ): Promise<void> {
   assertAllowedFields(blueprint, new Set([
     "engineSchemaVersion", "blueprintVersion", "draftId", "generationEpoch", "assessmentType",
-    "assessmentPolicyId", "grade", "subject", "topic", "difficulty", "totalMarks", "itemCount",
+    "assessmentPolicyId", "programmeId", "syllabusCode", "stageLabel", "grade", "subject", "topic", "difficulty", "totalMarks", "itemCount",
     "planHash", "sourceSnapshotHash", "items",
   ]), "مخطط التوليد");
   const draftId = requireText(blueprint.draftId, "معرف المسودة في المخطط غير صالح.", 120);
   const generationEpoch = requireInteger(blueprint.generationEpoch, "إزاحة التوليد غير صالحة.", 1, Number.MAX_SAFE_INTEGER);
   const planHash = requireHash(blueprint.planHash, "بصمة الخطة غير صالحة.");
   const sourceSnapshotHash = requireHash(blueprint.sourceSnapshotHash, "بصمة المصادر غير صالحة.");
-  if (blueprint.engineSchemaVersion !== 1 || blueprint.blueprintVersion !== 1) {
+  if (blueprint.engineSchemaVersion !== 1 || blueprint.blueprintVersion !== 3) {
     throw httpError("إصدار مخطط التوليد غير مدعوم.", 409);
   }
 
@@ -174,12 +174,15 @@ async function verifyGenerationPayload(
 
   const blueprintBase = {
     engineSchemaVersion: 1,
-    contractVersion: 1,
+    contractVersion: 3,
     draftId,
     generationEpoch,
     planHash,
     assessmentType: requireText(blueprint.assessmentType, "نوع الاختبار غير صالح.", 80),
     assessmentPolicyId: requireText(blueprint.assessmentPolicyId, "سياسة الاختبار غير صالحة.", 160),
+    programmeId: requireText(blueprint.programmeId, "برنامج Cambridge غير صالح.", 40),
+    syllabusCode: requireText(blueprint.syllabusCode, "رمز منهج Cambridge غير صالح.", 40),
+    stageLabel: requireText(blueprint.stageLabel, "مرحلة Cambridge غير صالحة.", 100),
     grade: requireInteger(blueprint.grade, "الصف الدراسي غير صالح.", 1, 12),
     subject: requireText(blueprint.subject, "المادة غير صالحة.", 120),
     topic: requireText(blueprint.topic, "موضوع الاختبار غير صالح.", 240),
@@ -205,21 +208,10 @@ async function verifyGenerationPayload(
       difficulty: blueprintBase.difficulty,
       lessonId: item.record.lessonId,
       lessonLabel: item.record.lessonLabel,
-      outcomeId: item.record.outcomeId,
-      outcomeLabel: item.record.outcomeLabel,
       questionType: item.record.questionType,
       cognitiveLevel: item.record.cognitiveLevel,
       ...(Object.hasOwn(item.record, "difficultyLevel") ? { difficultyLevel: item.record.difficultyLevel } : {}),
       marks: item.record.marks,
-      styleTarget: item.record.styleTarget,
-      visualTarget: item.record.visualTarget,
-      scenarioTarget: item.record.scenarioTarget,
-      stimulusTarget: item.record.stimulusTarget,
-      skillTarget: item.record.skillTarget,
-      diversityKey: item.record.diversityKey,
-      numericSeed: item.record.numericSeed,
-      scientificContractKey: item.record.scientificContractKey,
-      scientificRequirements: item.record.scientificRequirements,
       source: item.source,
     };
     const contractHash = requireHash(contract.contractHash, "بصمة عقد المفردة غير صالحة.");
@@ -240,40 +232,27 @@ function parseBlueprintItem(value: unknown, expectedOrder: number): {
 } {
   const record = requireRecord(value, "مفردة المخطط غير صالحة.");
   assertAllowedFields(record, new Set([
-    "order", "planItemId", "lessonId", "lessonLabel", "outcomeId", "outcomeLabel", "questionType",
-    "cognitiveLevel", "difficultyLevel", "marks", "styleTarget", "visualTarget", "scenarioTarget",
-    "stimulusTarget", "skillTarget", "diversityKey", "numericSeed", "scientificContractKey",
-    "scientificRequirements", "source",
+    "order", "planItemId", "lessonId", "lessonLabel", "questionType",
+    "cognitiveLevel", "difficultyLevel", "marks", "source",
   ]), "مفردة المخطط");
   const order = requireInteger(record.order, "ترتيب مفردة المخطط غير صالح.", 1, MAX_ITEMS);
   if (order !== expectedOrder) throw httpError("ترتيب مفردات المخطط غير متصل.", 400);
   const planItemId = requireText(record.planItemId, "معرف مفردة المخطط غير صالح.", 120);
   requireText(record.lessonId, "معرف الدرس غير صالح.", 160);
   requireText(record.lessonLabel, "اسم الدرس غير صالح.", 240);
-  requireText(record.outcomeId, "معرف الهدف غير صالح.", 160);
-  requireText(record.outcomeLabel, "نص الهدف غير صالح.", 500);
   requireText(record.questionType, "نوع السؤال غير صالح.", 100);
   requireText(record.cognitiveLevel, "المستوى المعرفي غير صالح.", 100);
   if (Object.hasOwn(record, "difficultyLevel")) requireText(record.difficultyLevel, "صعوبة المفردة غير صالحة.", 100);
   requireInteger(record.marks, "درجة المفردة غير صالحة.", 1, 20);
-  requireText(record.styleTarget, "نمط المفردة غير صالح.", 100);
-  requireText(record.visualTarget, "متطلب الرسم غير صالح.", 100);
-  requireText(record.scenarioTarget, "سياق المفردة غير صالح.", 100);
-  requireText(record.stimulusTarget, "نوع المثير غير صالح.", 100);
-  requireText(record.skillTarget, "المهارة غير صالحة.", 100);
-  requireText(record.diversityKey, "مفتاح التنوع غير صالح.", 240);
-  requireInteger(record.numericSeed, "البذرة العددية غير صالحة.", 0, 4_294_967_295);
-  requireText(record.scientificContractKey, "العقد العلمي غير صالح.", 100);
-  const requirements = requireArray(record.scientificRequirements, "المتطلبات العلمية غير صالحة.");
-  if (requirements.length > 12) throw httpError("عدد المتطلبات العلمية تجاوز الحد المسموح.", 400);
-  for (const requirement of requirements) requireText(requirement, "متطلب علمي غير صالح.", 240);
   const source = requireRecord(record.source, "لقطة مصدر المفردة غير صالحة.");
   const allowedSourceFields = new Set([
-    "sourceId", "sourceTitle", "sourceKind", "sourceReferenceId", "chunkIndex",
+    "mode", "sourceId", "sourceTitle", "sourceKind", "sourceReferenceId", "chunkIndex",
     "pageFrom", "pageTo", "contentHash", "extractionVersion",
   ]);
   const unknownSourceFields = Object.keys(source).filter((key) => !allowedSourceFields.has(key));
   if (unknownSourceFields.length) throw httpError("لقطة المصدر تحتوي حقولًا غير مسموحة.", 400);
+  const mode = requireText(source.mode, "وضع المصدر غير صالح.", 40);
+  if (mode !== "global_curriculum" && mode !== "uploaded_source") throw httpError("وضع المصدر غير مدعوم.", 400);
   requireText(source.sourceId, "معرف المصدر غير صالح.", 180);
   requireText(source.sourceTitle, "عنوان المصدر غير صالح.", 300);
   requireText(source.sourceKind, "نوع المصدر غير صالح.", 100);

@@ -1,4 +1,4 @@
-import type { ManagedSource, SourceExtractionResult, SourceExtractionStatus, SourceOcrPage, SourceStatus, SourceStructureNode, SourceStructureReviewStatus, SourceTextChunk } from "./types.js";
+import type { ManagedSource, SourceExtractionResult, SourceExtractionStatus, SourceOcrPage, SourceStatus, SourceTextChunk } from "./types.js";
 import { normalizeManagedSource } from "./source-registry.js";
 import type { WathiqRuntimeConfig } from "./runtime-config.js";
 
@@ -45,13 +45,6 @@ interface SourceRow {
   content_fingerprint: string | null;
   file_size_bytes: number | null;
   mime_type: string | null;
-  drive_file_id: string | null;
-  drive_parent_folder_id: string | null;
-  drive_original_parent_folder_id: string | null;
-  drive_web_view_link: string | null;
-  drive_md5_checksum: string | null;
-  upload_state: string | null;
-  uploaded_at: string | null;
   extraction_status: string | null;
   extraction_message: string | null;
   extracted_page_count: number | null;
@@ -71,23 +64,6 @@ interface SourceChunkRow {
   page_to: number;
   content: string;
   character_count: number;
-}
-
-interface SourceStructureRow {
-  owner_id: string;
-  source_id: string;
-  id: string;
-  parent_id: string | null;
-  node_type: string;
-  title: string;
-  page_start: number;
-  page_end: number;
-  order_index: number;
-  confidence: number;
-  review_status: string;
-  extraction_method: string;
-  created_at: string;
-  updated_at: string;
 }
 
 interface SourceOcrPageRow {
@@ -158,31 +134,26 @@ export function sourceToRow(source: ManagedSource, ownerId: string): SourceRow {
     owner_id: ownerId,
     catalog_code: source.catalogCode,
     fingerprint: source.fingerprint,
-    authority: source.authority,
+    // العمود المنشور تاريخيًا يقبل القيمة القديمة؛ نحولها عند الكتابة فقط ونخفيها عن نموذج واثق الحالي.
+    authority: source.authority === "مصدر مرفوع" ? "منهج عُماني" : source.authority,
     title: source.title,
     kind: source.kind,
     mode: source.mode,
     grade: source.grade,
     subject_id: source.subjectId,
-    version: source.version,
-    semester: source.semester ?? "غير محدد",
+    // Legacy database columns remain populated for compatibility with the deployed schema.
+    version: "current",
+    semester: "غير محدد",
     file_name: source.fileName ?? null,
     url: source.url ?? null,
     rights_confirmed: source.rightsConfirmed,
     status: source.status,
-    drive_path: source.drivePath,
+    drive_path: source.catalogPath,
     created_at: source.createdAt,
     updated_at: source.updatedAt,
     content_fingerprint: source.contentFingerprint ?? null,
     file_size_bytes: source.fileSizeBytes ?? null,
     mime_type: source.mimeType ?? null,
-    drive_file_id: source.driveFileId ?? null,
-    drive_parent_folder_id: source.driveParentFolderId ?? null,
-    drive_original_parent_folder_id: source.driveOriginalParentFolderId ?? null,
-    drive_web_view_link: source.driveWebViewLink ?? null,
-    drive_md5_checksum: source.driveMd5Checksum ?? null,
-    upload_state: source.uploadState ?? null,
-    uploaded_at: source.uploadedAt ?? null,
     extraction_status: source.extractionStatus ?? "لم يبدأ",
     extraction_message: source.extractionMessage ?? null,
     extracted_page_count: source.extractedPageCount ?? null,
@@ -208,11 +179,9 @@ export function rowToSource(row: unknown): ManagedSource | null {
     mode: value.mode,
     grade: value.grade,
     subjectId: value.subject_id,
-    version: value.version,
-    semester: value.semester,
     rightsConfirmed: value.rights_confirmed,
     status: value.status,
-    drivePath: value.drive_path,
+    catalogPath: value.drive_path,
     createdAt: value.created_at,
     updatedAt: value.updated_at,
   };
@@ -221,13 +190,6 @@ export function rowToSource(row: unknown): ManagedSource | null {
   const optionalStringFields: Array<[string, string]> = [
     ["content_fingerprint", "contentFingerprint"],
     ["mime_type", "mimeType"],
-    ["drive_file_id", "driveFileId"],
-    ["drive_parent_folder_id", "driveParentFolderId"],
-    ["drive_original_parent_folder_id", "driveOriginalParentFolderId"],
-    ["drive_web_view_link", "driveWebViewLink"],
-    ["drive_md5_checksum", "driveMd5Checksum"],
-    ["upload_state", "uploadState"],
-    ["uploaded_at", "uploadedAt"],
     ["extraction_status", "extractionStatus"],
     ["extraction_message", "extractionMessage"],
     ["extracted_language", "extractedLanguage"],
@@ -390,93 +352,6 @@ export class CentralSourceStore {
     });
   }
 
-  async listSourceStructure(sourceId: string): Promise<SourceStructureNode[]> {
-    const session = await this.requireSession();
-    const payload = await this.dataRequest(
-      `/rest/v1/source_structure_nodes?owner_id=eq.${encodeURIComponent(session.userId)}&source_id=eq.${encodeURIComponent(sourceId)}&select=*&order=order_index.asc`,
-      { method: "GET" },
-    );
-    if (!Array.isArray(payload)) throw new Error("تعذر قراءة هيكل المصدر.");
-    return payload.flatMap((raw) => {
-      if (typeof raw !== "object" || raw === null) return [];
-      const row = raw as Partial<SourceStructureRow>;
-      const validTypes = new Set(["وحدة", "درس", "موضوع", "نشاط", "مراجعة", "أسئلة"]);
-      const validStatuses = new Set(["مرشح", "معتمد"]);
-      if (
-        typeof row.id !== "string" ||
-        typeof row.source_id !== "string" ||
-        typeof row.node_type !== "string" || !validTypes.has(row.node_type) ||
-        typeof row.title !== "string" ||
-        typeof row.page_start !== "number" ||
-        typeof row.page_end !== "number" ||
-        typeof row.order_index !== "number" ||
-        typeof row.confidence !== "number" ||
-        typeof row.review_status !== "string" || !validStatuses.has(row.review_status) ||
-        typeof row.extraction_method !== "string" ||
-        typeof row.created_at !== "string" ||
-        typeof row.updated_at !== "string"
-      ) return [];
-      return [{
-        id: row.id,
-        sourceId: row.source_id,
-        parentId: typeof row.parent_id === "string" ? row.parent_id : null,
-        nodeType: row.node_type as SourceStructureNode["nodeType"],
-        title: row.title,
-        pageStart: row.page_start,
-        pageEnd: row.page_end,
-        orderIndex: row.order_index,
-        confidence: row.confidence,
-        reviewStatus: row.review_status as SourceStructureReviewStatus,
-        extractionMethod: row.extraction_method,
-        createdAt: row.created_at,
-        updatedAt: row.updated_at,
-      } satisfies SourceStructureNode];
-    });
-  }
-
-  async replaceSourceStructure(sourceId: string, nodes: SourceStructureNode[]): Promise<void> {
-    const session = await this.requireSession();
-    const ownerId = session.userId;
-    const encodedOwner = encodeURIComponent(ownerId);
-    const encodedSource = encodeURIComponent(sourceId);
-    if (nodes.length) {
-      const rows = nodes.map((node) => ({
-        owner_id: ownerId,
-        source_id: sourceId,
-        id: node.id,
-        parent_id: node.parentId,
-        node_type: node.nodeType,
-        title: node.title.trim(),
-        page_start: node.pageStart,
-        page_end: node.pageEnd,
-        order_index: node.orderIndex,
-        confidence: node.confidence,
-        review_status: node.reviewStatus,
-        extraction_method: node.extractionMethod,
-        created_at: node.createdAt,
-        updated_at: node.updatedAt,
-      }));
-      await this.dataRequest(
-        "/rest/v1/source_structure_nodes?on_conflict=owner_id,source_id,id",
-        {
-          method: "POST",
-          headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
-          body: JSON.stringify(rows),
-        },
-      );
-      const ids = nodes.map((node) => encodeURIComponent(node.id)).join(",");
-      await this.dataRequest(
-        `/rest/v1/source_structure_nodes?owner_id=eq.${encodedOwner}&source_id=eq.${encodedSource}&id=not.in.(${ids})`,
-        { method: "DELETE", headers: { Prefer: "return=minimal" } },
-      );
-      return;
-    }
-    await this.dataRequest(
-      `/rest/v1/source_structure_nodes?owner_id=eq.${encodedOwner}&source_id=eq.${encodedSource}`,
-      { method: "DELETE", headers: { Prefer: "return=minimal" } },
-    );
-  }
-
   async listOcrPages(sourceId: string): Promise<SourceOcrPage[]> {
     const session = await this.requireSession();
     const payload = await this.dataRequest(
@@ -540,7 +415,8 @@ export class CentralSourceStore {
       }
     }
 
-    const failedOcr = result.method === "google-vision-ocr" && result.requiresOcr;
+    const isOcr = result.method === "google-vision-ocr" || result.method === "gemini-ocr";
+    const failedOcr = isOcr && result.requiresOcr;
     const extractionStatus: SourceExtractionStatus = result.requiresOcr
       ? failedOcr ? "فشل" : "يحتاج OCR"
       : "مكتمل";
@@ -548,7 +424,7 @@ export class CentralSourceStore {
       ? "اكتمل تشغيل OCR، لكن النص الناتج لم يجتز بوابة الجودة العربية ويحتاج مراجعة يدوية أو ملفًا أوضح."
       : result.requiresOcr
         ? result.quality.message
-        : `${result.method === "google-vision-ocr" ? "تم OCR واستخراج" : "تم استخراج"} ${result.characterCount.toLocaleString("en-US")} حرف من ${result.pageCount} صفحة، واجتاز النص بوابة الجودة بدرجة ${result.quality.score} من 100.`;
+        : `${isOcr ? "تم OCR واستخراج" : "تم استخراج"} ${result.characterCount.toLocaleString("en-US")} حرف من ${result.pageCount} صفحة، واجتاز النص بوابة الجودة بدرجة ${result.quality.score} من 100.`;
     await this.dataRequest(
       `/rest/v1/source_registry?owner_id=eq.${encodedOwner}&id=eq.${encodedSource}`,
       {
@@ -564,9 +440,9 @@ export class CentralSourceStore {
           extraction_preview: result.requiresOcr ? null : result.preview,
           detected_headings: result.requiresOcr ? [] : result.detectedHeadings,
           extracted_at: now,
-          extraction_version: result.method === "google-vision-ocr"
-            ? `google-cloud-vision-ocr-1-${result.quality.qualityGateVersion}`
-            : `pdfjs-4.10.38-wathiq-2-${result.quality.qualityGateVersion}`,
+          extraction_version: isOcr
+            ? `gemini-ocr-1-${result.quality.qualityGateVersion}`
+            : `pdfjs-4.10.38-wathiq-3-${result.quality.qualityGateVersion}`,
           updated_at: now,
         }),
       },
@@ -578,6 +454,48 @@ export class CentralSourceStore {
       characterCount: result.characterCount,
       chunkCount: result.chunks.length,
       requiresOcr: result.requiresOcr,
+    };
+  }
+
+  async ocrSourcePage(
+    sourceId: string,
+    pageNumber: number,
+    totalPages: number,
+    image: Blob,
+  ): Promise<SourceOcrPage> {
+    const session = await this.requireSession();
+    const response = await this.fetcher(`${this.config.supabaseUrl}/functions/v1/source-ocr`, {
+      method: "POST",
+      headers: {
+        apikey: this.config.supabasePublishableKey,
+        Authorization: `Bearer ${session.accessToken}`,
+        "Content-Type": image.type || "image/jpeg",
+        "x-wathiq-source-id": sourceId,
+        "x-wathiq-page-number": String(pageNumber),
+        "x-wathiq-total-pages": String(totalPages),
+      },
+      body: image,
+    });
+    let payload: unknown = null;
+    try { payload = await response.json(); } catch { payload = null; }
+    if (response.status === 401) {
+      await this.refreshSession();
+      return this.ocrSourcePage(sourceId, pageNumber, totalPages, image);
+    }
+    if (!response.ok || typeof payload !== "object" || payload === null) {
+      throw new Error(errorMessage(payload, `تعذر OCR للصفحة ${pageNumber} (${response.status}).`));
+    }
+    const record = payload as Record<string, unknown>;
+    if (typeof record.content !== "string" || typeof record.processedAt !== "string") {
+      throw new Error(`استجابة OCR للصفحة ${pageNumber} غير صالحة.`);
+    }
+    return {
+      pageNumber,
+      content: record.content,
+      characterCount: typeof record.characterCount === "number" ? record.characterCount : record.content.length,
+      confidence: typeof record.confidence === "number" ? record.confidence : null,
+      provider: typeof record.provider === "string" ? record.provider : "gemini-ocr",
+      processedAt: record.processedAt,
     };
   }
 

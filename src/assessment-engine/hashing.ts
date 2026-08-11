@@ -24,16 +24,6 @@ export function stableStringify(value: unknown): string {
   return JSON.stringify(normalizeForStableJson(value, new WeakSet<object>()));
 }
 
-export function stableHash64(value: unknown): string {
-  const text = stableStringify(value);
-  let hash = 0xcbf29ce484222325n;
-  const prime = 0x100000001b3n;
-  for (const byte of new TextEncoder().encode(text)) {
-    hash ^= BigInt(byte);
-    hash = BigInt.asUintN(64, hash * prime);
-  }
-  return hash.toString(16).padStart(16, "0");
-}
 
 export async function sha256Hex(value: unknown): Promise<string> {
   const bytes = new TextEncoder().encode(stableStringify(value));
@@ -41,10 +31,6 @@ export async function sha256Hex(value: unknown): Promise<string> {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-export function deterministicNumericSeed(value: unknown): number {
-  const hash = stableHash64(value);
-  return Number.parseInt(hash.slice(-8), 16) >>> 0;
-}
 
 /** بصمة محتوى المصدر بعد توحيد فواصل الأسطر والمسافات النهائية. */
 export async function sourceContentHash(content: string): Promise<string> {

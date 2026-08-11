@@ -1,6 +1,4 @@
-import type { ManagedSource, SourceStructureNode } from "./types.js";
-
-export type LessonCatalogOrigin = "approved-structure" | "validated-structure" | "curated-book-tree" | "detected-heading";
+import type { ManagedSource } from "./types.js";
 
 export interface LessonCatalogOption {
   id: string;
@@ -9,10 +7,7 @@ export interface LessonCatalogOption {
   label: string;
   code: string;
   title: string;
-  pageStart?: number;
-  pageEnd?: number;
-  unitLabel?: string;
-  origin: LessonCatalogOrigin;
+  origin: "detected-heading";
 }
 
 function normalizeArabicDigits(value: string): string {
@@ -21,22 +16,22 @@ function normalizeArabicDigits(value: string): string {
     .replace(/[۰-۹]/g, (digit) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(digit)));
 }
 
-function normalizeSpaces(value: string): string {
-  return value.replace(/\s+/g, " ").trim();
-}
-
-function normalizeDash(value: string): string {
-  return value.replace(/[–—‑−]/g, "-");
+function normalizeText(value: string): string {
+  return normalizeArabicDigits(value)
+    .replace(/[–—‑−]/g, "-")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function normalizeKey(value: string): string {
-  return normalizeArabicDigits(normalizeDash(value))
+  return normalizeText(value)
     .replace(/[\u064B-\u065F\u0670\u06D6-\u06ED]/g, "")
     .replace(/ـ/g, "")
     .replace(/[أإآٱ]/g, "ا")
     .replace(/ى/g, "ي")
     .replace(/ؤ/g, "و")
     .replace(/ئ/g, "ي")
+    .replace(/ة/g, "ه")
     .replace(/[^\p{L}\p{N}-]+/gu, " ")
     .replace(/\s+/g, " ")
     .trim()
@@ -52,185 +47,46 @@ function stableHash(value: string): string {
   return (hash >>> 0).toString(36);
 }
 
-function cleanLessonTitle(value: string): string {
-  return normalizeSpaces(value)
-    .replace(/^(?:الدرس|درس)\s+/i, "")
-    .replace(/^[\s:：\-–—]+/, "")
-    .replace(/\s+(?:ص(?:فحة)?\s*)?[0-9٠-٩۰-۹]{1,3}\s*$/i, "")
+function parseLessonHeading(value: string): { code: string; title: string; label: string } | null {
+  const normalized = normalizeText(value).replace(/^(?:الدرس|درس)\s+/iu, "");
+  const numbered = normalized.match(/^([0-9]{1,2}\s*[-.]\s*[0-9]{1,2})\s*[:：\-]?\s*(.+)$/u);
+  if (!numbered) return null;
+  const code = numbered[1]!.replace(/\s+/g, "").replace(".", "-");
+  const title = numbered[2]!
+    .replace(/^[\s:：\-–—]+/u, "")
+    .replace(/\s+(?:ص(?:فحة)?\s*)?[0-9]{1,3}\s*$/iu, "")
     .trim();
-}
-
-function parseNumberedLesson(value: string): { code: string; title: string } | null {
-  const normalized = normalizeArabicDigits(normalizeDash(normalizeSpaces(value)));
-  const withoutPrefix = normalized.replace(/^(?:الدرس|درس)\s+/i, "");
-  const match = withoutPrefix.match(/^([0-9]{1,2}\s*[-.]\s*[0-9]{1,2})\s*[:：\-]?\s*(.+)$/u);
-  if (!match) return null;
-  const code = match[1]!.replace(/\s+/g, "").replace(".", "-");
-  const title = cleanLessonTitle(match[2]!);
   if (title.length < 3 || title.length > 140) return null;
-  if (/^(?:الوحدة|الفصل|المحتويات|الفهرس)\b/i.test(title)) return null;
-  return { code, title };
+  if (/^(?:الوحدة|الفصل|المحتويات|الفهرس)\b/iu.test(title)) return null;
+  return { code, title, label: `${code} ${title}` };
 }
 
-function optionFromApprovedNode(
-  source: ManagedSource,
-  node: SourceStructureNode,
-  unitById: Map<string, SourceStructureNode>,
-): LessonCatalogOption | null {
-  if (node.nodeType !== "درس") return null;
-  if (node.reviewStatus !== "معتمد" && node.confidence < 0.9) return null;
-  const parsed = parseNumberedLesson(node.title);
-  if (!parsed) return null;
-  const unit = node.parentId ? unitById.get(node.parentId) : undefined;
-  return {
-    id: `lesson-${source.id}-${node.id}`,
-    sourceId: source.id,
-    sourceTitle: source.title,
-    label: `${parsed.code} ${parsed.title}`,
-    code: parsed.code,
-    title: parsed.title,
-    pageStart: node.pageStart,
-    pageEnd: node.pageEnd,
-    ...(unit ? { unitLabel: unit.title } : {}),
-    origin: node.extractionMethod.startsWith("curated:")
-      ? "curated-book-tree"
-      : node.reviewStatus === "معتمد"
-        ? "approved-structure"
-        : "validated-structure",
-  };
-}
-
-const ARABIC_UNIT_ORDINALS = new Map<string, number>([
-  ["الاولى", 1],
-  ["الثانيه", 2],
-  ["الثالثه", 3],
-  ["الرابعه", 4],
-  ["الخامسه", 5],
-  ["السادسه", 6],
-  ["السابعه", 7],
-  ["الثامنه", 8],
-  ["التاسعه", 9],
-  ["العاشره", 10],
-  ["الحاديه عشره", 11],
-  ["الثانيه عشره", 12],
-]);
-
-function unitOrdinalFromTitle(value: string): number | null {
-  const normalized = normalizeKey(value);
-  const numeric = normalized.match(/(?:الوحده|وحده)\s+([0-9]{1,2})\b/u);
-  if (numeric) return Number(numeric[1]);
-  for (const [label, ordinal] of ARABIC_UNIT_ORDINALS) {
-    if (normalized.includes(`الوحده ${label}`) || normalized.includes(`وحده ${label}`)) return ordinal;
-  }
-  return null;
-}
-
-function optionFromDetectedHeading(
-  source: ManagedSource,
-  heading: string,
-  unitLabelByOrdinal: ReadonlyMap<number, string>,
-): LessonCatalogOption | null {
-  const parsed = parseNumberedLesson(heading);
-  if (!parsed) return null;
-  const unitOrdinal = Number(parsed.code.split("-")[0]);
-  const unitLabel = Number.isSafeInteger(unitOrdinal)
-    ? unitLabelByOrdinal.get(unitOrdinal) ?? `الوحدة ${unitOrdinal}`
-    : undefined;
-  return {
-    id: `lesson-${source.id}-heading-${stableHash(`${parsed.code}|${parsed.title}`)}`,
-    sourceId: source.id,
-    sourceTitle: source.title,
-    label: `${parsed.code} ${parsed.title}`,
-    code: parsed.code,
-    title: parsed.title,
-    ...(unitLabel ? { unitLabel } : {}),
-    origin: "detected-heading",
-  };
-}
-
-function originPriority(origin: LessonCatalogOrigin): number {
-  return ({
-    "approved-structure": 4,
-    "curated-book-tree": 3,
-    "validated-structure": 2,
-    "detected-heading": 1,
-  } as const)[origin];
-}
-
-function preferCatalogOption(current: LessonCatalogOption, candidate: LessonCatalogOption): LessonCatalogOption {
-  const priorityDifference = originPriority(candidate.origin) - originPriority(current.origin);
-  if (priorityDifference > 0) return candidate;
-  if (priorityDifference < 0) return current;
-  const currentHasPages = current.pageStart !== undefined;
-  const candidateHasPages = candidate.pageStart !== undefined;
-  if (candidateHasPages && !currentHasPages) return candidate;
-  if (currentHasPages && !candidateHasPages) return current;
-  return candidate.title.length > current.title.length ? candidate : current;
-}
-
-function lessonSortKey(option: LessonCatalogOption): [number, number, string] {
-  const parts = option.code.split("-").map((part) => Number(part));
-  const first = parts[0] ?? 999;
-  const second = parts[1] ?? 999;
-  return [Number.isFinite(first) ? first : 999, Number.isFinite(second) ? second : 999, option.title];
-}
-
-export function buildLessonCatalog(
-  sources: ManagedSource[],
-  structuresBySource: ReadonlyMap<string, SourceStructureNode[]> = new Map(),
-): LessonCatalogOption[] {
-  const options: LessonCatalogOption[] = [];
+/**
+ * Suggestions only. The user is always free to type lesson names manually.
+ * Wathiq does not depend on a hard-coded textbook tree or a fragile TOC parser.
+ */
+export function buildLessonCatalog(sources: readonly ManagedSource[]): LessonCatalogOption[] {
+  const unique = new Map<string, LessonCatalogOption>();
   for (const source of sources) {
-    const nodes = structuresBySource.get(source.id) ?? [];
-    const unitNodes = nodes.filter((node) => node.nodeType === "وحدة");
-    const unitById = new Map(unitNodes.map((node) => [node.id, node]));
-    const unitLabelByOrdinal = new Map<number, string>();
-    unitNodes.forEach((unit) => {
-      const ordinal = unitOrdinalFromTitle(unit.title);
-      if (ordinal !== null && !unitLabelByOrdinal.has(ordinal)) unitLabelByOrdinal.set(ordinal, unit.title);
-    });
-    const structured = nodes
-      .map((node) => optionFromApprovedNode(source, node, unitById))
-      .filter((option): option is LessonCatalogOption => option !== null);
-    structured.forEach((option) => {
-      const ordinal = Number(option.code.split("-")[0]);
-      if (option.unitLabel && Number.isSafeInteger(ordinal) && !unitLabelByOrdinal.has(ordinal)) {
-        unitLabelByOrdinal.set(ordinal, option.unitLabel);
-      }
-    });
-    options.push(...structured);
-
-    // لا نهمل العناوين المرقمة عند وجود شجرة جزئية؛ فهي تكمل الدروس التي سقطت من OCR أو الربط اليدوي.
     for (const heading of source.detectedHeadings ?? []) {
-      const option = optionFromDetectedHeading(source, heading, unitLabelByOrdinal);
-      if (option) options.push(option);
+      const parsed = parseLessonHeading(heading);
+      if (!parsed) continue;
+      const key = normalizeKey(`${source.id}|${parsed.label}`);
+      if (unique.has(key)) continue;
+      unique.set(key, {
+        id: `lesson-${source.id}-${stableHash(parsed.label)}`,
+        sourceId: source.id,
+        sourceTitle: source.title,
+        label: parsed.label,
+        code: parsed.code,
+        title: parsed.title,
+        origin: "detected-heading",
+      });
     }
   }
-
-  const unique = new Map<string, LessonCatalogOption>();
-  for (const option of options) {
-    // رمز الدرس هو الهوية المنهجية داخل المصدر؛ اختلاف الصياغة لا ينشئ درسًا مكررًا.
-    const key = normalizeKey(`${option.sourceId}|${option.code}`);
-    const existing = unique.get(key);
-    unique.set(key, existing ? preferCatalogOption(existing, option) : option);
-  }
-
   return [...unique.values()].sort((left, right) => {
-    const [leftA, leftB, leftTitle] = lessonSortKey(left);
-    const [rightA, rightB, rightTitle] = lessonSortKey(right);
-    return leftA - rightA || leftB - rightB || leftTitle.localeCompare(rightTitle, "ar");
+    const [la, lb] = left.code.split("-").map(Number);
+    const [ra, rb] = right.code.split("-").map(Number);
+    return (la ?? 999) - (ra ?? 999) || (lb ?? 999) - (rb ?? 999) || left.title.localeCompare(right.title, "ar");
   });
-}
-
-export function selectedLessonLabels(options: LessonCatalogOption[], selectedIds: string[]): string[] {
-  const byId = new Map(options.map((option) => [option.id, option]));
-  return selectedIds.flatMap((id) => {
-    const option = byId.get(id);
-    return option ? [option.label] : [];
-  });
-}
-
-export function selectedLessonIds(options: LessonCatalogOption[], labels: string[]): string[] {
-  const labelKeys = new Set(labels.map(normalizeKey));
-  return options.filter((option) => labelKeys.has(normalizeKey(option.label))).map((option) => option.id);
 }

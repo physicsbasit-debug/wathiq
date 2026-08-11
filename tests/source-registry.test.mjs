@@ -15,7 +15,6 @@ function sourceAt(title, fileName, time) {
   draft.grade = 10;
   draft.subjectId = "physics";
   draft.version = "2026";
-  draft.semester = "الفصل الأول";
   draft.fileName = fileName;
   return createManagedSource(draft, new Date(time));
 }
@@ -64,6 +63,6 @@ test("يرقّي سجلًا قديمًا بإضافة رقم وفهرسة داخ
   const normalized = normalizeManagedSource(legacy);
   assert.ok(normalized);
   assert.match(normalized.catalogCode, /^WTH-LEGACY-/);
-  assert.equal(normalized.authority, "منهج عُماني");
+  assert.equal(normalized.authority, "مصدر مرفوع");
   assert.ok(normalized.fingerprint);
 });
