@@ -525,6 +525,21 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
 .qv-data-table table { width: 100%; border-collapse: collapse; background: #fff; }
 .qv-data-table th, .qv-data-table td { border: 1px solid #aeb9c7; padding: 8px 10px; text-align: center; }
 .qv-data-table th { background: #eef3f8; color: var(--navy-deep); }
+.qv-semantic-body rect, .qv-semantic-body circle, .qv-semantic-object, .qv-semantic-box,
+.qv-circuit-symbol, .qv-fluid-container { fill: #fff; stroke: #172b45; stroke-width: 2; }
+.qv-semantic-arrow, .qv-semantic-link, .qv-ray, .qv-optical-axis, .qv-circuit-line,
+.qv-depth-line, .qv-fluid-surface { fill: none; stroke: #172b45; stroke-width: 2.2; }
+.qv-semantic-arrowhead, .qv-circuit-node, .qv-depth-point { fill: #172b45; }
+.qv-semantic-label, .qv-semantic-note, .qv-semantic-charge, .qv-circuit-letter, .qv-semantic-value {
+  fill: #172b45; font-size: 12px; font-weight: 700; direction: rtl; unicode-bidi: plaintext;
+}
+.qv-semantic-value { font-size: 11px; direction: ltr; unicode-bidi: isolate; }
+.qv-semantic-note { font-size: 11px; font-weight: 500; }
+.qv-semantic-charge { font-size: 28px; }
+.qv-circuit-letter { font-size: 17px; direction: ltr; }
+.qv-depth-line { stroke-dasharray: 5 5; stroke: #8393a6; }
+.qv-fluid-surface { stroke-width: 3; }
+.qv-semantic-vector text { paint-order: stroke; stroke: #fff; stroke-width: 3px; stroke-linejoin: round; }
 @media (max-width: 720px) {
   .visual-heading { display: grid; }
   .plan-shared-visual.compact { margin-inline: 8px; }

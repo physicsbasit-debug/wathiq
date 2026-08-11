@@ -30,6 +30,7 @@ export interface QuestionVisualVector {
   dx: number;
   dy: number;
   magnitude: number;
+  unit?: string;
 }
 
 export type QuestionVisualIllustrationAssetKind = "scene_2d";

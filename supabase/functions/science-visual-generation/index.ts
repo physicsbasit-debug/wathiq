@@ -11,7 +11,7 @@ const GEMINI_REVIEW_MODEL = Deno.env.get("GEMINI_REVIEW_MODEL")?.trim()
 const IMAGE_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_IMAGE_MODEL)}:generateContent`;
 const REVIEW_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_REVIEW_MODEL)}:generateContent`;
 const QUESTION_VISUAL_BUCKET = "wathiq-question-visuals";
-const VISUAL_PROMPT_VERSION = "wathiq-quality-reset-2d-v1";
+const VISUAL_PROMPT_VERSION = "wathiq-context-scene-v2";
 const IMAGE_GENERATION_TIMEOUT_MS = 70_000;
 const IMAGE_REVIEW_TIMEOUT_MS = 45_000;
 const MAX_IMAGE_BASE64_CHARACTERS = 18_000_000;
@@ -96,6 +96,9 @@ function parseVisualRequest(payload: Record<string, unknown>): VisualIllustratio
   const visual = requireRecord(payload.visual, "مواصفة الرسم العلمي غير صالحة.");
   const visualType = textField(visual.type);
   if (!visualType || visualType === "none") throw httpError("لا توجد حاجة إلى أصل بصري ثنائي الأبعاد لهذه المفردة.", 400);
+  if (visualType !== "context_scene") {
+    throw httpError("المخططات العلمية ذات البيانات والاتجاهات تُرسم حتميًا داخل واثق ولا تُرسل إلى نموذج الصور.", 409);
+  }
   return {
     action: "generate_visual_illustration",
     draftId: requireText(payload.draftId, "معرف المسودة غير صالح.", 140),
@@ -179,7 +182,8 @@ function renderModeForVisual(_visual: VisualRecord): RequiredMode {
 
 function imagePrompt(request: VisualIllustrationRequest, correction: string): string {
   return [
-    "أنشئ رسماً علمياً تعليمياً ثنائي الأبعاد عالي الجودة لورقة اختبار علوم مدرسية.",
+    "أنشئ مشهداً علمياً تعليمياً ثنائي الأبعاد عالي الجودة لورقة اختبار علوم مدرسية.",
+    "هذه الوظيفة للمشهد السياقي فقط، وليست لرسم مخطط قوى أو دائرة أو أشعة أو قيم عددية دقيقة؛ تلك المرئيات يرسمها واثق حتميًا من بيانات منظمة.",
     "الأولوية المطلقة: الدقة العلمية، ثم الوضوح، ثم الجمال البصري.",
     "الأسلوب: رسم كتاب مدرسي حديث ونظيف، 2D حقيقي، خلفية بيضاء، تباين واضح، مناسب للطباعة A4.",
     "لا تنسخ صورة منشورة أو شعاراً أو علامة تجارية. أنشئ رسماً أصلياً.",
@@ -404,9 +408,35 @@ function findOutputText(payload: unknown): string {
 }
 
 function parseJson(value: string): unknown {
-  const cleaned = value.trim().replace(/^```(?:json)?\s*/iu, "").replace(/\s*```$/u, "").trim();
+  const cleaned = value.replace(/^\uFEFF/u, "").trim().replace(/^```(?:json)?\s*/iu, "").replace(/\s*```$/u, "").trim();
   try { return JSON.parse(cleaned); }
-  catch { throw httpError("تعذر قراءة نتيجة المراجع العلمي.", 502); }
+  catch {
+    const start = cleaned.indexOf("{");
+    if (start >= 0) {
+      let depth = 0;
+      let quoted = false;
+      let escaped = false;
+      for (let index = start; index < cleaned.length; index += 1) {
+        const char = cleaned[index];
+        if (quoted) {
+          if (escaped) escaped = false;
+          else if (char === "\\") escaped = true;
+          else if (char === "\"") quoted = false;
+          continue;
+        }
+        if (char === "\"") { quoted = true; continue; }
+        if (char === "{") depth += 1;
+        else if (char === "}") {
+          depth -= 1;
+          if (depth === 0) {
+            try { return JSON.parse(cleaned.slice(start, index + 1)); }
+            catch { break; }
+          }
+        }
+      }
+    }
+    throw httpError("تعذر قراءة نتيجة المراجع العلمي.", 502);
+  }
 }
 
 async function requireUser(req: Request): Promise<string> {

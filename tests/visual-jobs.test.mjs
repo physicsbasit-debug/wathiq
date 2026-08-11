@@ -7,14 +7,14 @@ function draftWithVisual(type, extra = {}) {
     id: "draft-1", programmeId: "igcse", syllabusCode: "0625", grade: null,
     selectedProposalByPlanItem: { p1: "q1" },
     plan: [{
-      id: "p1", lessonLabel: "الكهرباء الساكنة",
-      visual: { type, requirement: "required", visualId: "v1", purpose: "توضيح", title: "مرئي", altText: "مرئي علمي", xAxisLabel: "", xAxisUnit: "", yAxisLabel: "", yAxisUnit: "", xMin: 0, xMax: 1, yMin: 0, yMax: 1, points: [], series: [], labels: ["أ", "ب", "ج"], values: [], components: [], annotations: [], tableColumns: [], tableRows: [], tableCells: [], hiddenCells: [], vectors: [], ...extra },
+      id: "p1", lessonLabel: "القوى والحركة",
+      visual: { type, requirement: "required", visualId: "v1", purpose: "توضيح", title: "مرئي", altText: "مرئي علمي", xAxisLabel: "", xAxisUnit: "", yAxisLabel: "", yAxisUnit: "", xMin: 0, xMax: 1, yMin: 0, yMax: 1, points: [], series: [], labels: [], values: [], components: [], annotations: [], tableColumns: [], tableRows: [], tableCells: [], hiddenCells: [], vectors: [], ...extra },
       proposals: [{ id: "q1", stimulus: "", text: "فسر العلاقة.", answer: "", reviewSupport: "سياق كامبريدج العالمي" }],
     }],
   };
 }
 
-test("المرئي التوضيحي ينشئ مهمة 2D حتى في IGCSE بلا رقم مرحلة", () => {
+test("المشهد السياقي فقط ينشئ مهمة صورة 2D", () => {
   const items = visualJobItems(draftWithVisual("context_scene"), "الفيزياء");
   assert.equal(items.length, 1);
   assert.equal(items[0].requiredMode, "replace");
@@ -22,11 +22,14 @@ test("المرئي التوضيحي ينشئ مهمة 2D حتى في IGCSE بل�
   assert.equal(items[0].stageLabel, "كامبريدج للشهادة الدولية العامة للتعليم الثانوي");
 });
 
-test("أي مرئي توضيحي يختاره المؤلف يدخل طابور الصور كجزء من المفردة", () => {
-  const draft = draftWithVisual("context_scene", { requirement: "helpful" });
-  const items = visualJobItems(draft, "الفيزياء");
-  assert.equal(items.length, 1);
-  assert.equal(items[0].requiredMode, "replace");
+test("مخطط القوى لا يرسل إلى نموذج الصور لأنه يرسم من البيانات المنظمة", () => {
+  const draft = draftWithVisual("force_diagram", {
+    vectors: [
+      { label: "الدفع", x: 50, y: 50, dx: 0, dy: 1, magnitude: 25000, unit: "N" },
+      { label: "الوزن", x: 50, y: 50, dx: 0, dy: -1, magnitude: 15000, unit: "N" },
+    ],
+  });
+  assert.equal(visualJobItems(draft, "الفيزياء").length, 0);
 });
 
 test("الرسم البياني الدقيق لا يرسل إلى نموذج الصور", () => {
@@ -37,7 +40,7 @@ test("الرسم البياني الدقيق لا يرسل إلى نموذج ا�
   assert.equal(visualJobItems(draft, "الفيزياء").length, 0);
 });
 
-test("VisualJobService يرسل المهمة إلى الوظيفة الدائمة", async () => {
+test("VisualJobService يرسل المشهد السياقي إلى الوظيفة الدائمة", async () => {
   const calls = [];
   const service = new VisualJobService(
     { supabaseUrl: "https://example.supabase.co", supabasePublishableKey: "sb_publishable_test" },

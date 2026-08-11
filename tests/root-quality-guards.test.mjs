@@ -84,14 +84,16 @@ test("منطق التأليف يلتزم بأنواع المفردات الرس�
   assert.match(worker, /لا تجعل جميع الأسئلة القصيرة من نوع اذكر\/عرّف/);
 });
 
-test("قرار المرئي ثنائي بسيط: المؤلف يطلبه عند فائدته فينشأ مباشرة بلا تصنيف ضرورة ثلاثي", async () => {
+test("قرار المرئي يبقى بسيطًا لكن البيانات العلمية الدقيقة تستخدم مخططًا دلاليًا لا صورة حرة", async () => {
   const worker = await text("supabase/functions/assessment-generation-worker/index.ts");
   assert.match(worker, /وظّف المخططات والرسومات والجداول والرسوم البيانية عندما تساهم فعلًا في الإجابة أو توضيح السؤال أو جزء منه/);
   assert.match(worker, /لا توجد حصة صور مفروضة ولا تصنيف ضرورة ثلاثي/);
   assert.doesNotMatch(worker, /visualRequirement/);
   assert.doesNotMatch(worker, /enum: \["none", "helpful", "required"\]/);
+  assert.match(worker, /force_diagram/);
+  assert.match(worker, /رسم القوى لا يحمل كل القيم العددية الواردة في السؤال/);
+  assert.match(worker, /illustration_2d فقط للمشهد السياقي/);
   assert.match(worker, /const requested = visual\.mode !== "none"/);
-  assert.match(worker, /requirement: requested \? "required" : "none"/);
 });
 test("ورقة الطالب لا تعرض رسائل فشل الأصول البصرية ولا العبارة النظامية الداخلية", async () => {
   const app = await text("src/app.ts");

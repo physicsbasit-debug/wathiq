@@ -51,6 +51,12 @@ const STRUCTURED_EXACT_VISUAL_TYPES = new Set<QuestionVisualType>([
   "bar_chart",
   "data_table",
   "instrument_scale",
+  "pressure_diagram",
+  "circuit_diagram",
+  "electrostatic_diagram",
+  "ray_diagram",
+  "force_diagram",
+  "flow_diagram",
 ]);
 
 const VISUAL_LABELS: Record<QuestionVisualType, string> = {
@@ -184,6 +190,7 @@ function cleanVectors(value: unknown): QuestionVisualVector[] {
       dx: record.dx as number,
       dy: record.dy as number,
       magnitude: record.magnitude as number,
+      unit: cleanText(record.unit, 16),
     }];
   }).slice(0, 8);
 }
@@ -275,9 +282,41 @@ export function validateQuestionVisualSpec(spec: QuestionVisualSpec): void {
   if (spec.requirement === "none") throw new Error("المرئي الموجود يحتاج تصنيف helpful أو required.");
   if (!spec.title || !spec.altText) throw new Error("المرئي التعليمي يحتاج عنوانًا ووصفًا بديلًا.");
 
-  // Illustrative science visuals are validated by the independent multimodal reviewer after generation.
-  // الواجهة لا تستنتج هندسة علمية برسومات يدوية؛ الأصل التوضيحي يأتي من مسار ثنائي الأبعاد المدقق.
+  // المشهد السياقي الحر فقط يذهب إلى نموذج الصور. أما المخططات العلمية فترسم من بيانات دلالية صريحة.
   if (!STRUCTURED_EXACT_VISUAL_TYPES.has(spec.type)) return;
+
+  if (spec.type === "force_diagram") {
+    if (!spec.vectors.length || spec.vectors.length > 8) throw new Error("رسم القوى يحتاج متجه قوة واحدًا على الأقل.");
+    if (spec.vectors.some((vector) => !vector.label || (!vector.dx && !vector.dy) || vector.magnitude < 0)) {
+      throw new Error("متجهات القوى تحتاج تسمية واتجاهًا وقيمة صالحة.");
+    }
+    return;
+  }
+
+  if (spec.type === "circuit_diagram") {
+    if (spec.components.length < 2) throw new Error("رسم الدائرة يحتاج مكونين على الأقل.");
+    return;
+  }
+
+  if (spec.type === "electrostatic_diagram") {
+    if (spec.labels.length < 2) throw new Error("رسم الكهرباء الساكنة يحتاج جسمين مسميين على الأقل.");
+    return;
+  }
+
+  if (spec.type === "ray_diagram") {
+    if (!spec.vectors.length) throw new Error("رسم الأشعة يحتاج مسار شعاع واحدًا على الأقل.");
+    return;
+  }
+
+  if (spec.type === "pressure_diagram") {
+    if (spec.labels.length < 2) throw new Error("رسم الضغط يحتاج موضعين أو عنصرين واضحين على الأقل.");
+    return;
+  }
+
+  if (spec.type === "flow_diagram") {
+    if (spec.labels.length < 2) throw new Error("مخطط التسلسل يحتاج مرحلتين على الأقل.");
+    return;
+  }
 
   if (spec.type === "line_graph") {
     validateAxes(spec);
@@ -424,8 +463,118 @@ function renderInstrumentScale(spec: QuestionVisualSpec): string {
   return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}"><text x="${width / 2}" y="32" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text><line x1="${left}" y1="132" x2="${width - right}" y2="132" class="qv-axis"/>${ticks.join("")}<line x1="${readingX}" y1="78" x2="${readingX}" y2="145" class="qv-reading"/><text x="${readingX}" y="64" class="qv-point-label" text-anchor="middle">${escapeXml(numberLabel(reading))}</text></svg>`;
 }
 
+
+function vectorCaption(vector: QuestionVisualVector): string {
+  const value = vector.magnitude > 0 ? ` ${numberLabel(vector.magnitude)}${vector.unit ? ` ${vector.unit}` : ""}` : "";
+  return `${vector.label}${value}`.trim();
+}
+
+function renderForceDiagram(spec: QuestionVisualSpec): string {
+  const width = 720;
+  const height = 420;
+  const cx = 360;
+  const cy = 225;
+  const maxMagnitude = Math.max(1, ...spec.vectors.map((vector) => Math.abs(vector.magnitude)));
+  const markerId = `arrow-${escapeXml(spec.visualId || "force")}`;
+  const vectors = spec.vectors.map((vector, index) => {
+    const length = 72 + 92 * Math.min(1, Math.abs(vector.magnitude) / maxMagnitude);
+    const norm = Math.hypot(vector.dx, vector.dy) || 1;
+    const ux = vector.dx / norm;
+    const uy = vector.dy / norm;
+    const startX = Number.isFinite(vector.x) && vector.x >= 0 && vector.x <= 100 ? 110 + (vector.x / 100) * 500 : cx;
+    const startY = Number.isFinite(vector.y) && vector.y >= 0 && vector.y <= 100 ? 90 + (vector.y / 100) * 250 : cy;
+    const endX = startX + ux * length;
+    const endY = startY - uy * length;
+    const mostlyVertical = Math.abs(uy) > Math.abs(ux) * 1.4;
+    const labelX = mostlyVertical ? endX : endX + (ux >= 0 ? 12 : -12);
+    const labelY = mostlyVertical ? endY + (uy >= 0 ? -18 : 26) : endY - 10;
+    const anchor = mostlyVertical ? "middle" : ux >= 0 ? "start" : "end";
+    const value = vector.magnitude > 0 ? `${numberLabel(vector.magnitude)}${vector.unit ? ` ${vector.unit}` : ""}` : "";
+    return `<g class="qv-semantic-vector qv-semantic-vector-${index}"><line x1="${startX}" y1="${startY}" x2="${endX}" y2="${endY}" class="qv-semantic-arrow" marker-end="url(#${markerId})"/><text x="${labelX}" y="${labelY}" class="qv-semantic-label" text-anchor="${anchor}">${escapeXml(vector.label)}</text>${value ? `<text x="${labelX}" y="${labelY + 16}" class="qv-semantic-value" text-anchor="${anchor}">${escapeXml(value)}</text>` : ""}</g>`;
+  }).join("");
+  const note = spec.annotations[0] ? `<text x="${width / 2}" y="${height - 24}" class="qv-semantic-note" text-anchor="middle">${escapeXml(spec.annotations[0])}</text>` : "";
+  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}"><defs><marker id="${markerId}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" class="qv-semantic-arrowhead"/></marker></defs><text x="${width / 2}" y="30" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text><g class="qv-semantic-body"><rect x="300" y="190" width="120" height="70" rx="12"/><circle cx="325" cy="272" r="13"/><circle cx="395" cy="272" r="13"/></g>${vectors}${note}</svg>`;
+}
+
+function renderFlowDiagram(spec: QuestionVisualSpec): string {
+  const width = 720;
+  const height = 320;
+  const labels = spec.labels.slice(0, 6);
+  const gap = 18;
+  const boxWidth = Math.min(150, (width - 80 - gap * Math.max(0, labels.length - 1)) / Math.max(1, labels.length));
+  const total = labels.length * boxWidth + Math.max(0, labels.length - 1) * gap;
+  const start = (width - total) / 2;
+  const boxes = labels.map((label, index) => {
+    const x = start + index * (boxWidth + gap);
+    const arrow = index < labels.length - 1 ? `<line x1="${x + boxWidth}" y1="160" x2="${x + boxWidth + gap - 4}" y2="160" class="qv-semantic-link" marker-end="url(#flow-arrow)"/>` : "";
+    return `<g><rect x="${x}" y="118" width="${boxWidth}" height="84" rx="12" class="qv-semantic-box"/><text x="${x + boxWidth / 2}" y="158" class="qv-semantic-label" text-anchor="middle">${escapeXml(label)}</text>${arrow}</g>`;
+  }).join("");
+  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}"><defs><marker id="flow-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" class="qv-semantic-arrowhead"/></marker></defs><text x="${width / 2}" y="30" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text>${boxes}</svg>`;
+}
+
+function renderElectrostaticDiagram(spec: QuestionVisualSpec): string {
+  const width = 720;
+  const height = 340;
+  const left = spec.labels[0] || "الجسم 1";
+  const right = spec.labels[1] || "الجسم 2";
+  const leftCharge = spec.annotations[0] || "";
+  const rightCharge = spec.annotations[1] || "";
+  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}"><text x="${width / 2}" y="30" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text><circle cx="235" cy="170" r="68" class="qv-semantic-object"/><circle cx="485" cy="170" r="68" class="qv-semantic-object"/><text x="235" y="165" class="qv-semantic-charge" text-anchor="middle">${escapeXml(leftCharge)}</text><text x="485" y="165" class="qv-semantic-charge" text-anchor="middle">${escapeXml(rightCharge)}</text><text x="235" y="265" class="qv-semantic-label" text-anchor="middle">${escapeXml(left)}</text><text x="485" y="265" class="qv-semantic-label" text-anchor="middle">${escapeXml(right)}</text></svg>`;
+}
+
+function renderRayDiagram(spec: QuestionVisualSpec): string {
+  const width = 720;
+  const height = 380;
+  const markerId = `ray-${escapeXml(spec.visualId || "ray")}`;
+  const rays = spec.vectors.map((vector) => {
+    const x1 = 70 + Math.max(0, Math.min(100, vector.x)) / 100 * 580;
+    const y1 = 70 + Math.max(0, Math.min(100, vector.y)) / 100 * 240;
+    const norm = Math.hypot(vector.dx, vector.dy) || 1;
+    const x2 = x1 + (vector.dx / norm) * 180;
+    const y2 = y1 - (vector.dy / norm) * 180;
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" class="qv-ray" marker-end="url(#${markerId})"/><text x="${(x1 + x2) / 2}" y="${(y1 + y2) / 2 - 10}" class="qv-semantic-label" text-anchor="middle">${escapeXml(vector.label)}</text>`;
+  }).join("");
+  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}"><defs><marker id="${markerId}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" class="qv-semantic-arrowhead"/></marker></defs><text x="${width / 2}" y="30" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text><line x1="70" y1="190" x2="650" y2="190" class="qv-optical-axis"/>${rays}</svg>`;
+}
+
+function circuitSymbol(component: string, x: number, y: number): string {
+  if (component === "battery") return `<g transform="translate(${x} ${y})"><line x1="-10" y1="-22" x2="-10" y2="22" class="qv-circuit-line"/><line x1="10" y1="-14" x2="10" y2="14" class="qv-circuit-line"/><text x="0" y="46" class="qv-semantic-label" text-anchor="middle">بطارية</text></g>`;
+  if (component === "lamp") return `<g transform="translate(${x} ${y})"><circle r="24" class="qv-circuit-symbol"/><line x1="-14" y1="-14" x2="14" y2="14" class="qv-circuit-line"/><line x1="14" y1="-14" x2="-14" y2="14" class="qv-circuit-line"/><text x="0" y="48" class="qv-semantic-label" text-anchor="middle">مصباح</text></g>`;
+  if (component === "resistor") return `<g transform="translate(${x} ${y})"><rect x="-30" y="-13" width="60" height="26" class="qv-circuit-symbol"/><text x="0" y="43" class="qv-semantic-label" text-anchor="middle">مقاومة</text></g>`;
+  if (component === "motor") return `<g transform="translate(${x} ${y})"><circle r="24" class="qv-circuit-symbol"/><text x="0" y="6" class="qv-circuit-letter" text-anchor="middle">M</text><text x="0" y="48" class="qv-semantic-label" text-anchor="middle">محرك</text></g>`;
+  if (component === "ammeter" || component === "voltmeter") { const letter = component === "ammeter" ? "A" : "V"; const label = component === "ammeter" ? "أميتر" : "فولتميتر"; return `<g transform="translate(${x} ${y})"><circle r="24" class="qv-circuit-symbol"/><text x="0" y="6" class="qv-circuit-letter" text-anchor="middle">${letter}</text><text x="0" y="48" class="qv-semantic-label" text-anchor="middle">${label}</text></g>`; }
+  if (component === "switch_open" || component === "switch_closed") { const closed = component === "switch_closed"; return `<g transform="translate(${x} ${y})"><circle cx="-24" cy="0" r="4" class="qv-circuit-node"/><circle cx="24" cy="0" r="4" class="qv-circuit-node"/><line x1="-20" y1="0" x2="${closed ? 20 : 12}" y2="${closed ? 0 : -20}" class="qv-circuit-line"/><text x="0" y="43" class="qv-semantic-label" text-anchor="middle">مفتاح</text></g>`; }
+  return "";
+}
+
+function renderCircuitDiagram(spec: QuestionVisualSpec): string {
+  const width = 720;
+  const height = 400;
+  const components = spec.components.slice(0, 8);
+  const count = components.length;
+  const spacing = 540 / Math.max(1, count);
+  const symbols = components.map((component, index) => circuitSymbol(component, 100 + spacing * (index + 0.5), 130)).join("");
+  const wire = `<path d="M 80 130 H 640 V 285 H 80 Z" class="qv-circuit-line"/>`;
+  const note = spec.annotations[0] ? `<text x="360" y="345" class="qv-semantic-note" text-anchor="middle">${escapeXml(spec.annotations[0])}</text>` : "";
+  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}"><text x="${width / 2}" y="30" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text>${wire}${symbols}${note}</svg>`;
+}
+
+function renderPressureDiagram(spec: QuestionVisualSpec): string {
+  const width = 720;
+  const height = 400;
+  const labels = spec.labels.slice(0, 4);
+  const values = spec.values.slice(0, labels.length);
+  const marks = labels.map((label, index) => {
+    const y = 120 + index * (190 / Math.max(1, labels.length - 1));
+    const value = values[index];
+    return `<line x1="180" y1="${y}" x2="540" y2="${y}" class="qv-depth-line"/><circle cx="360" cy="${y}" r="8" class="qv-depth-point"/><text x="565" y="${y + 4}" class="qv-semantic-label">${escapeXml(label)}${value !== undefined ? `: ${escapeXml(numberLabel(value))}` : ""}</text>`;
+  }).join("");
+  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}"><text x="${width / 2}" y="30" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text><rect x="170" y="80" width="380" height="250" rx="8" class="qv-fluid-container"/><line x1="170" y1="110" x2="550" y2="110" class="qv-fluid-surface"/>${marks}</svg>`;
+}
+
 export function isAiIllustrationEligible(spec: QuestionVisualSpec): boolean {
-  return spec.type !== "none" && !STRUCTURED_EXACT_VISUAL_TYPES.has(spec.type);
+  // الصورة الحرة مخصصة للمشهد السياقي فقط؛ البيانات والعلاقات العلمية الدقيقة ترسم حتميًا.
+  return spec.type === "context_scene";
 }
 
 export interface QuestionVisualAssetRequirement {
@@ -477,7 +626,19 @@ export function renderQuestionVisualSvg(spec: QuestionVisualSpec): string {
       ? renderBarChart(spec)
       : spec.type === "data_table"
         ? renderDataTable(spec)
-        : renderInstrumentScale(spec);
+        : spec.type === "instrument_scale"
+          ? renderInstrumentScale(spec)
+          : spec.type === "force_diagram"
+            ? renderForceDiagram(spec)
+            : spec.type === "flow_diagram"
+              ? renderFlowDiagram(spec)
+              : spec.type === "electrostatic_diagram"
+                ? renderElectrostaticDiagram(spec)
+                : spec.type === "ray_diagram"
+                  ? renderRayDiagram(spec)
+                  : spec.type === "circuit_diagram"
+                    ? renderCircuitDiagram(spec)
+                    : renderPressureDiagram(spec);
   return `<figure class="question-visual question-visual-${spec.type} question-visual-structured-exact" data-visual-id="${escapeXml(spec.visualId ?? "")}" data-visual-mode="structured-exact" data-visual-asset-kind="structured"><div class="question-visual-structured">${body}</div><figcaption>${escapeXml(spec.altText)}</figcaption></figure>`;
 }
 

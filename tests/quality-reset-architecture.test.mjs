@@ -65,20 +65,19 @@ test("عقد التوليد لا يحمل قوالب تأليف أو أهداف�
   assert.doesNotMatch(worker, /needsReview\s*:/);
 });
 
-test("المرئيات التوضيحية 2D فقط ولا توجد مولدات خطية قديمة في التشغيل أو التصدير", async () => {
+test("المرئيات العلمية الدقيقة ترسم من بيانات منظمة والمشهد السياقي وحده يستخدم نموذج الصور", async () => {
   const visual = await text("src/question-visual.ts");
   const edge = await text("supabase/functions/science-visual-generation/index.ts");
-  const styles = await text("src/styles.css");
-  const exporter = await text("src/exam-export.ts");
-  assert.match(visual, /لا يوجد رسم خطي احتياطي/);
+  const worker = await text("supabase/functions/assessment-generation-worker/index.ts");
+  assert.match(visual, /return spec\.type === "context_scene"/);
+  assert.match(visual, /renderForceDiagram/);
+  assert.match(visual, /renderCircuitDiagram/);
+  assert.match(visual, /renderRayDiagram/);
+  assert.match(worker, /force_diagram/);
+  assert.match(worker, /القيم والتسميات والاتجاهات/);
+  assert.match(edge, /المخططات العلمية ذات البيانات والاتجاهات تُرسم حتميًا داخل واثق/);
   assert.match(edge, /gemini-3\.1-flash-image/);
-  assert.match(edge, /scientificRelationshipCorrect/);
-  assert.match(edge, /noScientificContradiction/);
-  assert.match(edge, /noExtraScientificObjects/);
-  for (const fossil of ["qv-context-object", "qv-force-body", "qv-charged-object", "question-visual-2d-vector"]) {
-    assert.doesNotMatch(styles, new RegExp(fossil));
-    assert.doesNotMatch(exporter, new RegExp(fossil));
-  }
+  assert.match(edge, /wathiq-context-scene-v2/);
 });
 
 test("مسار الصور يحمل هوية كامبريدج ويعمل أيضًا في IGCSE بلا رقم مرحلة", async () => {
