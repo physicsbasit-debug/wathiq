@@ -45,7 +45,7 @@
 ## الفحص
 
 ```bash
-npm install --no-audit --no-fund
+npm install --no-package-lock --no-audit --no-fund
 npm run check
 ```
 

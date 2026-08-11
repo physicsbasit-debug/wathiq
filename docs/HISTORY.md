@@ -1,3 +1,10 @@
+
+## 0.3.1 — CI hygiene fix
+
+- ثُبتت `actions/checkout@v6` في فحص واثق والنشر.
+- تثبيت الاعتماديات في GitHub Actions لا ينشئ `package-lock.json` غير المتتبع.
+- لا تغيير في منطق Cambridge-first أو التوليد أو Supabase.
+
 # التاريخ المختصر
 
 ## 0.3.0 — Cambridge Core Purge
