@@ -26,7 +26,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: إعداد Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "22"
 
@@ -37,7 +37,6 @@ jobs:
         env:
           WATHIQ_SUPABASE_URL: ${{ vars.WATHIQ_SUPABASE_URL }}
           WATHIQ_SUPABASE_PUBLISHABLE_KEY: ${{ vars.WATHIQ_SUPABASE_PUBLISHABLE_KEY }}
-          WATHIQ_GOOGLE_OAUTH_CLIENT_ID: ${{ vars.WATHIQ_GOOGLE_OAUTH_CLIENT_ID }}
         run: npm run build
 
       - name: إعداد GitHub Pages
