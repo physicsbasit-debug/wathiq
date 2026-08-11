@@ -25,7 +25,8 @@ export interface AssessmentGenerationWorkerHealth {
   worker: string;
   engineSchemaVersion: number;
   contractVersion: number;
-  model: string;
+  authorModel: string;
+  reviewModel: string;
   requestId: string;
 }
 
@@ -46,7 +47,8 @@ export class AssessmentGenerationWorkerService {
     const record = asRecord(await this.post({ action: "health" }));
     if (!record || record.ok !== true || record.worker !== "assessment-generation-worker"
       || typeof record.engineSchemaVersion !== "number" || typeof record.contractVersion !== "number"
-      || typeof record.model !== "string" || typeof record.requestId !== "string") {
+      || typeof record.authorModel !== "string" || typeof record.reviewModel !== "string"
+      || typeof record.requestId !== "string") {
       throw new Error("استجابة عامل توليد المفردات غير صالحة.");
     }
     return record as unknown as AssessmentGenerationWorkerHealth;

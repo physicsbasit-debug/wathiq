@@ -40,6 +40,26 @@ test("عميل الدورات يقرأ حالة D4 الدائمة ويرسل ج�
   assert.equal(calls[0].init.headers.Authorization, "Bearer token");
 });
 
+test("فحص صحة عامل المفردات يطابق عقد المؤلف والمراجع المنفصلين", async () => {
+  const service = new AssessmentGenerationWorkerService(
+    { supabaseUrl: "https://example.supabase.co", supabasePublishableKey: "sb_publishable_test" },
+    async () => ({ accessToken: "token" }),
+    async () => new Response(JSON.stringify({
+      ok: true,
+      worker: "assessment-generation-worker",
+      engineSchemaVersion: 1,
+      contractVersion: 4,
+      authorModel: "gemini-author",
+      reviewModel: "gemini-reviewer",
+      requestId: "r-health",
+    }), { status: 200 }),
+  );
+  const health = await service.health();
+  assert.equal(health.authorModel, "gemini-author");
+  assert.equal(health.reviewModel, "gemini-reviewer");
+  assert.equal(health.contractVersion, 4);
+});
+
 test("عامل المفردة يستخدم المسار الدائم ولا يحتاج استجابة اختبار كاملة", async () => {
   const service = new AssessmentGenerationWorkerService(
     { supabaseUrl: "https://example.supabase.co", supabasePublishableKey: "sb_publishable_test" },
