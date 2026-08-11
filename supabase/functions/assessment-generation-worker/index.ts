@@ -211,14 +211,18 @@ async function processItem(itemId: string, ownerId: string, requestId: string): 
     await heartbeat(claimed, workerId, "generating");
     const modelStartedAt = Date.now();
     const author = await callAuthor(contract, context, examContext, requestId);
+
+    await heartbeat(claimed, workerId, "normalizing");
+    const normalizationStartedAt = Date.now();
+    const authoredContent = normalizeModelContent(author.value, contract);
+    normalizationMs = Date.now() - normalizationStartedAt;
+
     await heartbeat(claimed, workerId, "validating");
-    const review = await callReviewer(contract, context, examContext, author.value, requestId);
+    const review = await callReviewer(contract, context, examContext, authoredContent, requestId);
     modelMs = Date.now() - modelStartedAt;
 
-    const normalizationStartedAt = Date.now();
     const reviewed = normalizeReviewResult(review.value, contract);
     const content = normalizeModelContent(reviewed.finalItem, contract);
-    normalizationMs = Date.now() - normalizationStartedAt;
 
     const validationStartedAt = Date.now();
     validateContent(content, contract);

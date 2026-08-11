@@ -83,3 +83,30 @@ test("المنسق ينفذ المفردة ثم يستأنف من الحالة �
   assert.equal(processed, 1);
   assert.equal(result.items[0].status, "ready");
 });
+
+test("عامل المفردة يلتزم بآلة حالات Supabase: generating ثم normalizing ثم validating", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const worker = await readFile(new URL("../supabase/functions/assessment-generation-worker/index.ts", import.meta.url), "utf8");
+  const schema = await readFile(new URL("../supabase/schema-current.sql", import.meta.url), "utf8");
+  const start = worker.indexOf("async function processItem(");
+  const end = worker.indexOf("async function assertItemOwnedByUser(", start);
+  assert.ok(start >= 0 && end > start, "تعذر تحديد processItem داخل عامل التوليد");
+  const body = worker.slice(start, end);
+
+  const generating = body.indexOf('await heartbeat(claimed, workerId, "generating")');
+  const author = body.indexOf("await callAuthor(");
+  const normalizing = body.indexOf('await heartbeat(claimed, workerId, "normalizing")');
+  const normalizeAuthor = body.indexOf("normalizeModelContent(author.value, contract)");
+  const validating = body.indexOf('await heartbeat(claimed, workerId, "validating")');
+  const reviewer = body.indexOf("await callReviewer(");
+
+  assert.ok(generating >= 0 && generating < author, "يجب دخول generating قبل استدعاء المؤلف");
+  assert.ok(author < normalizing, "يجب الانتقال من generating إلى normalizing بعد المؤلف");
+  assert.ok(normalizing < normalizeAuthor, "يجب تطبيع خرج المؤلف داخل مرحلة normalizing");
+  assert.ok(normalizeAuthor < validating, "يجب إكمال التطبيع قبل دخول validating");
+  assert.ok(validating < reviewer, "يجب أن يعمل المراجع داخل مرحلة validating");
+
+  assert.match(schema, /v_current = 'grounding' and p_stage = 'generating'/);
+  assert.match(schema, /v_current = 'generating' and p_stage = 'normalizing'/);
+  assert.match(schema, /v_current = 'normalizing' and p_stage = 'validating'/);
+});
