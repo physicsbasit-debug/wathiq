@@ -23,7 +23,7 @@ jobs:
 
     steps:
       - name: جلب الملفات
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: إعداد Node.js
         uses: actions/setup-node@v5
@@ -31,7 +31,7 @@ jobs:
           node-version: "22"
 
       - name: تثبيت الاعتماديات
-        run: npm install --no-audit --no-fund
+        run: npm install --no-package-lock --no-audit --no-fund
 
       - name: بناء واثق
         env:

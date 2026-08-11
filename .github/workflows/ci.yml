@@ -22,7 +22,7 @@ jobs:
 
     steps:
       - name: جلب الملفات
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: إعداد Node.js
         uses: actions/setup-node@v5
@@ -33,7 +33,7 @@ jobs:
         run: node scripts/check-repository-hygiene.mjs
 
       - name: تثبيت الاعتماديات
-        run: npm install --no-audit --no-fund
+        run: npm install --no-package-lock --no-audit --no-fund
 
       - name: تشغيل الفحص الكامل
         run: npm run check
