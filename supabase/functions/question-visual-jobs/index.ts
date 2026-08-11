@@ -16,16 +16,18 @@ const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 });
 
 type JobStatus = "queued" | "generating" | "validating" | "ready" | "retry_pending" | "failed" | "cancelled";
-type RequiredMode = "replace" | "overlay";
+type RequiredMode = "replace";
 
 interface VisualJobInput {
   draftId: string;
   planItemId: string;
-  grade: number;
+  programmeId: "primary" | "lower_secondary" | "igcse";
+  syllabusCode: string;
+  stageLabel: string;
   subject: string;
   lessonLabel: string;
   questionText: string;
-  sourceSupport: string;
+  reviewSupport: string;
   previousAssetPath: string;
   requiredMode: RequiredMode;
   visual: Record<string, unknown>;
@@ -379,11 +381,13 @@ async function invokeGenerator(
         action: "generate_visual_illustration",
         draftId: input.draftId,
         planItemId: input.planItemId,
-        grade: input.grade,
+        programmeId: input.programmeId,
+        syllabusCode: input.syllabusCode,
+        stageLabel: input.stageLabel,
         subject: input.subject,
         lessonLabel: input.lessonLabel,
         questionText: input.questionText,
-        sourceSupport: input.sourceSupport,
+        reviewSupport: input.reviewSupport,
         ...(input.previousAssetPath ? { previousAssetPath: input.previousAssetPath } : {}),
         visual: input.visual,
       }),
@@ -418,11 +422,13 @@ function parseJobInput(value: unknown, draftId: string): VisualJobInput {
   return {
     draftId,
     planItemId: requireText(record.planItemId, "معرف المفردة غير صالح.", 120),
-    grade: requireInteger(record.grade, "الصف الدراسي غير صالح.", 1, 12),
+    programmeId: requireProgrammeId(record.programmeId),
+    syllabusCode: requireText(record.syllabusCode, "رمز منهج كامبريدج غير محدد.", 20),
+    stageLabel: requireText(record.stageLabel, "مرحلة كامبريدج غير محددة.", 120),
     subject: requireText(record.subject, "المادة غير محددة.", 100),
     lessonLabel: requireText(record.lessonLabel, "الدرس غير محدد.", 180),
     questionText: requireText(record.questionText, "نص السؤال غير محدد.", 1_500),
-    sourceSupport: requireText(record.sourceSupport, "دليل المصدر غير محدد.", 3_000),
+    reviewSupport: requireText(record.reviewSupport, "سياق المراجعة غير محدد.", 3_000),
     previousAssetPath: typeof record.previousAssetPath === "string" ? record.previousAssetPath.trim().slice(0, 300) : "",
     requiredMode,
     visual,
@@ -476,11 +482,13 @@ function toSnapshot(row: JobRow): Record<string, unknown> {
 async function hashInput(input: VisualJobInput): Promise<string> {
   const bytes = new TextEncoder().encode(stableStringify({
     planItemId: input.planItemId,
-    grade: input.grade,
+    programmeId: input.programmeId,
+    syllabusCode: input.syllabusCode,
+    stageLabel: input.stageLabel,
     subject: input.subject,
     lessonLabel: input.lessonLabel,
     questionText: input.questionText,
-    sourceSupport: input.sourceSupport,
+    reviewSupport: input.reviewSupport,
     requiredMode: input.requiredMode,
     visual: input.visual,
   }));
@@ -495,6 +503,11 @@ function stableStringify(value: unknown): string {
     return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`).join(",")}}`;
   }
   return JSON.stringify(value) ?? "null";
+}
+
+function requireProgrammeId(value: unknown): "primary" | "lower_secondary" | "igcse" {
+  if (value === "primary" || value === "lower_secondary" || value === "igcse") return value;
+  throw httpError("برنامج كامبريدج غير صالح.", 400);
 }
 
 async function requireUser(req: Request): Promise<{ userId: string; accessToken: string }> {

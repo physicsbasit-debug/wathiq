@@ -4,20 +4,22 @@ import { requiredVisualJobItems, VisualJobService } from "../dist/assets/visual-
 
 function draftWithVisual(type, extra = {}) {
   return {
-    id: "draft-1", grade: 10,
+    id: "draft-1", programmeId: "igcse", syllabusCode: "0625", grade: null,
     selectedProposalByPlanItem: { p1: "q1" },
     plan: [{
       id: "p1", lessonLabel: "الكهرباء الساكنة",
-      visual: { type, visualId: "v1", variant: "default", purpose: "توضيح", role: "interpret", title: "مرئي", altText: "مرئي علمي", xAxisLabel: "", xAxisUnit: "", yAxisLabel: "", yAxisUnit: "", xMin: 0, xMax: 1, yMin: 0, yMax: 1, points: [], series: [], labels: ["أ", "ب", "ج"], values: [], components: [], annotations: [], tableColumns: [], tableRows: [], tableCells: [], hiddenCells: [], vectors: [], ...extra },
-      proposals: [{ id: "q1", stimulus: "", text: "فسر العلاقة.", answer: "", sourceSupport: "المصدر" }],
+      visual: { type, visualId: "v1", purpose: "توضيح", title: "مرئي", altText: "مرئي علمي", xAxisLabel: "", xAxisUnit: "", yAxisLabel: "", yAxisUnit: "", xMin: 0, xMax: 1, yMin: 0, yMax: 1, points: [], series: [], labels: ["أ", "ب", "ج"], values: [], components: [], annotations: [], tableColumns: [], tableRows: [], tableCells: [], hiddenCells: [], vectors: [], ...extra },
+      proposals: [{ id: "q1", stimulus: "", text: "فسر العلاقة.", answer: "", reviewSupport: "سياق كامبريدج العالمي" }],
     }],
   };
 }
 
-test("المرئي التوضيحي ينشئ مهمة 2D بنمط replace لا overlay", () => {
+test("المرئي التوضيحي ينشئ مهمة 2D حتى في IGCSE بلا رقم مرحلة", () => {
   const items = requiredVisualJobItems(draftWithVisual("context_scene"), "الفيزياء");
   assert.equal(items.length, 1);
   assert.equal(items[0].requiredMode, "replace");
+  assert.equal(items[0].programmeId, "igcse");
+  assert.equal(items[0].stageLabel, "كامبريدج للشهادة الدولية العامة للتعليم الثانوي");
 });
 
 test("الرسم البياني الدقيق لا يرسل إلى نموذج الصور", () => {

@@ -1,4 +1,4 @@
-export type ViewName = "home" | "wizard" | "library" | "admin";
+export type ViewName = "home" | "wizard" | "library";
 export type WizardStep = 1 | 2 | 3 | 4;
 export type Difficulty = "سهل" | "متوسط" | "متقدم";
 export type QuestionType = "اختيار من متعدد" | "إجابة قصيرة" | "إجابة طويلة";
@@ -9,8 +9,6 @@ export type AssessmentType = "اختبار قصير" | "اختبار تدريب�
 export type AssessmentGenerationMode = "progressive_items_v1";
 export type CambridgeProgrammeId = "primary" | "lower_secondary" | "igcse";
 export type QuestionVisualType = "none" | "context_scene" | "line_graph" | "bar_chart" | "pressure_diagram" | "circuit_diagram" | "electrostatic_diagram" | "data_table" | "instrument_scale" | "ray_diagram" | "force_diagram" | "flow_diagram";
-export type QuestionVisualVariant = "default" | "door_handle" | "playground_seesaw" | "wrench_tool" | "bicycle_brake" | "shopping_trolley" | "school_bag" | "water_tank" | "solar_panel" | "laboratory_setup" | "road_safety" | "submerged_object" | "depth_comparison" | "force_area" | "liquid_column" | "series_circuit" | "measurement_circuit" | "charge_transfer" | "attraction_repulsion" | "electric_field" | "trend" | "comparison" | "multi_series" | "table_completion" | "table_comparison" | "thermometer" | "burette" | "measuring_cylinder" | "meter_scale" | "reflection" | "refraction" | "converging_lens" | "prism" | "free_body" | "balanced_forces" | "moments" | "linear_flow" | "cycle_flow" | "state_change";
-export type QuestionVisualRole = "read" | "calculate" | "interpret" | "compare" | "complete" | "draw" | "evaluate";
 export type CircuitComponent = "battery" | "switch_open" | "switch_closed" | "lamp" | "resistor" | "motor" | "ammeter" | "voltmeter";
 
 export interface QuestionVisualPoint {
@@ -72,9 +70,7 @@ export interface QuestionVisualJobSnapshot {
 export interface QuestionVisualSpec {
   type: QuestionVisualType;
   visualId?: string;
-  variant?: QuestionVisualVariant;
   purpose?: string;
-  role?: QuestionVisualRole;
   title: string;
   altText: string;
   xAxisLabel: string;
@@ -112,19 +108,6 @@ export interface QuestionCounts {
   long: number;
 }
 
-export interface ExamSourceReference {
-  id: string;
-  sourceId: string;
-  sourceTitle: string;
-  sourceKind: SourceKind;
-  pageFrom: number;
-  pageTo: number;
-  excerpt: string;
-  context?: string;
-  lessonTopic?: string;
-  score: number;
-}
-
 export interface ExamDraft {
   id: string;
   assessmentType: AssessmentType;
@@ -135,8 +118,6 @@ export interface ExamDraft {
   subjectId: string;
   lessonTopics: string[];
   topic: string;
-  sourceReferences: ExamSourceReference[];
-  sourceRetrievalVersion: string;
   title: ExamTitleOption;
   examDate: string;
   school: string;
@@ -170,7 +151,6 @@ export interface PlanItem {
   marks: number;
   proposals: QuestionProposal[];
   visual?: QuestionVisualSpec;
-  sourceReferenceId?: string;
 }
 
 export interface QuestionProposal {
@@ -182,7 +162,7 @@ export interface QuestionProposal {
   rationale?: string;
   markScheme?: string[];
   workingRequired?: boolean;
-  sourceSupport?: string;
+  reviewSupport?: string;
 }
 
 export interface ValidationIssue {
@@ -195,153 +175,4 @@ export interface SpecValidation {
   issues: ValidationIssue[];
   computedMarks: number;
   suggestedCounts?: QuestionCounts;
-}
-
-export type SourceMode = "file" | "url";
-export type SourceKind =
-  | "كتاب الطالب"
-  | "دليل المعلم"
-  | "نواتج التعلم"
-  | "جدول المواصفات"
-  | "اختبار كامبريدج"
-  | "مصدر عالمي";
-export type SourceStatus = "جاهز للفهرسة" | "مفهرس" | "يحتاج مراجعة" | "مؤرشف";
-export type SourceAuthority = "مصدر مرفوع" | "كامبريدج" | "مصدر عالمي";
-export type SourceExtractionStatus = "لم يبدأ" | "جارٍ الاستخراج" | "مكتمل" | "يحتاج OCR" | "فشل";
-export type SourceExtractionMethod = "pdf-text" | "google-vision-ocr" | "gemini-ocr";
-
-export interface SourceDraft {
-  mode: SourceMode;
-  title: string;
-  kind: SourceKind;
-  grade: number | null;
-  subjectId: string;
-  fileName: string;
-  url: string;
-  rightsConfirmed: boolean;
-}
-
-export interface ManagedSource {
-  id: string;
-  catalogCode: string;
-  fingerprint: string;
-  authority: SourceAuthority;
-  title: string;
-  kind: SourceKind;
-  mode: SourceMode;
-  grade: number;
-  subjectId: string;
-  fileName?: string;
-  url?: string;
-  rightsConfirmed: boolean;
-  status: SourceStatus;
-  catalogPath: string;
-  createdAt: string;
-  updatedAt: string;
-  contentFingerprint?: string;
-  fileSizeBytes?: number;
-  mimeType?: string;
-  extractionStatus?: SourceExtractionStatus;
-  extractionMessage?: string;
-  extractedPageCount?: number;
-  extractedCharacterCount?: number;
-  extractedLanguage?: string;
-  extractionPreview?: string;
-  detectedHeadings?: string[];
-  extractedAt?: string;
-  extractionVersion?: string;
-}
-
-export interface SourceOcrPage {
-  pageNumber: number;
-  content: string;
-  characterCount: number;
-  confidence: number | null;
-  provider: string;
-  processedAt: string;
-}
-
-export interface SourceOcrLayoutWord {
-  text: string;
-  xMin: number;
-  yMin: number;
-  xMax: number;
-  yMax: number;
-  confidence: number | null;
-}
-
-export interface SourceOcrLayoutPage {
-  pageNumber: number;
-  width: number;
-  height: number;
-  words: SourceOcrLayoutWord[];
-  provider: string;
-  processedAt: string;
-}
-
-export interface SourceTextChunk {
-  chunkIndex: number;
-  pageFrom: number;
-  pageTo: number;
-  content: string;
-  characterCount: number;
-}
-
-export type SourceExtractionQualityReason = "accepted" | "insufficient_text" | "garbled_arabic";
-
-export interface SourceExtractionQuality {
-  accepted: boolean;
-  score: number;
-  reason: SourceExtractionQualityReason;
-  message: string;
-  arabicLetterCount: number;
-  wordCount: number;
-  commonWordRatio: number;
-  averageWordLength: number;
-  longWordRatio: number;
-  singleLetterWordRatio: number;
-  topFiveLetterShare: number;
-  qualityGateVersion: string;
-}
-
-export interface SourceExtractionResult {
-  method: SourceExtractionMethod;
-  pageCount: number;
-  characterCount: number;
-  nonEmptyPageCount: number;
-  language: string;
-  preview: string;
-  detectedHeadings: string[];
-  requiresOcr: boolean;
-  quality: SourceExtractionQuality;
-  chunks: SourceTextChunk[];
-}
-
-export interface SourceValidationIssue {
-  field: keyof SourceDraft | "general";
-  message: string;
-}
-
-export interface SourceValidation {
-  valid: boolean;
-  issues: SourceValidationIssue[];
-}
-
-export interface SourceRegistryBackup {
-  schemaVersion: 1;
-  product: "واثق";
-  exportedAt: string;
-  sources: ManagedSource[];
-}
-
-export interface SourceImportResult {
-  valid: boolean;
-  sources: ManagedSource[];
-  issues: string[];
-}
-
-export interface SourceMergeResult {
-  sources: ManagedSource[];
-  addedCount: number;
-  skippedCount: number;
 }

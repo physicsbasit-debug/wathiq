@@ -3,7 +3,6 @@ import {
   ASSESSMENT_CONTRACT_VERSION,
   ASSESSMENT_ENGINE_SCHEMA_VERSION,
   MODEL_ALLOWED_OUTPUT_FIELDS,
-  MODEL_FORBIDDEN_OUTPUT_FIELDS,
   type AssessmentBlueprint,
   type AssessmentGenerationItemStatus,
   type AssessmentItemContract,
@@ -73,7 +72,7 @@ export function assertItemContractIntegrity(contract: AssessmentItemContract): v
     || !contract.contractHash.trim()
     || contract.marks < 1
     || contract.marks > 20
-    || !["global_curriculum", "uploaded_source"].includes(source.mode)
+    || source.mode !== "global_curriculum"
     || !Number.isInteger(source.chunkIndex)
     || source.chunkIndex < 0
     || source.pageFrom < 1
@@ -90,14 +89,13 @@ export function assertModelOutputOwnership(value: unknown): void {
     throw new AssessmentEngineError("MODEL_INVALID_JSON", "إخراج النموذج ليس كائنًا صالحًا.");
   }
   const record = value as Record<string, unknown>;
-  const forbidden = MODEL_FORBIDDEN_OUTPUT_FIELDS.filter((field) => Object.hasOwn(record, field));
   const allowed = new Set<string>(MODEL_ALLOWED_OUTPUT_FIELDS);
   const unknown = Object.keys(record).filter((field) => !allowed.has(field));
-  if (forbidden.length || unknown.length) {
+  if (unknown.length) {
     throw new AssessmentEngineError(
       "MODEL_ASSESSMENT_MISMATCH",
       "أعاد النموذج حقولًا خارج عقد المحتوى المسموح.",
-      { forbidden, unknown },
+      { unknown },
     );
   }
 }

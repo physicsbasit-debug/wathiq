@@ -26,7 +26,6 @@ export interface AssessmentBlueprintBuildInput {
   topic: string;
   difficulty: Difficulty;
   items: readonly AssessmentItemSeed[];
-  sourcesByReferenceId: ReadonlyMap<string, AssessmentSourceSnapshot>;
 }
 
 async function globalCurriculumSnapshot(input: AssessmentBlueprintBuildInput, item: AssessmentItemSeed): Promise<AssessmentSourceSnapshot> {
@@ -34,14 +33,14 @@ async function globalCurriculumSnapshot(input: AssessmentBlueprintBuildInput, it
   return {
     mode: "global_curriculum",
     sourceId: `cambridge:${input.syllabusCode || input.programmeId}`.slice(0, 180),
-    sourceTitle: `Cambridge curriculum · ${input.stageLabel} · ${input.subject} · ${item.lessonLabel}`,
-    sourceKind: "Cambridge curriculum",
-    sourceReferenceId: `global:${item.planItemId}`,
+    sourceTitle: `منهج كامبريدج · ${input.stageLabel} · ${input.subject} · ${item.lessonLabel}`,
+    sourceKind: "منهج كامبريدج",
+    sourceReferenceId: `cambridge:${item.planItemId}`,
     chunkIndex: 0,
     pageFrom: 1,
     pageTo: 1,
     contentHash: await sha256Hex(identity),
-    extractionVersion: "cambridge-global-v1",
+    extractionVersion: "cambridge-global-v2",
   };
 }
 
@@ -50,13 +49,6 @@ async function blueprintItemFromSeed(
   item: AssessmentItemSeed,
   order: number,
 ): Promise<AssessmentBlueprintItem> {
-  const source = item.sourceReferenceId
-    ? input.sourcesByReferenceId.get(item.sourceReferenceId)
-    : undefined;
-  const resolvedSource = source ?? await globalCurriculumSnapshot(input, item);
-  if (item.sourceReferenceId && !source) {
-    throw new AssessmentEngineError("SOURCE_NOT_FOUND", `تعذر العثور على المصدر الاختياري للمفردة ${item.planItemId}.`);
-  }
   return {
     order,
     planItemId: item.planItemId,
@@ -66,7 +58,7 @@ async function blueprintItemFromSeed(
     cognitiveLevel: item.cognitiveLevel,
     ...(item.difficultyLevel ? { difficultyLevel: item.difficultyLevel } : {}),
     marks: item.marks,
-    source: resolvedSource,
+    source: await globalCurriculumSnapshot(input, item),
   };
 }
 

@@ -1,60 +1,54 @@
-# نشر واثق 0.2.0
+# نشر واثق 0.3.0
 
-## GitHub Pages variables
+## متغيرات GitHub Pages
 
 ```text
 WATHIQ_SUPABASE_URL
 WATHIQ_SUPABASE_PUBLISHABLE_KEY
 ```
 
-## Supabase Secrets
+## أسرار Supabase
 
 ```text
 WATHIQ_APP_URL
 GEMINI_API_KEY
 ```
 
-اختياريًا:
+اختياريًا لتبديل النماذج تقنيًا:
 
 ```text
 GEMINI_AUTHOR_MODEL
 GEMINI_REVIEW_MODEL
-GEMINI_OCR_MODEL
 GEMINI_IMAGE_MODEL
 ```
 
-## Edge Functions الحالية
+## Edge Functions الحالية فقط
 
 ```text
-source-ocr
 science-visual-generation
 question-visual-jobs
 assessment-generation-jobs
 assessment-generation-worker
 ```
 
-عند نشر 0.2.0 فوق بيئة واثق الحالية أعد نشر:
+بعد تحديث 0.3.0 أعد نشر الوظائف الأربع السابقة من ملفات المستودع الحالية.
 
-```text
-assessment-generation-jobs
-assessment-generation-worker
-```
-
-وبقية الوظائف لا تحتاج إعادة نشر إذا كانت نسخة 0.1.0 الحالية منشورة ولم تتغير.
+لا توجد وظيفة OCR أو Google OAuth أو مولد أسئلة قديم في النواة الحالية. إذا بقيت وظائف تاريخية منشورة في مشروع Supabase، يمكن حذفها بعد نجاح اختبار القبول الحي لأنها غير مستخدمة من واثق 0.3.0.
 
 ## قاعدة البيانات
 
-لا يوجد SQL جديد مطلوب للبيئة الحالية في هذا الإصدار. للبيئة الجديدة من الصفر يوجد ملف واحد فقط:
+لا يوجد SQL جديد مطلوب للبيئة الحالية عند التحديث إلى 0.3.0.
+
+للبيئة الجديدة من الصفر يوجد مخطط حالي واحد فقط:
 
 ```text
 supabase/schema-current.sql
 ```
 
-## الفحص
+## الفحص قبل النشر
 
 ```bash
-npm run repo:check
 npm run check
 ```
 
-`dist/` ناتج بناء ولا يُحفظ في `main`.
+`dist/` ناتج بناء ولا يحفظ في `main`.

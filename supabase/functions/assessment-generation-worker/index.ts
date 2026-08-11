@@ -73,7 +73,7 @@ interface ItemContract {
   difficultyLevel?: string;
   marks: number;
   source: {
-    mode: "global_curriculum" | "uploaded_source";
+    mode: "global_curriculum";
     sourceId: string;
     sourceTitle: string;
     sourceKind: string;
@@ -199,7 +199,7 @@ async function processItem(itemId: string, ownerId: string, requestId: string): 
   try {
     claimed = await claimItem(itemId, workerId);
     if (!claimed) return { itemId, status: "skipped" };
-    if (claimed.owner_id !== ownerId) throw workerError("SOURCE_ACCESS_DENIED", "لا يملك المستخدم مهمة التوليد المطلوبة.", "none", 403);
+    if (claimed.owner_id !== ownerId) throw workerError("AUTHORIZATION_FAILED", "لا يملك المستخدم مهمة التوليد المطلوبة.", "none", 403);
     const contract = await parseAndVerifyContract(claimed);
 
     const groundingStartedAt = Date.now();
@@ -337,134 +337,32 @@ async function buildExamContext(claimed: ClaimedItemRow): Promise<ExamContextIte
   });
 }
 
-async function buildLessonContextPack(claimed: ClaimedItemRow, contract: ItemContract): Promise<ContextBlock[]> {
-  if (contract.source.mode === "global_curriculum") {
-    const programmeGuidance = contract.programmeId === "primary"
-      ? "Cambridge Primary Science 0097 works holistically across Biology, Chemistry, Physics, Earth and Space, Thinking and Working Scientifically, and Science in Context. Keep the science age-appropriate for the selected Stage, reward observation/explanation/enquiry where useful, and avoid importing IGCSE-level formalism into younger stages."
-      : contract.programmeId === "lower_secondary"
-        ? "Cambridge Lower Secondary Science 0893 works across Biology, Chemistry, Physics, Earth and Space, Thinking and Working Scientifically, and Science in Context. For Stages 7-9, increase conceptual depth, evidence use, practical reasoning, models, data interpretation and transfer to unfamiliar but fair contexts."
-        : "Cambridge IGCSE science: author original assessment-style questions that balance AO1 knowledge with understanding, AO2 handling information/problem-solving, and AO3 experimental skills where the topic and item type make them appropriate. Use unfamiliar contexts when they genuinely test application, include practical/data reasoning when useful, and use disciplined mark-scheme logic. Do not copy or reconstruct a known past-paper question.";
-    const content = [
-      `Programme: ${contract.stageLabel}.`,
-      `Syllabus: ${contract.syllabusCode}.`,
-      `Subject: ${contract.subject}.`,
-      `Topic/lesson: ${contract.lessonLabel}.`,
-      `Assessment focus: ${contract.cognitiveLevel}; ${contract.questionType}; ${contract.marks} mark(s).`,
-      programmeGuidance,
-      "Use established Cambridge curriculum knowledge for the named topic. Do not claim exact official learning-objective wording or objective codes unless supplied by an uploaded source. Keep the science within the expected programme/stage scope.",
-    ].join("\n");
-    return [await contextBlock({
-      id: "CAMBRIDGE-GLOBAL",
-      sourceId: contract.source.sourceId,
-      sourceTitle: contract.source.sourceTitle,
-      sourceKind: "Cambridge curriculum knowledge",
-      chunkIndex: 0,
-      pageFrom: 1,
-      pageTo: 1,
-      content,
-      score: 100,
-    })];
-  }
-  const targetRegistry = await admin.from("source_registry")
-    .select("id,title,kind,grade,subject_id,semester,extraction_version,status")
-    .eq("owner_id", claimed.owner_id)
-    .eq("id", claimed.source_id)
-    .maybeSingle();
-  if (targetRegistry.error) throw databaseError("تعذر قراءة سجل المصدر", targetRegistry.error);
-  if (!targetRegistry.data) throw workerError("SOURCE_NOT_FOUND", "المصدر المحدد في عقد المفردة غير موجود.", "none", 404);
-  if (targetRegistry.data.status !== "مفهرس") throw workerError("STALE_SOURCE", "المصدر لم يعد في حالة مفهرسة صالحة للتوليد.", "none", 409);
-  if (targetRegistry.data.title !== contract.source.sourceTitle || targetRegistry.data.kind !== contract.source.sourceKind) {
-    throw workerError("STALE_SOURCE", "بيانات المصدر الحالية لا تطابق لقطة المصدر في العقد.", "none", 409);
-  }
-  if ((targetRegistry.data.extraction_version ?? "") !== contract.source.extractionVersion) {
-    throw workerError("STALE_SOURCE", "تغير إصدار استخراج المصدر بعد بناء العقد.", "none", 409);
-  }
-
-  const neighborQuery = await admin.from("source_chunks")
-    .select("source_id,chunk_index,page_from,page_to,content")
-    .eq("owner_id", claimed.owner_id)
-    .eq("source_id", claimed.source_id)
-    .gte("chunk_index", Math.max(0, claimed.chunk_index - 3))
-    .lte("chunk_index", claimed.chunk_index + 3)
-    .order("chunk_index", { ascending: true });
-  if (neighborQuery.error) throw databaseError("تعذر قراءة سياق الدرس من المصدر", neighborQuery.error);
-  const targetRaw = (neighborQuery.data ?? []).find((row) => row.chunk_index === claimed.chunk_index);
-  if (!targetRaw || typeof targetRaw.content !== "string") throw workerError("SOURCE_NOT_FOUND", "مقطع المصدر المحدد في عقد المفردة غير موجود.", "none", 404);
-  const targetHash = await sourceContentHash(targetRaw.content);
-  if (targetHash !== claimed.source_content_hash || targetHash !== contract.source.contentHash) {
-    throw workerError("STALE_SOURCE", "تغير محتوى مقطع المصدر بعد بناء خطة الاختبار.", "none", 409);
-  }
-
-  const queryTokens = meaningfulTokens(`${contract.lessonLabel} ${contract.topic}`);
-  const blocks: ContextBlock[] = [];
-  for (const row of neighborQuery.data ?? []) {
-    if (typeof row.content !== "string" || !row.content.trim()) continue;
-    blocks.push(await contextBlock({
-      id: `PRIMARY-${row.chunk_index}`,
-      sourceId: claimed.source_id,
-      sourceTitle: String(targetRegistry.data.title),
-      sourceKind: String(targetRegistry.data.kind),
-      chunkIndex: Number(row.chunk_index),
-      pageFrom: Number(row.page_from),
-      pageTo: Number(row.page_to),
-      content: row.content,
-      score: row.chunk_index === claimed.chunk_index ? 100 : 70 - Math.abs(row.chunk_index - claimed.chunk_index) * 5,
-    }));
-  }
-
-  const companionRegistry = await admin.from("source_registry")
-    .select("id,title,kind,semester")
-    .eq("owner_id", claimed.owner_id)
-    .eq("grade", targetRegistry.data.grade)
-    .eq("subject_id", targetRegistry.data.subject_id)
-    .eq("status", "مفهرس")
-    .in("kind", ["دليل المعلم", "نواتج التعلم"]);
-  if (companionRegistry.error) throw databaseError("تعذر قراءة المصادر المساندة للدرس", companionRegistry.error);
-
-  for (const registry of companionRegistry.data ?? []) {
-    if (registry.id === claimed.source_id) continue;
-    const chunks = await admin.from("source_chunks")
-      .select("chunk_index,page_from,page_to,content")
-      .eq("owner_id", claimed.owner_id)
-      .eq("source_id", registry.id)
-      .order("chunk_index", { ascending: true })
-      .limit(220);
-    if (chunks.error) throw databaseError("تعذر قراءة مقاطع المصدر المساند", chunks.error);
-    const ranked = (chunks.data ?? []).flatMap((row) => {
-      if (typeof row.content !== "string" || !row.content.trim()) return [];
-      const score = tokenOverlapScore(queryTokens, meaningfulTokens(row.content));
-      return [{ row, score }];
-    }).filter((entry) => entry.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 4);
-    for (const entry of ranked) {
-      blocks.push(await contextBlock({
-        id: `${registry.kind === "دليل المعلم" ? "TEACHER" : "OUTCOME"}-${registry.id}-${entry.row.chunk_index}`,
-        sourceId: String(registry.id),
-        sourceTitle: String(registry.title),
-        sourceKind: String(registry.kind),
-        chunkIndex: Number(entry.row.chunk_index),
-        pageFrom: Number(entry.row.page_from),
-        pageTo: Number(entry.row.page_to),
-        content: entry.row.content,
-        score: 50 + entry.score * 40,
-      }));
-    }
-  }
-
-  // Keep the target chunk plus the strongest surrounding/companion context. This is a context pack, not a lexical gate.
-  const targetId = `PRIMARY-${claimed.chunk_index}`;
-  const target = blocks.find((block) => block.id === targetId);
-  const selected = blocks.filter((block) => block.id !== targetId)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 12);
-  const ordered = target ? [target, ...selected] : selected;
-  let chars = 0;
-  return ordered.filter((block) => {
-    if (chars >= 52_000) return false;
-    chars += block.content.length;
-    return true;
-  });
+async function buildLessonContextPack(_claimed: ClaimedItemRow, contract: ItemContract): Promise<ContextBlock[]> {
+  const programmeGuidance = contract.programmeId === "primary"
+    ? "Cambridge Primary Science 0097 spans Biology, Chemistry, Physics, Earth and Space, Thinking and Working Scientifically, and Science in Context. Keep the science age-appropriate for the selected Stage. Prefer observation, explanation, simple enquiry, patterns and evidence where useful. Never import IGCSE-level formalism into younger stages."
+    : contract.programmeId === "lower_secondary"
+      ? "Cambridge Lower Secondary Science 0893 spans Biology, Chemistry, Physics, Earth and Space, Thinking and Working Scientifically, and Science in Context. For Stages 7-9, increase conceptual depth, evidence use, practical reasoning, models, data interpretation and transfer to unfamiliar but fair contexts."
+      : "Cambridge IGCSE science. Author original assessment-style questions that balance knowledge and understanding, handling information and problem-solving, and experimental skills where the topic and item type make them appropriate. Use unfamiliar contexts when they genuinely test application. Include practical or data reasoning when useful. Never copy or reconstruct a known past-paper question.";
+  const content = [
+    `Programme: ${contract.stageLabel}.`,
+    `Syllabus: ${contract.syllabusCode}.`,
+    `Subject: ${contract.subject}.`,
+    `Topic/lesson: ${contract.lessonLabel}.`,
+    `Assessment focus: ${contract.cognitiveLevel}; ${contract.questionType}; ${contract.marks} mark(s).`,
+    programmeGuidance,
+    "Use established Cambridge curriculum knowledge for the named topic. Do not invent official objective codes or quote supposed syllabus wording. Keep every scientific claim inside the expected programme and stage scope.",
+  ].join("\n");
+  return [await contextBlock({
+    id: "CAMBRIDGE-GLOBAL",
+    sourceId: contract.source.sourceId,
+    sourceTitle: contract.source.sourceTitle,
+    sourceKind: "سياق كامبريدج العالمي",
+    chunkIndex: 0,
+    pageFrom: 1,
+    pageTo: 1,
+    content,
+    score: 100,
+  })];
 }
 
 async function contextBlock(input: Omit<ContextBlock, "hash">): Promise<ContextBlock> {
@@ -489,7 +387,7 @@ async function callAuthor(contract: ItemContract, context: ContextBlock[], examC
     assessmentGuidance: { cognitiveEmphasis: contract.cognitiveLevel, difficulty: contract.difficulty },
     authorFreedom: [
       "اختر أفضل سياق ومثير وبنية للسؤال بنفسك. لا تلتزم بقالب سياقي أو حسابي أو بصري مفروض مسبقًا.",
-      "في الوضع العالمي، يكفي اسم موضوع Cambridge والمرحلة/المقرر لتحديد نطاق العلم المتوقع. إذا وُجد مصدر مرفوع فاستخدمه كتخصيص إضافي لا كقيد على جودة التأليف.",
+      "يكفي اسم موضوع Cambridge والمرحلة والمقرر لتحديد نطاق العلم المتوقع. ابنِ السؤال من سياق كامبريدج العالمي بثقة، دون ادعاء نقل نص رسمي حرفيًا.",
       "استند إلى المعرفة الراسخة بمنهج Cambridge وبطبيعة تقييمه، واختر هدفًا تعليميًا معقولًا داخل نطاق الموضوع دون اختلاق رمز هدف رسمي أو ادعاء صياغة رسمية غير متاحة.",
       "اكتب سؤالًا أصليًا؛ استلهم طبيعة تقييم Cambridge ومهاراته ولا تنسخ أو تعيد بناء سؤال معروف من ورقة سابقة.",
       "لا تضف قصة حياتية إذا لم تخدم القياس. لا تستخدم أرقامًا أو تجربة أو مرئيًا إلا إذا حسّنت السؤال فعلًا.",
@@ -526,7 +424,7 @@ async function callReviewer(contract: ItemContract, context: ContextBlock[], exa
     assessmentGuidance: { cognitiveEmphasis: contract.cognitiveLevel, difficulty: contract.difficulty },
     reviewCriteria: [
       "الصحة العلمية أولًا: لا يوجد خطأ أو غموض علمي أو بيانات غير منطقية.",
-      "السؤال يقيس تعلمًا حقيقيًا داخل نطاق Cambridge المحدد للموضوع والمرحلة. إن وُجد مصدر مرفوع فاستفد من هدفه الصريح، وإلا فلا تجعل غياب الملف سببًا للرفض.",
+      "السؤال يقيس تعلمًا حقيقيًا داخل نطاق Cambridge المحدد للموضوع والمرحلة، ولا يخرج إلى تفاصيل أعلى من المستوى أو بعيدة عن الموضوع.",
       "الصياغة عربية طبيعية واضحة ومناسبة للصف وليست آلية أو متكلفة.",
       "المفردة تكمل الاختبار ككل وتتجنب تكرار نفس الفكرة والسياق وطريقة القياس الموجودة في المفردات المكتملة.",
       "مستوى التفكير حقيقي ومتوافق مع المطلوب، والمشتتات في الاختيار من متعدد معقولة وغير هزلية.",
@@ -534,7 +432,7 @@ async function callReviewer(contract: ItemContract, context: ContextBlock[], exa
       "أي أرقام أو وحدات أو علاقات أو استنتاجات يجب أن تكون صحيحة وقابلة للحل من المعطيات.",
       "لا تجعل المرئي زينة. إن طُلب مرئي فيجب أن يكون لازمًا أو مفيدًا بوضوح وأن يطابق السؤال علميًا.",
       "أصلح المفردة بنفسك إذا وجدت عيبًا. approved=true فقط إذا أصبحت finalItem صالحة للاستخدام.",
-      "supportingContextIds يجب أن تشير إلى سياق Cambridge العالمي أو المصدر الاختياري الذي يدعم الفكرة العلمية؛ لا تستخدم تشابه الكلمات معيارًا للرفض.",
+      "supportingContextIds يجب أن تشير إلى سياق Cambridge العالمي الذي يدعم الفكرة العلمية؛ لا تستخدم تشابه الكلمات معيارًا للرفض.",
     ],
     examContext: {
       instruction: "افحص أيضًا أن المفردة تضيف تنوعًا حقيقيًا إلى الاختبار ولا تعيد فكرة أو سيناريو مفردة مكتملة بلا حاجة.",
@@ -564,7 +462,7 @@ function reviewerSystemInstruction(): string {
     "أنت مراجع علمي وتقويمي مستقل لمفردات اختبارات العلوم.",
     "لا تجامل المؤلف. افحص العلم والقياس واللغة والدرجة والمشتتات والمرئي.",
     "يمكنك إعادة كتابة finalItem كاملة لإصلاحها، لكن لا تغيّر نوع السؤال أو الدرجة. استخدم مستوى التفكير كتوجيه، وتحقق أن المحتوى داخل نطاق Cambridge للمرحلة/المقرر والموضوع المحددين.",
-    "إن وُجد مصدر مرفوع فراجعه، وإن كان السياق عالميًا فاعتمد المعرفة الراسخة بمنهج Cambridge. لا تستخدم تطابق الكلمات كمعيار للجودة.",
+    "اعتمد المعرفة الراسخة بمنهج Cambridge والسياق العالمي المرفق. لا تستخدم تطابق الكلمات كمعيار للجودة.",
     "أعد JSON فقط وفق المخطط.",
   ].join("\n");
 }
@@ -790,7 +688,7 @@ function validateContent(content: ModelContent, contract: ItemContract): void {
 function selectEvidenceAnchor(context: ContextBlock[], requestedIds: string[]): Record<string, unknown> {
   const requested = requestedIds.map((id) => context.find((block) => block.id === id)).filter((block): block is ContextBlock => Boolean(block));
   const chosen = requested[0] ?? context[0];
-  if (!chosen) throw workerError("SOURCE_NOT_GROUNDED", "تعذر تحديد دليل مصدر للمفردة.", "content_once", 422);
+  if (!chosen) throw workerError("INTERNAL_ERROR", "تعذر تثبيت سياق كامبريدج للمفردة.", "none", 500);
   return {
     evidenceIndex: Math.max(0, context.findIndex((block) => block.id === chosen.id)),
     evidenceHash: chosen.hash,
@@ -802,9 +700,7 @@ function selectEvidenceAnchor(context: ContextBlock[], requestedIds: string[]): 
 function buildVisualSpec(visual: VisualProposal, contract: ItemContract): Record<string, unknown> {
   const base = {
     visualId: `visual-${contract.planItemId}`,
-    variant: "default",
     purpose: visual.brief,
-    role: contract.cognitiveLevel === "استدلال" ? "interpret" : "read",
     title: contract.lessonLabel,
     altText: visual.brief || `مرئي علمي مساعد لسؤال في ${contract.lessonLabel}`,
     xAxisLabel: "", xAxisUnit: "", yAxisLabel: "", yAxisUnit: "",
@@ -814,14 +710,12 @@ function buildVisualSpec(visual: VisualProposal, contract: ItemContract): Record
   };
   if (visual.mode === "none") return { ...base, type: "none", purpose: "", altText: "" };
   if (visual.mode === "illustration_2d") {
-    return { ...base, type: "context_scene", variant: "default", role: "interpret" };
+    return { ...base, type: "context_scene" };
   }
   if (visual.mode === "data_table") {
     return {
       ...base,
       type: "data_table",
-      variant: "table_comparison",
-      role: "interpret",
       tableColumns: visual.columns,
       tableRows: visual.rows.map((row, index) => `R${index + 1}`),
       tableCells: visual.rows,
@@ -833,8 +727,6 @@ function buildVisualSpec(visual: VisualProposal, contract: ItemContract): Record
   return {
     ...base,
     type: visual.mode === "bar_chart" ? "bar_chart" : "line_graph",
-    variant: visual.series.length > 1 ? "multi_series" : "trend",
-    role: "interpret",
     xAxisLabel: visual.xLabel,
     xAxisUnit: visual.xUnit,
     yAxisLabel: visual.yLabel,
@@ -891,7 +783,7 @@ function parseContract(value: Record<string, unknown>): ItemContract {
     ...(typeof value.difficultyLevel === "string" && value.difficultyLevel.trim() ? { difficultyLevel: value.difficultyLevel.trim() } : {}),
     marks: requireInteger(value.marks, "درجة المفردة غير صالحة.", 1, 10),
     source: {
-      mode: requireEnum(source.mode, ["global_curriculum", "uploaded_source"], "وضع مصدر العقد غير صالح."),
+      mode: requireEnum(source.mode, ["global_curriculum"], "وضع سياق العقد غير صالح."),
       sourceId: requireText(source.sourceId, "معرف المصدر غير صالح.", 180),
       sourceTitle: requireText(source.sourceTitle, "اسم المصدر غير صالح.", 400),
       sourceKind: requireText(source.sourceKind, "نوع المصدر غير صالح.", 100),
@@ -926,41 +818,6 @@ function parseClaimedItem(value: unknown): ClaimedItemRow {
   };
 }
 
-function meaningfulTokens(value: string): string[] {
-  const stop = new Set(["في", "من", "الي", "إلى", "على", "عن", "ان", "أن", "هو", "هي", "هذا", "هذه", "ذلك", "التي", "الذي", "مع", "ثم", "او", "أو", "و", "ف", "ب", "ل", "ما"]);
-  return [...new Set(normalizeArabic(value).split(/\s+/u)
-    .filter((token) => token.length >= 3 && !stop.has(token))
-    .map(retrievalTokenKey)
-    .filter((token) => token.length >= 3))];
-}
-
-function retrievalTokenKey(value: string): string {
-  let token = value;
-  if (token.startsWith("ال") && token.length > 5) token = token.slice(2);
-  for (const suffix of ["يات", "ات", "ون", "ين", "ان", "ها", "هم", "هن"]) {
-    if (token.endsWith(suffix) && token.length - suffix.length >= 4) { token = token.slice(0, -suffix.length); break; }
-  }
-  return token;
-}
-
-function tokenOverlapScore(query: string[], candidate: string[]): number {
-  if (!query.length || !candidate.length) return 0;
-  const set = new Set(candidate);
-  const hits = query.filter((token) => set.has(token)).length;
-  return hits / query.length;
-}
-
-function normalizeArabic(value: string): string {
-  return value.normalize("NFKC")
-    .replace(/[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]/gu, "")
-    .replace(/[أإآٱ]/gu, "ا")
-    .replace(/ى/gu, "ي")
-    .replace(/ة/gu, "ه")
-    .replace(/[^\p{L}\p{N}]+/gu, " ")
-    .replace(/\s+/gu, " ")
-    .trim().toLowerCase();
-}
-
 function cleanModelText(value: unknown): string { return typeof value === "string" ? value.replace(/\s+/gu, " ").trim() : ""; }
 function stringArray(value: unknown): string[] { return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : []; }
 function uniqueStrings(value: unknown): string[] { return [...new Set(stringArray(value).map((entry) => entry.replace(/\s+/gu, " ").trim()).filter(Boolean))]; }
@@ -992,7 +849,6 @@ function stableStringify(value: unknown): string { return JSON.stringify(normali
 function normalizeForStableJson(value: unknown, seen: WeakSet<object>): unknown { if (value === null || typeof value === "string" || typeof value === "boolean") return value; if (typeof value === "number") return Number.isFinite(value) ? value : null; if (typeof value === "bigint") return value.toString(); if (typeof value === "undefined" || typeof value === "function" || typeof value === "symbol") return null; if (Array.isArray(value)) return value.map((entry) => normalizeForStableJson(entry, seen)); if (typeof value === "object") { if (seen.has(value)) throw httpError("لا يمكن حساب بصمة لكائن دائري.", 400); seen.add(value); const record = value as Record<string, unknown>; const normalized: Record<string, unknown> = {}; for (const key of Object.keys(record).sort()) { const entry = record[key]; if (typeof entry === "undefined" || typeof entry === "function" || typeof entry === "symbol") continue; normalized[key] = normalizeForStableJson(entry, seen); } seen.delete(value); return normalized; } return null; }
 async function sha256Hex(value: unknown): Promise<string> { return sha256Text(stableStringify(value)); }
 async function sha256Text(value: string): Promise<string> { const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)); return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join(""); }
-async function sourceContentHash(content: string): Promise<string> { return sha256Text(content.normalize("NFKC").replace(/\s+/gu, " ").trim()); }
 
 async function readJsonBody(req: Request): Promise<unknown> { const declaredLength = Number(req.headers.get("Content-Length") ?? 0); if (Number.isFinite(declaredLength) && declaredLength > MAX_BODY_BYTES) throw httpError("حجم الطلب تجاوز الحد المسموح.", 413); const text = await req.text(); if (new TextEncoder().encode(text).byteLength > MAX_BODY_BYTES) throw httpError("حجم الطلب تجاوز الحد المسموح.", 413); try { return JSON.parse(text) as unknown; } catch { throw httpError("تعذر قراءة الطلب بصيغة JSON.", 400); } }
 async function requireUser(req: Request): Promise<{ userId: string }> { const authorization = req.headers.get("Authorization") ?? ""; if (!authorization.startsWith("Bearer ")) throw httpError("يلزم تسجيل الدخول إلى واثق.", 401); const { data, error } = await admin.auth.getUser(authorization.slice("Bearer ".length)); if (error || !data.user) throw httpError("جلسة المستخدم غير صالحة أو منتهية.", 401); return { userId: data.user.id }; }

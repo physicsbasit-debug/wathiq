@@ -38,6 +38,7 @@ const forbiddenRootPatterns = [
   /^GITHUB_UPLOAD_INSTRUCTIONS/i,
   /^HIDDEN_FILES_RESTORE_INSTRUCTIONS/i,
   /^GITHUB_WORKFLOW_VISIBLE$/i,
+  /^WATHIQ_(?:RESET|APPLY)_/i,
   /~\d*\./,
   /\.(bak|tmp|zip)$/i,
 ];
@@ -57,10 +58,18 @@ const obsoleteRuntimePaths = [
   "src/assessment-engine/item-validation.ts",
   "src/source-structure.ts",
   "src/book-content-tree.ts",
+  "src/central-source-store.ts",
+  "src/lesson-catalog.ts",
+  "src/ocr-indexer.ts",
+  "src/pdf-indexer.ts",
+  "src/source-domain.ts",
+  "src/source-registry.ts",
+  "src/source-retrieval.ts",
   "src/assessment-engine/source-grounding.ts",
   "src/assessment-engine/normalization.ts",
   "supabase/functions/google-drive-oauth",
   "supabase/functions/generate-source-questions",
+  "supabase/functions/source-ocr",
 ];
 
 const obsoleteTestNames = new Set([
@@ -73,6 +82,13 @@ const obsoleteTestNames = new Set([
   "toc-layout-ocr-cache.test.mjs",
   "version-assertions.mjs",
   "source-structure.test.mjs",
+  "central-source-store.test.mjs",
+  "lesson-catalog.test.mjs",
+  "ocr-indexer.test.mjs",
+  "pdf-indexer.test.mjs",
+  "source-domain.test.mjs",
+  "source-registry.test.mjs",
+  "source-retrieval.test.mjs",
 ]);
 
 async function removeKnownObsoleteArtifacts() {

@@ -19,13 +19,13 @@ export type AssessmentGenerationItemStatus =
   | "queued" | "grounding" | "generating" | "normalizing" | "validating" | "ready" | "retry_pending" | "failed" | "cancelled" | "superseded";
 
 export type AssessmentEngineErrorCode =
-  | "INVALID_BLUEPRINT" | "INVALID_ITEM_CONTRACT" | "STALE_PLAN" | "STALE_SOURCE" | "SOURCE_NOT_FOUND"
-  | "SOURCE_ACCESS_DENIED" | "SOURCE_NOT_GROUNDED" | "MODEL_TIMEOUT" | "MODEL_RATE_LIMITED" | "MODEL_UNAVAILABLE"
+  | "INVALID_BLUEPRINT" | "INVALID_ITEM_CONTRACT" | "STALE_PLAN" | "AUTHORIZATION_FAILED"
+  | "MODEL_TIMEOUT" | "MODEL_RATE_LIMITED" | "MODEL_UNAVAILABLE"
   | "MODEL_INVALID_JSON" | "MODEL_INCOMPLETE_CONTENT" | "MODEL_SCIENTIFIC_MISMATCH" | "MODEL_ASSESSMENT_MISMATCH"
   | "GLOBAL_DUPLICATION" | "CANCELLED_BY_USER" | "SUPERSEDED_BY_NEW_RUN" | "INTERNAL_ERROR";
 
-export type AssessmentEngineRetryClass = "none" | "transport_once" | "content_once" | "manual_source_refresh" | "manual_authentication";
-export type AssessmentSourceMode = "global_curriculum" | "uploaded_source";
+export type AssessmentEngineRetryClass = "none" | "transport_once" | "content_once" | "manual_authentication";
+export type AssessmentSourceMode = "global_curriculum";
 
 export interface AssessmentSourceSnapshot {
   mode: AssessmentSourceMode;
@@ -40,7 +40,7 @@ export interface AssessmentSourceSnapshot {
   extractionVersion: string;
 }
 
-/** الحد الأدنى الذي يملكه واثق قبل التأليف. المصادر المرفوعة اختيارية. */
+/** الحد الأدنى الذي يملكه واثق قبل التأليف من هوية كامبريدج والموضوع فقط. */
 export interface AssessmentItemSeed {
   planItemId: string;
   lessonId: string;
@@ -49,10 +49,9 @@ export interface AssessmentItemSeed {
   cognitiveLevel: CognitiveLevel;
   difficultyLevel?: ItemDifficulty;
   marks: number;
-  sourceReferenceId?: string;
 }
 
-export interface AssessmentBlueprintItem extends Omit<AssessmentItemSeed, "sourceReferenceId"> {
+export interface AssessmentBlueprintItem extends AssessmentItemSeed {
   order: number;
   source: AssessmentSourceSnapshot;
 }
@@ -150,8 +149,3 @@ export interface AssessmentGenerationRunSnapshot {
 }
 
 export const MODEL_ALLOWED_OUTPUT_FIELDS = Object.freeze(["stimulus", "text", "options", "answer", "rationale", "markScheme"] as const);
-export const MODEL_FORBIDDEN_OUTPUT_FIELDS = Object.freeze([
-  "planItemId", "sourceEvidenceId", "enrichmentEvidenceId", "sourceSupport", "enrichmentSupport", "enrichmentSourceTitle",
-  "enrichmentSourceUrl", "lessonId", "sourceId", "chunkIndex", "visualTarget", "visual", "scientificItem", "marks",
-  "questionType", "questionForm", "workingRequired", "contractHash", "model", "generatedAt", "requestId",
-] as const);

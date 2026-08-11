@@ -62,7 +62,7 @@ test("يبقى جدول البيانات وتدريج القياس حتميين 
     tableColumns: ["الزمن", "المسافة"], tableRows: ["1", "2"], tableCells: [["0", "0"], ["1", "2"]], hiddenCells: [],
   }, "data_table");
   const scale = parseQuestionVisualSpec({
-    ...emptyQuestionVisualSpec(), type: "instrument_scale", variant: "thermometer", title: "ميزان حرارة", altText: "تدريج حرارة", values: [-10, 100, 10, 40],
+    ...emptyQuestionVisualSpec(), type: "instrument_scale", title: "ميزان حرارة", altText: "تدريج حرارة", values: [-10, 100, 10, 40],
   }, "instrument_scale");
   assert.equal(questionVisualAssetRequirement(table).required, false);
   assert.equal(questionVisualAssetRequirement(scale).required, false);
@@ -70,15 +70,15 @@ test("يبقى جدول البيانات وتدريج القياس حتميين 
   assert.match(renderQuestionVisualSvg(scale), /question-visual-structured-exact/);
 });
 
-test("كل المرئيات التوضيحية القديمة تطلب أصل 2D ولا تعرض line-art", () => {
+test("كل المرئيات التوضيحية تطلب أصلًا ثنائي الأبعاد ولا تعرض رسمًا خطيًا", () => {
   const cases = [
     illustrated("context_scene"),
-    illustrated("pressure_diagram", { variant: "submerged_object", labels: ["الماء", "الجسم"], values: [0.72, 0.5] }),
-    illustrated("circuit_diagram", { variant: "series_circuit", components: ["battery", "lamp"] }),
-    illustrated("electrostatic_diagram", { variant: "attraction_repulsion", labels: ["الجسم الأول", "الجسم الثاني"] }),
-    illustrated("ray_diagram", { variant: "reflection", values: [40, 40] }),
-    illustrated("force_diagram", { variant: "free_body" }),
-    illustrated("flow_diagram", { variant: "linear_flow", labels: ["بداية", "تحول", "ناتج"] }),
+    illustrated("pressure_diagram", { labels: ["الماء", "الجسم"], values: [0.72, 0.5] }),
+    illustrated("circuit_diagram", { components: ["battery", "lamp"] }),
+    illustrated("electrostatic_diagram", { labels: ["الجسم الأول", "الجسم الثاني"] }),
+    illustrated("ray_diagram", { values: [40, 40] }),
+    illustrated("force_diagram", {}),
+    illustrated("flow_diagram", { labels: ["بداية", "تحول", "ناتج"] }),
   ];
   for (const raw of cases) {
     const visual = parseQuestionVisualSpec(raw, raw.type);
@@ -97,7 +97,7 @@ test("كل المرئيات التوضيحية القديمة تطلب أصل 2D
 
 test("يعرض أصل 2D المدقق كصورة نهائية بلا طبقة خطية", () => {
   const visual = parseQuestionVisualSpec({
-    ...illustrated("electrostatic_diagram", { variant: "charge_transfer", labels: ["الجسم الأول", "الجسم الثاني"] }),
+    ...illustrated("electrostatic_diagram", { labels: ["الجسم الأول", "الجسم الثاني"] }),
     illustration: {
       url: "https://example.supabase.co/storage/v1/object/public/wathiq-question-visuals/user/draft/item.png",
       assetPath: "user/draft/item.png",

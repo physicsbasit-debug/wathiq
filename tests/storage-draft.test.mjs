@@ -14,42 +14,23 @@ function withMemoryStorage(run) {
   try { return run(values); } finally { globalThis.localStorage = original; }
 }
 
-test("يرحّل مسودة صفوف 1-6 إلى Cambridge Primary", () => {
-  const draft = normalizeExamDraft({ id: "legacy-primary", grade: 4, subjectId: "science", topic: "Plants" });
-  assert.ok(draft);
-  assert.equal(draft.programmeId, "primary");
-  assert.equal(draft.syllabusCode, "0097");
-  assert.equal(draft.generationMode, "progressive_items_v1");
+test("يحفظ هوية مسارات كامبريدج الحالية من دون حقول مصادر", () => {
+  const primary = normalizeExamDraft({ id: "p", programmeId: "primary", grade: 4, subjectId: "science", lessonTopics: ["النباتات"] });
+  const lower = normalizeExamDraft({ id: "l", programmeId: "lower_secondary", grade: 8, subjectId: "science", lessonTopics: ["القوى"] });
+  const igcse = normalizeExamDraft({ id: "i", programmeId: "igcse", grade: null, subjectId: "physics", lessonTopics: ["الموجات"] });
+  assert.equal(primary?.syllabusCode, "0097");
+  assert.equal(lower?.syllabusCode, "0893");
+  assert.equal(igcse?.syllabusCode, "0625");
+  assert.equal(primary && "sourceReferences" in primary, false);
 });
 
-test("يرحّل الصفوف 7-9 علوم إلى Cambridge Lower Secondary", () => {
-  const draft = normalizeExamDraft({ id: "legacy-lower", grade: 8, subjectId: "science", topic: "Forces" });
-  assert.ok(draft);
-  assert.equal(draft.programmeId, "lower_secondary");
-  assert.equal(draft.syllabusCode, "0893");
-});
-
-test("يرحّل الفيزياء العليا إلى IGCSE Physics 0625", () => {
-  const draft = normalizeExamDraft({ id: "legacy-igcse", grade: 10, subjectId: "physics", topic: "Waves" });
-  assert.ok(draft);
-  assert.equal(draft.programmeId, "igcse");
-  assert.equal(draft.syllabusCode, "0625");
-});
-
-test("المسودة الجديدة لا تحتاج sourceReferences", () => {
-  const draft = normalizeExamDraft({ id: "global", grade: 8, subjectId: "science", lessonTopics: ["Energy"], sourceReferences: [] });
-  assert.ok(draft);
-  assert.deepEqual(draft.sourceReferences, []);
-});
-
-test("يحفظ أكثر من مسودة دون استبدال العمل السابق", () => {
+test("يحفظ أكثر من مسودة بالمخطط الحالي فقط", () => {
   withMemoryStorage(() => {
-    const first = normalizeExamDraft({ id: "draft-a", updatedAt: "2026-08-01T10:00:00.000Z" });
-    const second = normalizeExamDraft({ id: "draft-b", updatedAt: "2026-08-01T11:00:00.000Z" });
+    const first = normalizeExamDraft({ id: "draft-a", programmeId: "primary", grade: 5, subjectId: "science", updatedAt: "2026-08-11T08:00:00.000Z" });
+    const second = normalizeExamDraft({ id: "draft-b", programmeId: "lower_secondary", grade: 8, subjectId: "science", updatedAt: "2026-08-11T09:00:00.000Z" });
     assert.ok(first && second);
     saveDraft(first); saveDraft(second);
     assert.deepEqual(loadDrafts().map((draft) => draft.id), ["draft-b", "draft-a"]);
-    assert.equal(loadDraft()?.id, "draft-b");
     setActiveDraftId("draft-a");
     assert.equal(loadDraft()?.id, "draft-a");
     clearDraft("draft-a");
@@ -57,11 +38,9 @@ test("يحفظ أكثر من مسودة دون استبدال العمل الس�
   });
 });
 
-test("يرحّل مفتاح المسودة المحلية القديمة تلقائيًا", () => {
+test("لا يقرأ مفتاح مسودة تاريخي من مراحل ما قبل إعادة التأسيس", () => {
   withMemoryStorage((values) => {
-    values.set("wathiq.phase0b.latestDraft", JSON.stringify({ id: "legacy-draft", grade: 5, subjectId: "science", updatedAt: "2026-08-01T09:00:00.000Z" }));
-    const loaded = loadDraft();
-    assert.equal(loaded?.id, "legacy-draft");
-    assert.equal(loaded?.programmeId, "primary");
+    values.set("wathiq.phase0b.latestDraft", JSON.stringify({ id: "old" }));
+    assert.equal(loadDraft(), null);
   });
 });

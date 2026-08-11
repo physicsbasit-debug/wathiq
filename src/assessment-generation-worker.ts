@@ -116,7 +116,8 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 function errorMessage(payload: unknown, fallback: string): string {
   const record = asRecord(payload);
   for (const key of ["error", "message", "details", "hint"]) {
-    if (typeof record?.[key] === "string" && record[key]) return record[key] as string;
+    const value = record?.[key];
+    if (typeof value === "string" && /[\u0600-\u06FF]/u.test(value)) return value;
   }
   return fallback;
 }

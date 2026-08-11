@@ -1,75 +1,97 @@
 import assert from "node:assert/strict";
-import { access, readFile } from "node:fs/promises";
+import { access, readFile, readdir } from "node:fs/promises";
+import path from "node:path";
 import test from "node:test";
 
-const text = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
+const root = new URL("../", import.meta.url);
+const text = (relativePath) => readFile(new URL(relativePath, root), "utf8");
 
-async function missing(path) {
-  try { await access(new URL(`../${path}`, import.meta.url)); return false; }
+async function missing(relativePath) {
+  try { await access(new URL(relativePath, root)); return false; }
   catch { return true; }
 }
 
-test("مسار المصادر المباشر لا يعتمد على Google Drive أو OAuth", async () => {
+test("النواة الحالية لا تحتوي منظومة رفع مصادر أو Google Drive أو OCR", async () => {
+  const forbiddenPaths = [
+    "src/google-drive.ts",
+    "src/central-source-store.ts",
+    "src/source-domain.ts",
+    "src/source-registry.ts",
+    "src/source-retrieval.ts",
+    "src/pdf-indexer.ts",
+    "src/ocr-indexer.ts",
+    "src/lesson-catalog.ts",
+    "supabase/functions/google-drive-oauth/index.ts",
+    "supabase/functions/source-ocr/index.ts",
+  ];
+  for (const item of forbiddenPaths) assert.equal(await missing(item), true, item);
   const app = await text("src/app.ts");
-  const config = await text("src/runtime-config.ts");
-  const supabase = await text("supabase/config.toml");
-  assert.equal(await missing("src/google-drive.ts"), true);
-  assert.equal(await missing("supabase/functions/google-drive-oauth/index.ts"), true);
-  assert.doesNotMatch(config, /googleOAuth|Google Drive/iu);
-  assert.doesNotMatch(supabase, /google-drive-oauth/);
-  assert.match(supabase, /\[functions\.source-ocr\]/);
-  assert.match(app, /extractPdfText\(file,/);
-  assert.match(app, /extractPdfWithArabicOcr\(/);
-  assert.match(app, /ocrSourcePage/);
-  assert.doesNotMatch(app, /GoogleDriveService|connectGoogleDrive|google-drive-oauth/);
+  assert.doesNotMatch(app, /إدارة المحتوى|مصادر اختيارية|رفع PDF|OCR|Google Drive/iu);
+  assert.match(app, /اسم الموضوع يكفي/);
 });
 
-test("مولد المفردة مؤلف حر ثم مراجع علمي مستقل ولا يستخدم بوابة تطابق كلمات", async () => {
+test("مولد المفردة يعتمد سياق كامبريدج العالمي ومؤلفًا حرًا ثم مراجعًا مستقلاً", async () => {
   const worker = await text("supabase/functions/assessment-generation-worker/index.ts");
   assert.match(worker, /gemini-3\.6-flash/);
   assert.match(worker, /role: "assessment_author"/);
   assert.match(worker, /role: "independent_science_assessment_reviewer"/);
   assert.match(worker, /اختر أفضل سياق ومثير وبنية للسؤال بنفسك/);
   assert.match(worker, /يمكنك إعادة كتابة finalItem كاملة/);
-  assert.match(worker, /thinkingConfig: \{ thinkingLevel \}/);
-  assert.match(worker, /sourceContext/);
-  assert.match(worker, /دليل المعلم/);
-  assert.match(worker, /نواتج التعلم/);
-  assert.doesNotMatch(worker, /contentSharedTokens|contentSupport\s*<|السؤال لا يرتبط بدليل كاف/);
+  assert.match(worker, /Cambridge Primary Science 0097/);
+  assert.match(worker, /Cambridge Lower Secondary Science 0893/);
+  assert.match(worker, /Cambridge IGCSE science/);
+  assert.doesNotMatch(worker, /مصدر مرفوع|المصدر الاختياري|دليل المعلم|نواتج التعلم/u);
+  assert.doesNotMatch(worker, /contentSharedTokens|contentSupport\s*</);
 });
 
-test("عقد التوليد نفسه لا يحمل قوالب تأليف أو أهدافًا اصطناعية مسبقة", async () => {
+test("عقد التوليد لا يحمل قوالب تأليف أو أهدافًا اصطناعية أو variant بصريًا تاريخيًا", async () => {
   const progressive = await text("src/assessment-generation-progressive.ts");
   const contracts = await text("src/assessment-engine/contracts.ts");
+  const visualTypes = await text("src/types.ts");
   const worker = await text("supabase/functions/assessment-generation-worker/index.ts");
-  for (const forbidden of ["styleTarget", "visualTarget", "scenarioTarget", "stimulusTarget", "skillTarget", "diversityKey", "numericSeed", "scientificContractKey", "scientificRequirements", "outcomeId", "outcomeLabel"]) {
+  for (const forbidden of [
+    "styleTarget", "visualTarget", "scenarioTarget", "stimulusTarget", "skillTarget", "diversityKey",
+    "numericSeed", "scientificContractKey", "scientificRequirements", "outcomeId", "outcomeLabel",
+  ]) {
     assert.doesNotMatch(progressive, new RegExp(forbidden));
     assert.doesNotMatch(contracts, new RegExp(`\\b${forbidden}\\b\\s*:`));
     assert.doesNotMatch(worker, new RegExp(`\\"${forbidden}\\"`));
   }
-  assert.doesNotMatch(contracts, /needsReview\s*:/);
+  assert.doesNotMatch(visualTypes, /QuestionVisualVariant|QuestionVisualRole/);
+  assert.doesNotMatch(worker, /variant\s*:/);
   assert.doesNotMatch(worker, /needsReview\s*:/);
-  assert.doesNotMatch(worker, /variant:\s*"laboratory_setup"/u, "المؤلف الحر لا يُجبر كل رسم 2D على مشهد مختبر");
-  assert.match(worker, /examContext/);
 });
 
-test("وظيفة science-visual-generation مرئية فقط ولا تولد أسئلة", async () => {
+test("المرئيات التوضيحية 2D فقط ولا توجد مولدات خطية قديمة في التشغيل أو التصدير", async () => {
+  const visual = await text("src/question-visual.ts");
   const edge = await text("supabase/functions/science-visual-generation/index.ts");
-  assert.match(edge, /مخصصة لإنشاء الأصول العلمية ثنائية الأبعاد فقط/);
+  const styles = await text("src/styles.css");
+  const exporter = await text("src/exam-export.ts");
+  assert.match(visual, /لا يوجد رسم خطي احتياطي/);
   assert.match(edge, /gemini-3\.1-flash-image/);
-  assert.match(edge, /gemini-3\.6-flash/);
-  assert.match(edge, /reviewImage/);
   assert.match(edge, /scientificRelationshipCorrect/);
   assert.match(edge, /noScientificContradiction/);
   assert.match(edge, /noExtraScientificObjects/);
-  assert.match(edge, /لا يستخدم واثق أي رسم خطي بديل/);
-  assert.doesNotMatch(edge, /النسخة الدلالية|نوع المرئي:/u, "لا ينبغي أن تحوّل حقول النوع/variant القديمة إلى قيد على مؤلف الصورة 2D");
-  assert.doesNotMatch(edge, /status:\s*"fallback"/u, "فشل 2D يجب أن يبقى فشلًا صريحًا بلا مسار fallback");
-  assert.doesNotMatch(edge, /legacy_items|whole_exam_v2|officialPlanItems|trustedEnrichmentEnabled|generateAndValidate/);
+  for (const fossil of ["qv-context-object", "qv-force-body", "qv-charged-object", "question-visual-2d-vector"]) {
+    assert.doesNotMatch(styles, new RegExp(fossil));
+    assert.doesNotMatch(exporter, new RegExp(fossil));
+  }
 });
 
-test("محركات التوليد والتخزين القديمة غير موجودة في شجرة التشغيل", async () => {
-  for (const path of [
+test("مسار الصور يحمل هوية كامبريدج ويعمل أيضًا في IGCSE بلا رقم مرحلة", async () => {
+  const client = await text("src/visual-jobs.ts");
+  const jobs = await text("supabase/functions/question-visual-jobs/index.ts");
+  const visual = await text("supabase/functions/science-visual-generation/index.ts");
+  for (const source of [client, jobs, visual]) {
+    assert.match(source, /programmeId/);
+    assert.match(source, /syllabusCode/);
+    assert.match(source, /stageLabel/);
+  }
+  assert.doesNotMatch(client, /if \(draft\.grade === null\) return \[\]/);
+});
+
+test("محركات التوليد وشجرة الكتاب القديمة غير موجودة", async () => {
+  for (const item of [
     "src/question-generation.ts",
     "src/assessment-generation-v2.ts",
     "src/positional-toc.ts",
@@ -77,47 +99,69 @@ test("محركات التوليد والتخزين القديمة غير موج�
     "src/toc-layout-ocr.ts",
     "src/source-structure.ts",
     "src/book-content-tree.ts",
+    "src/scientific-item.ts",
     "src/assessment-engine/source-grounding.ts",
     "src/assessment-engine/normalization.ts",
     "supabase/functions/generate-source-questions/index.ts",
-  ]) assert.equal(await missing(path), true, path);
+  ]) assert.equal(await missing(item), true, item);
 });
 
-
-test("الإعداد الجديد يستخدم مخطط Supabase حاليًا واحدًا ولا يحمل جداول Drive أو شجرة كتاب", async () => {
+test("مخطط Supabase الحالي واحد ولا يحتوي جداول المصادر القديمة", async () => {
   const schema = await text("supabase/schema-current.sql");
-  assert.doesNotMatch(schema, /google_drive_connections|source_upload_sessions|source_structure_nodes|scene_2d_overlay/);
-  assert.match(schema, /create table if not exists public\.source_registry/);
-  assert.equal(await missing("supabase/phase_0_e_source_registry.sql"), true);
+  assert.doesNotMatch(schema, /google_drive_connections|source_upload_sessions|source_structure_nodes|source_registry|source_chunks|source_ocr_pages|scene_2d_overlay/);
+  const sqlFiles = (await readdir(new URL("supabase/", root))).filter((name) => name.endsWith(".sql"));
+  assert.deepEqual(sqlFiles, ["schema-current.sql"]);
 });
 
-test("اختيار الدرس إدخال حر واقتراحات العناوين مساعدة فقط", async () => {
-  const app = await text("src/app.ts");
-  const catalog = await text("src/lesson-catalog.ts");
-  assert.match(app, /id="lesson-topics-input"/);
-  assert.match(catalog, /Suggestions only/);
-  assert.doesNotMatch(app, /source_structure_nodes|buildBookContentTree|listSourceStructure|MOCK_LIBRARY/);
-  const data = await text("src/data.ts");
-  assert.doesNotMatch(data, /وحدة تجريبية|demoOutcomes|MOCK_LIBRARY/);
-});
-
-test("الواجهة والإخراج Cambridge-first ولا يحملان هوية تقويم محلية", async () => {
+test("الواجهة تبدأ من كامبريدج وتغطي Primary وLower Secondary وIGCSE بالعربية", async () => {
   const app = await text("src/app.ts");
   const curriculum = await text("src/cambridge-curriculum.ts");
   assert.match(app, /اسم الموضوع يكفي/);
-  assert.match(app, /Cambridge Primary · Lower Secondary · IGCSE/);
+  assert.match(app, /المرحلة الابتدائية/);
+  assert.match(app, /المرحلة الإعدادية/);
+  assert.match(app, /الشهادة الدولية العامة للتعليم الثانوي/);
   assert.match(curriculum, /stageFrom: 1/);
   assert.match(curriculum, /stageTo: 6/);
   assert.match(curriculum, /stageFrom: 7/);
   assert.match(curriculum, /stageTo: 9/);
-  assert.doesNotMatch(app, /سلطنة عُمان|وزارة التعليم|شعار<br\/>الخنجر/);
+  assert.doesNotMatch(app, /سلطنة عُمان|وزارة التعليم|إدارة المحتوى/);
 });
 
-test("المصدر المرفوع اختياري ومعلومات الفصل والإصدار ليست بوابة إدخال", async () => {
-  const domain = await text("src/domain.ts");
-  const sourceDomain = await text("src/source-domain.ts");
-  assert.doesNotMatch(domain, /غير مرتبط بمصدر مفهرس|sourceReferences\.length\s*===\s*0/);
-  assert.doesNotMatch(sourceDomain, /field: "semester"/);
-  assert.doesNotMatch(sourceDomain, /field: "version"/);
-  assert.match(sourceDomain, /مصدر مرفوع/);
+test("كل ملفات TypeScript داخل src مرتبطة فعليًا بجذر التطبيق", async () => {
+  const srcDir = new URL("src/", root);
+  const files = [];
+  async function walk(dirUrl, prefix = "") {
+    for (const entry of await readdir(dirUrl, { withFileTypes: true })) {
+      const rel = path.posix.join(prefix, entry.name);
+      if (entry.isDirectory()) await walk(new URL(`${entry.name}/`, dirUrl), rel);
+      else if (entry.name.endsWith(".ts")) files.push(rel);
+    }
+  }
+  await walk(srcDir);
+  const imports = new Map();
+  for (const file of files) {
+    const content = await text(`src/${file}`);
+    const deps = [...content.matchAll(/from\s+["'](\.\.?\/[^"']+)["']/g)].map((match) => match[1]);
+    imports.set(file, deps);
+  }
+  const normalize = (from, spec) => {
+    const base = path.posix.dirname(from);
+    let resolved = path.posix.normalize(path.posix.join(base, spec));
+    if (resolved.endsWith(".js")) resolved = `${resolved.slice(0, -3)}.ts`;
+    if (!resolved.endsWith(".ts")) resolved += ".ts";
+    return resolved;
+  };
+  const seen = new Set();
+  const queue = ["app.ts"];
+  while (queue.length) {
+    const file = queue.shift();
+    if (!file || seen.has(file)) continue;
+    seen.add(file);
+    for (const spec of imports.get(file) ?? []) {
+      const dep = normalize(file, spec);
+      if (imports.has(dep) && !seen.has(dep)) queue.push(dep);
+    }
+  }
+  const unreachable = files.filter((file) => file !== "app.ts" && !seen.has(file));
+  assert.deepEqual(unreachable, []);
 });

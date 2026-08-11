@@ -1,6 +1,3 @@
-[functions.source-ocr]
-verify_jwt = false
-
 [functions.science-visual-generation]
 verify_jwt = false
 

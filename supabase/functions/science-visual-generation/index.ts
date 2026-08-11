@@ -29,11 +29,13 @@ interface VisualIllustrationRequest {
   action: "generate_visual_illustration";
   draftId: string;
   planItemId: string;
-  grade: number;
+  programmeId: "primary" | "lower_secondary" | "igcse";
+  syllabusCode: string;
+  stageLabel: string;
   subject: string;
   lessonLabel: string;
   questionText: string;
-  sourceSupport: string;
+  reviewSupport: string;
   previousAssetPath: string;
   visual: VisualRecord;
 }
@@ -98,11 +100,13 @@ function parseVisualRequest(payload: Record<string, unknown>): VisualIllustratio
     action: "generate_visual_illustration",
     draftId: requireText(payload.draftId, "معرف المسودة غير صالح.", 140),
     planItemId: requireText(payload.planItemId, "معرف المفردة غير صالح.", 140),
-    grade: requireInteger(payload.grade, "الصف الدراسي غير صالح.", 1, 12),
+    programmeId: requireProgrammeId(payload.programmeId),
+    syllabusCode: requireText(payload.syllabusCode, "رمز منهج كامبريدج غير محدد.", 20),
+    stageLabel: requireText(payload.stageLabel, "مرحلة كامبريدج غير محددة.", 120),
     subject: requireText(payload.subject, "المادة غير محددة.", 120),
     lessonLabel: requireText(payload.lessonLabel, "الدرس غير محدد.", 220),
     questionText: requireText(payload.questionText, "نص السؤال غير محدد.", 2_500),
-    sourceSupport: requireText(payload.sourceSupport, "دليل المصدر غير محدد.", 6_000),
+    reviewSupport: requireText(payload.reviewSupport, "سياق المراجعة غير محدد.", 6_000),
     previousAssetPath: typeof payload.previousAssetPath === "string" ? payload.previousAssetPath.trim().slice(0, 500) : "",
     visual,
   };
@@ -154,10 +158,10 @@ function illustrationBrief(request: VisualIllustrationRequest): string {
   const components = stringArray(visual.components, 20, 80);
 
   return [
-    `المادة: ${request.subject}، الصف: ${request.grade}.`,
+    `برنامج كامبريدج: ${request.stageLabel}، رمز المنهج: ${request.syllabusCode}، المادة: ${request.subject}.`,
     `الدرس: ${request.lessonLabel}.`,
     `نص السؤال: ${request.questionText}`,
-    `دليل المصدر الحاكم: ${request.sourceSupport}`,
+    `سياق المراجعة الحاكم: ${request.reviewSupport}`,
     `الغرض: ${purpose || "توضيح علمي يخدم حل السؤال دون إعطاء الإجابة"}.`,
     altText ? `الوصف المطلوب: ${altText}.` : "",
     title ? `العنوان الداخلي للمواصفة: ${title}.` : "",
@@ -259,7 +263,7 @@ async function reviewImage(
         role: "user",
         parts: [
           { text: [
-            "راجع الأصل 2D التالي مقارنة بالسؤال ودليل المصدر والمواصفة الدلالية.",
+            "راجع الأصل 2D التالي مقارنة بالسؤال وسياق المراجعة والمواصفة الدلالية.",
             "وافق فقط إذا كان الرسم صحيحاً علمياً، والعناصر المطلوبة وعلاقاتها المكانية صحيحة، ولا توجد عناصر علمية زائدة أو تضليل بصري.",
             "اعتبر أي نص/رقم/وحدة/سهم/رمز غير مطلوب صراحة عيباً.",
             "هذا أصل نهائي كامل؛ يجب أن يخدم السؤال دون كشف الإجابة، ولا توجد طبقة خطية لاحقة ستصلح أخطاءه.",
@@ -487,6 +491,11 @@ function requireText(value: unknown, message: string, maxLength: number): string
 function requireInteger(value: unknown, message: string, minimum: number, maximum: number): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < minimum || value > maximum) throw httpError(message, 400);
   return value;
+}
+
+function requireProgrammeId(value: unknown): "primary" | "lower_secondary" | "igcse" {
+  if (value === "primary" || value === "lower_secondary" || value === "igcse") return value;
+  throw httpError("برنامج كامبريدج غير صالح.", 400);
 }
 
 function requiredEnv(name: string): string {

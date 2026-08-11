@@ -62,8 +62,6 @@ export function createEmptyDraft(now = new Date()): ExamDraft {
     subjectId: "science",
     lessonTopics: [],
     topic: "",
-    sourceReferences: [],
-    sourceRetrievalVersion: "",
     title,
     examDate: toDateInputValue(now),
     school: "",
@@ -112,7 +110,6 @@ export function setCambridgeProgramme(draft: ExamDraft, programmeId: ExamDraft["
   draft.syllabusCode = draft.subjectId ? syllabusCodeFor(programmeId, draft.subjectId) : "";
   draft.lessonTopics = [];
   draft.topic = "";
-  draft.sourceReferences = [];
   resetGeneratedState(draft);
   return draft;
 }
@@ -199,10 +196,10 @@ export function validateExamSetup(draft: ExamDraft): SpecValidation {
   const uniqueLessons = uniqueLessonTopics(draft.lessonTopics);
 
   if (!isStageValidForProgramme(draft.programmeId, draft.grade)) {
-    issues.push({ field: "grade", message: "اختر مرحلة Cambridge صحيحة." });
+    issues.push({ field: "grade", message: "اختر مرحلة كامبريدج صحيحة." });
   }
   if (!draft.subjectId || !subjectProfile(draft.programmeId, draft.subjectId)) {
-    issues.push({ field: "subject", message: "اختر مادة علوم متاحة في مسار Cambridge المحدد." });
+    issues.push({ field: "subject", message: "اختر مادة علوم متاحة في مسار كامبريدج المحدد." });
   }
   if (lessonTopics.length < MIN_LESSON_TOPICS || lessonTopics.length > MAX_LESSON_TOPICS) {
     issues.push({ field: "lessons", message: `أدخل من ${MIN_LESSON_TOPICS} إلى ${MAX_LESSON_TOPICS} موضوعات أو دروس.` });
@@ -264,24 +261,10 @@ export function buildPlan(draft: ExamDraft): PlanItem[] {
     level: cycle[index % cycle.length] ?? "معرفة",
   }));
 
-  const referencesByLesson = new Map<string, ExamDraft["sourceReferences"]>();
-  for (const lesson of lessons) referencesByLesson.set(lessonTopicKey(lesson), []);
-  for (const reference of draft.sourceReferences) {
-    const key = lessonTopicKey(reference.lessonTopic ?? "");
-    const bucket = referencesByLesson.get(key);
-    if (bucket) bucket.push(reference);
-  }
-  const referenceOffsets = new Map<string, number>();
-
   return entries.map((entry, index) => {
     const lessonIndex = index % lessons.length;
     const lesson = lessons[lessonIndex];
     if (!lesson) throw new Error("تعذر توزيع مفردات الخطة على الموضوعات.");
-    const key = lessonTopicKey(lesson);
-    const lessonReferences = referencesByLesson.get(key) ?? [];
-    const offset = referenceOffsets.get(key) ?? 0;
-    const reference = lessonReferences.length ? lessonReferences[offset % lessonReferences.length] : undefined;
-    if (reference) referenceOffsets.set(key, offset + 1);
     return {
       id: `plan-${index + 1}`,
       lessonId: `topic-${lessonIndex + 1}`,
@@ -289,7 +272,6 @@ export function buildPlan(draft: ExamDraft): PlanItem[] {
       cognitiveLevel: entry.level,
       questionType: entry.type,
       marks: entry.marks,
-      ...(reference ? { sourceReferenceId: reference.id } : {}),
       proposals: [],
     };
   });

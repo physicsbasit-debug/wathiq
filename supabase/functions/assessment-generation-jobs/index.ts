@@ -252,7 +252,7 @@ function parseBlueprintItem(value: unknown, expectedOrder: number): {
   const unknownSourceFields = Object.keys(source).filter((key) => !allowedSourceFields.has(key));
   if (unknownSourceFields.length) throw httpError("لقطة المصدر تحتوي حقولًا غير مسموحة.", 400);
   const mode = requireText(source.mode, "وضع المصدر غير صالح.", 40);
-  if (mode !== "global_curriculum" && mode !== "uploaded_source") throw httpError("وضع المصدر غير مدعوم.", 400);
+  if (mode !== "global_curriculum") throw httpError("واثق الحالي يقبل سياق كامبريدج العالمي فقط.", 400);
   requireText(source.sourceId, "معرف المصدر غير صالح.", 180);
   requireText(source.sourceTitle, "عنوان المصدر غير صالح.", 300);
   requireText(source.sourceKind, "نوع المصدر غير صالح.", 100);

@@ -18,7 +18,7 @@ function computedMarks(counts) {
   return counts.mcq + counts.short * 2 + counts.long * 4;
 }
 
-test("يغطي مخطط Cambridge المراحل 1-6 للابتدائي و7-9 للإعدادي", () => {
+test("يغطي مخطط كامبريدج المراحل 1-6 للابتدائي و7-9 للإعدادي", () => {
   assert.deepEqual(stagesForProgramme("primary"), [1, 2, 3, 4, 5, 6]);
   assert.deepEqual(stagesForProgramme("lower_secondary"), [7, 8, 9]);
   assert.equal(isStageValidForProgramme("primary", 1), true);
@@ -29,7 +29,7 @@ test("يغطي مخطط Cambridge المراحل 1-6 للابتدائي و7-9 ل
   assert.equal(isStageValidForProgramme("lower_secondary", 6), false);
 });
 
-test("يستخدم أكواد Cambridge Science الصحيحة للمسارات المدعومة", () => {
+test("يستخدم أكواد علوم كامبريدج الصحيحة للمسارات المدعومة", () => {
   assert.equal(syllabusCodeFor("primary", "science"), "0097");
   assert.equal(syllabusCodeFor("lower_secondary", "science"), "0893");
   assert.equal(syllabusCodeFor("igcse", "physics"), "0625");
@@ -48,15 +48,15 @@ test("لا يعرض مواد غير العلوم داخل أي مسار", () => 
 });
 
 test("يعرض هوية المنهج والمرحلة بوضوح", () => {
-  assert.match(curriculumDisplayName("primary", "science", 4), /Cambridge Primary Science/);
-  assert.match(curriculumDisplayName("primary", "science", 4), /Stage 4/);
+  assert.match(curriculumDisplayName("primary", "science", 4), /كامبريدج للعلوم في المرحلة الابتدائية/);
+  assert.match(curriculumDisplayName("primary", "science", 4), /المرحلة 4/);
   assert.match(curriculumDisplayName("primary", "science", 4), /0097/);
-  assert.match(curriculumDisplayName("lower_secondary", "science", 8), /Stage 8/);
+  assert.match(curriculumDisplayName("lower_secondary", "science", 8), /المرحلة 8/);
   assert.match(curriculumDisplayName("lower_secondary", "science", 8), /0893/);
   assert.match(curriculumDisplayName("igcse", "physics", 10), /0625/);
 });
 
-test("إعدادات الاختبار الافتراضية اقتراحات واثق داخلية ويمكن أن تتغير دون ادعاء أنها مواصفة Cambridge الرسمية", () => {
+test("إعدادات الاختبار الافتراضية اقتراحات واثق داخلية ويمكن أن تتغير دون ادعاء أنها مواصفة كامبريدج الرسمية", () => {
   assert.deepEqual(EXAM_TITLE_OPTIONS, ["اختبار قصير", "اختبار تدريبي", "اختبار شامل"]);
   for (const title of EXAM_TITLE_OPTIONS) {
     const preset = assessmentPreset(title);

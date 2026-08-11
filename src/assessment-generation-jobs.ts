@@ -28,8 +28,8 @@ const ITEM_STATUSES = new Set<AssessmentGenerationItemStatus>([
   "queued", "grounding", "generating", "normalizing", "validating", "ready", "retry_pending", "failed", "cancelled", "superseded",
 ]);
 const ERROR_CODES = new Set<AssessmentEngineErrorCode>([
-  "INVALID_BLUEPRINT", "INVALID_ITEM_CONTRACT", "STALE_PLAN", "STALE_SOURCE", "SOURCE_NOT_FOUND",
-  "SOURCE_ACCESS_DENIED", "SOURCE_NOT_GROUNDED", "MODEL_TIMEOUT", "MODEL_RATE_LIMITED", "MODEL_UNAVAILABLE",
+  "INVALID_BLUEPRINT", "INVALID_ITEM_CONTRACT", "STALE_PLAN", "AUTHORIZATION_FAILED",
+  "MODEL_TIMEOUT", "MODEL_RATE_LIMITED", "MODEL_UNAVAILABLE",
   "MODEL_INVALID_JSON", "MODEL_INCOMPLETE_CONTENT", "MODEL_SCIENTIFIC_MISMATCH", "MODEL_ASSESSMENT_MISMATCH",
   "GLOBAL_DUPLICATION", "CANCELLED_BY_USER", "SUPERSEDED_BY_NEW_RUN", "INTERNAL_ERROR",
 ]);
@@ -174,7 +174,7 @@ function parseItem(value: unknown): AssessmentGenerationItemSnapshot | null {
     errorCode: ERROR_CODES.has(record.errorCode as AssessmentEngineErrorCode)
       ? record.errorCode as AssessmentEngineErrorCode
       : "",
-    errorMessage: record.errorMessage,
+    errorMessage: arabicMessage(record.errorMessage, record.errorCode ? "تعذر تنفيذ المفردة. راجع حالة المهمة أو أعد المحاولة." : ""),
     stageTimings,
     ...(result ? { result } : {}),
     startedAt: record.startedAt,
@@ -231,10 +231,15 @@ function isUuid(value: unknown): value is string {
   return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value);
 }
 
+function arabicMessage(value: unknown, fallback: string): string {
+  return typeof value === "string" && /[\u0600-\u06FF]/u.test(value) ? value : fallback;
+}
+
 function errorMessage(payload: unknown, fallback: string): string {
   const record = asRecord(payload);
   for (const key of ["error", "message", "details", "hint"]) {
-    if (typeof record?.[key] === "string" && record[key]) return record[key] as string;
+    const value = record?.[key];
+    if (typeof value === "string" && /[\u0600-\u06FF]/u.test(value)) return value;
   }
   return fallback;
 }

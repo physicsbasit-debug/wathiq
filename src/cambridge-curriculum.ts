@@ -19,23 +19,23 @@ export interface CambridgeScienceSubject {
 export const CAMBRIDGE_PROGRAMMES: readonly CambridgeProgrammeProfile[] = [
   {
     id: "primary",
-    label: "Cambridge Primary Science",
+    label: "كامبريدج للعلوم في المرحلة الابتدائية",
     syllabusCode: "0097",
     stageFrom: 1,
     stageTo: 6,
-    note: "الصفوف/Stages 1-6",
+    note: "المراحل 1–6",
   },
   {
     id: "lower_secondary",
-    label: "Cambridge Lower Secondary Science",
+    label: "كامبريدج للعلوم في المرحلة الإعدادية",
     syllabusCode: "0893",
     stageFrom: 7,
     stageTo: 9,
-    note: "الصفوف/Stages 7-9",
+    note: "المراحل 7–9",
   },
   {
     id: "igcse",
-    label: "Cambridge IGCSE Sciences",
+    label: "كامبريدج للعلوم للشهادة الدولية العامة للتعليم الثانوي",
     syllabusCode: "",
     note: "المسار الدولي قبل الجامعي",
   },
@@ -48,12 +48,12 @@ export const CAMBRIDGE_SCIENCE_SUBJECTS: readonly CambridgeScienceSubject[] = [
   { id: "chemistry", label: "الكيمياء", syllabusCode: "0620", programmeId: "igcse" },
   { id: "biology", label: "الأحياء", syllabusCode: "0610", programmeId: "igcse" },
   { id: "combined_science", label: "العلوم المجمعة", syllabusCode: "0653", programmeId: "igcse" },
-  { id: "coordinated_sciences", label: "العلوم المنسقة (Double Award)", syllabusCode: "0654", programmeId: "igcse" },
+  { id: "coordinated_sciences", label: "العلوم المنسقة (شهادة مزدوجة)", syllabusCode: "0654", programmeId: "igcse" },
 ] as const;
 
 export function programmeProfile(id: CambridgeProgrammeId): CambridgeProgrammeProfile {
   const profile = CAMBRIDGE_PROGRAMMES.find((item) => item.id === id);
-  if (!profile) throw new Error(`مسار Cambridge غير مدعوم: ${id}`);
+  if (!profile) throw new Error(`مسار كامبريدج غير مدعوم: ${id}`);
   return profile;
 }
 
@@ -78,8 +78,8 @@ export function defaultStageForProgramme(id: CambridgeProgrammeId): number | nul
 }
 
 export function stageLabel(programmeId: CambridgeProgrammeId, stage: number | null): string {
-  if (programmeId === "igcse") return "Cambridge IGCSE";
-  return stage ? `Stage ${stage}` : "مرحلة غير محددة";
+  if (programmeId === "igcse") return "كامبريدج للشهادة الدولية العامة للتعليم الثانوي";
+  return stage ? `المرحلة ${stage}` : "مرحلة غير محددة";
 }
 
 export function curriculumDisplayName(

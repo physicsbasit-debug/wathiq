@@ -1,11 +1,9 @@
 import type {
   CircuitComponent,
   QuestionVisualPoint,
-  QuestionVisualRole,
   QuestionVisualSeries,
   QuestionVisualSpec,
   QuestionVisualType,
-  QuestionVisualVariant,
   QuestionVisualVector,
 } from "./types.js";
 
@@ -13,7 +11,7 @@ import type {
  * Visual policy after the quality reset:
  * - data_table / line_graph / bar_chart / instrument_scale are exact, deterministic renderings.
  * - every other non-none visual is an illustrative scientific asset and must be a validated 2D image.
- * - there is no line-art fallback and no overlay path.
+ * - لا يوجد بديل رسومي خطي؛ المرئيات التوضيحية تستخدم أصلًا علميًا ثنائي الأبعاد مدققًا.
  */
 export const QUESTION_VISUAL_TYPES: readonly QuestionVisualType[] = [
   "none",
@@ -30,48 +28,6 @@ export const QUESTION_VISUAL_TYPES: readonly QuestionVisualType[] = [
   "flow_diagram",
 ];
 
-export const QUESTION_VISUAL_VARIANTS: readonly QuestionVisualVariant[] = [
-  "default",
-  "door_handle",
-  "playground_seesaw",
-  "wrench_tool",
-  "bicycle_brake",
-  "shopping_trolley",
-  "school_bag",
-  "water_tank",
-  "solar_panel",
-  "laboratory_setup",
-  "road_safety",
-  "submerged_object",
-  "depth_comparison",
-  "force_area",
-  "liquid_column",
-  "series_circuit",
-  "measurement_circuit",
-  "charge_transfer",
-  "attraction_repulsion",
-  "electric_field",
-  "trend",
-  "comparison",
-  "multi_series",
-  "table_completion",
-  "table_comparison",
-  "thermometer",
-  "burette",
-  "measuring_cylinder",
-  "meter_scale",
-  "reflection",
-  "refraction",
-  "converging_lens",
-  "prism",
-  "free_body",
-  "balanced_forces",
-  "moments",
-  "linear_flow",
-  "cycle_flow",
-  "state_change",
-];
-
 export const CIRCUIT_COMPONENTS: readonly CircuitComponent[] = [
   "battery",
   "switch_open",
@@ -81,16 +37,6 @@ export const CIRCUIT_COMPONENTS: readonly CircuitComponent[] = [
   "motor",
   "ammeter",
   "voltmeter",
-];
-
-export const QUESTION_VISUAL_ROLES: readonly QuestionVisualRole[] = [
-  "read",
-  "calculate",
-  "interpret",
-  "compare",
-  "complete",
-  "draw",
-  "evaluate",
 ];
 
 const STRUCTURED_EXACT_VISUAL_TYPES = new Set<QuestionVisualType>([
@@ -121,14 +67,6 @@ export function questionVisualTypeLabel(type: QuestionVisualType): string {
 
 export function isQuestionVisualType(value: unknown): value is QuestionVisualType {
   return typeof value === "string" && (QUESTION_VISUAL_TYPES as readonly string[]).includes(value);
-}
-
-export function isQuestionVisualVariant(value: unknown): value is QuestionVisualVariant {
-  return typeof value === "string" && (QUESTION_VISUAL_VARIANTS as readonly string[]).includes(value);
-}
-
-export function isQuestionVisualRole(value: unknown): value is QuestionVisualRole {
-  return typeof value === "string" && (QUESTION_VISUAL_ROLES as readonly string[]).includes(value);
 }
 
 export function isCircuitComponent(value: unknown): value is CircuitComponent {
@@ -170,7 +108,6 @@ export function parseQuestionVisualIllustration(value: unknown): QuestionVisualS
   const promptVersion = cleanText(record.promptVersion, 80);
   if (!url || !assetPath || !model || !generatedAt || !promptVersion || record.validated !== true
     || !["image/png", "image/jpeg", "image/webp"].includes(mimeType)) return undefined;
-  // Legacy overlay metadata is deliberately normalized to a full replacement asset.
   return {
     url,
     assetPath,
@@ -248,9 +185,7 @@ export function emptyQuestionVisualSpec(): QuestionVisualSpec {
   return {
     type: "none",
     visualId: "",
-    variant: "default",
     purpose: "",
-    role: "read",
     title: "",
     altText: "",
     xAxisLabel: "",
@@ -284,9 +219,7 @@ export function parseQuestionVisualSpec(value: unknown, expectedType?: QuestionV
   const spec: QuestionVisualSpec = {
     type: record.type,
     visualId: cleanText(record.visualId, 80),
-    variant: isQuestionVisualVariant(record.variant) ? record.variant : "default",
     purpose: cleanText(record.purpose, 240),
-    role: isQuestionVisualRole(record.role) ? record.role : "read",
     title: cleanText(record.title),
     altText: cleanText(record.altText, 320),
     xAxisLabel: cleanText(record.xAxisLabel, 60),
@@ -315,11 +248,10 @@ export function parseQuestionVisualSpec(value: unknown, expectedType?: QuestionV
 }
 
 export function diversifyQuestionVisualSpec(spec: QuestionVisualSpec, index: number, planItemId = ""): QuestionVisualSpec {
-  // The quality-reset engine owns the visual brief. Storage must never invent a scenario/variant.
+  // يحتفظ واثق بوصف المرئي نفسه دون فرض سيناريو أو قالب تاريخي.
   return {
     ...spec,
     visualId: spec.visualId || (spec.type === "none" ? "" : `visual-${planItemId || index + 1}`),
-    variant: spec.variant ?? "default",
     purpose: spec.purpose || spec.altText,
   };
 }
@@ -329,7 +261,7 @@ export function validateQuestionVisualSpec(spec: QuestionVisualSpec): void {
   if (!spec.title || !spec.altText) throw new Error("المرئي التعليمي يحتاج عنوانًا ووصفًا بديلًا.");
 
   // Illustrative science visuals are validated by the independent multimodal reviewer after generation.
-  // The client deliberately does not infer scientific geometry with hand-written line art.
+  // الواجهة لا تستنتج هندسة علمية برسومات يدوية؛ الأصل التوضيحي يأتي من مسار ثنائي الأبعاد المدقق.
   if (!STRUCTURED_EXACT_VISUAL_TYPES.has(spec.type)) return;
 
   if (spec.type === "line_graph") {
@@ -508,7 +440,7 @@ export function renderQuestionVisualSvg(spec: QuestionVisualSpec): string {
 
   if (isAiIllustrationEligible(spec)) {
     if (!isValidated2DIllustration(spec)) {
-      return `<figure class="question-visual question-visual-${spec.type} question-visual-2d-required" data-visual-id="${escapeXml(spec.visualId ?? "")}" data-visual-mode="2d-required" data-visual-asset-kind="pending"><div class="question-visual-2d-placeholder" role="status" aria-label="${escapeXml(spec.altText)}"><strong>الأصل العلمي 2D غير جاهز بعد</strong><span>سيظهر المرئي بعد إنشائه واجتياز المراجعة العلمية والبصرية. لا يوجد رسم خطي احتياطي.</span></div><figcaption>${escapeXml(spec.altText)}</figcaption></figure>`;
+      return `<figure class="question-visual question-visual-${spec.type} question-visual-2d-required" data-visual-id="${escapeXml(spec.visualId ?? "")}" data-visual-mode="2d-required" data-visual-asset-kind="pending"><div class="question-visual-2d-placeholder" role="status" aria-label="${escapeXml(spec.altText)}"><strong>الأصل العلمي ثنائي الأبعاد غير جاهز بعد</strong><span>سيظهر المرئي بعد إنشائه واجتياز المراجعة العلمية والبصرية. لا يوجد رسم خطي احتياطي.</span></div><figcaption>${escapeXml(spec.altText)}</figcaption></figure>`;
     }
     return `<figure class="question-visual question-visual-${spec.type} question-visual-illustrated" data-visual-id="${escapeXml(spec.visualId ?? "")}" data-visual-mode="illustrated" data-visual-asset-kind="scene_2d"><div class="question-visual-illustrated" data-hybrid-visual="ready"><img class="question-visual-illustration" src="${escapeXml(spec.illustration!.url)}" alt="${escapeXml(spec.altText)}" loading="eager" decoding="async" crossorigin="anonymous"/></div><figcaption>${escapeXml(spec.altText)}</figcaption></figure>`;
   }

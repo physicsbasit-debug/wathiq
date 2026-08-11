@@ -8,6 +8,7 @@ import type {
 } from "./types.js";
 import type { WathiqRuntimeConfig } from "./runtime-config.js";
 import { questionVisualAssetRequirement, stripQuestionVisualIllustration } from "./question-visual.js";
+import { stageLabel } from "./cambridge-curriculum.js";
 
 interface OwnerSessionLike { accessToken: string }
 type SessionProvider = () => Promise<OwnerSessionLike>;
@@ -15,11 +16,13 @@ type FetchLike = typeof fetch;
 
 interface VisualJobInput {
   planItemId: string;
-  grade: number;
+  programmeId: ExamDraft["programmeId"];
+  syllabusCode: string;
+  stageLabel: string;
   subject: string;
   lessonLabel: string;
   questionText: string;
-  sourceSupport: string;
+  reviewSupport: string;
   previousAssetPath: string;
   requiredMode: VisualJobRequiredMode;
   visual: Record<string, unknown>;
@@ -35,7 +38,6 @@ export function isVisualJobPending(status: VisualJobStatus): boolean {
 }
 
 export function requiredVisualJobItems(draft: ExamDraft, subject: string): VisualJobInput[] {
-  if (draft.grade === null) return [];
   return draft.plan.flatMap((item) => {
     if (!item.visual || item.visual.type === "none") return [];
     const requirement = questionVisualAssetRequirement(item.visual);
@@ -44,11 +46,13 @@ export function requiredVisualJobItems(draft: ExamDraft, subject: string): Visua
     if (!proposal) return [];
     return [{
       planItemId: item.id,
-      grade: draft.grade!,
+      programmeId: draft.programmeId,
+      syllabusCode: draft.syllabusCode,
+      stageLabel: stageLabel(draft.programmeId, draft.grade),
       subject,
       lessonLabel: item.lessonLabel,
       questionText: `${proposal.stimulus ? `${proposal.stimulus} ` : ""}${proposal.text}`.trim(),
-      sourceSupport: proposal.sourceSupport || item.lessonLabel,
+      reviewSupport: proposal.reviewSupport || item.lessonLabel,
       previousAssetPath: item.visual.illustration?.assetPath ?? "",
       requiredMode: requirement.mode,
       visual: stripQuestionVisualIllustration(item.visual) as unknown as Record<string, unknown>,
@@ -61,11 +65,16 @@ function selectedProposalForVisual(draft: ExamDraft, item: PlanItem): PlanItem["
   return item.proposals.find((proposal) => proposal.id === selectedId) ?? item.proposals[0];
 }
 
+function arabicMessage(value: unknown, fallback: string): string {
+  return typeof value === "string" && /[\u0600-\u06FF]/u.test(value) ? value : fallback;
+}
+
 function errorMessage(payload: unknown, fallback: string): string {
   if (typeof payload !== "object" || payload === null) return fallback;
   const record = payload as Record<string, unknown>;
   for (const key of ["error", "message", "details", "hint"]) {
-    if (typeof record[key] === "string" && record[key]) return record[key] as string;
+    const value = record[key];
+    if (typeof value === "string" && /[\u0600-\u06FF]/u.test(value)) return value;
   }
   return fallback;
 }
@@ -98,7 +107,7 @@ function parseJob(value: unknown): QuestionVisualJobSnapshot | null {
   const record = value as Record<string, unknown>;
   const allowed = new Set<VisualJobStatus>(["queued", "generating", "validating", "ready", "retry_pending", "failed", "cancelled"]);
   if (typeof record.id !== "string" || typeof record.draftId !== "string" || typeof record.planItemId !== "string"
-    || typeof record.visualHash !== "string" || (record.requiredMode !== "replace" && record.requiredMode !== "overlay")
+    || typeof record.visualHash !== "string" || record.requiredMode !== "replace"
     || typeof record.status !== "string" || !allowed.has(record.status as VisualJobStatus)
     || typeof record.attemptCount !== "number" || typeof record.maxAttempts !== "number"
     || typeof record.updatedAt !== "string") return null;
@@ -113,7 +122,7 @@ function parseJob(value: unknown): QuestionVisualJobSnapshot | null {
     attemptCount: record.attemptCount,
     maxAttempts: record.maxAttempts,
     errorCode: typeof record.errorCode === "string" ? record.errorCode : "",
-    errorMessage: typeof record.errorMessage === "string" ? record.errorMessage : "",
+    errorMessage: arabicMessage(record.errorMessage, record.errorCode ? "تعذر إنشاء الأصل البصري. أعد المحاولة لاحقًا." : ""),
     ...(asset ? { asset } : {}),
     startedAt: typeof record.startedAt === "string" ? record.startedAt : "",
     completedAt: typeof record.completedAt === "string" ? record.completedAt : "",
