@@ -1,17 +1,16 @@
 {
   "name": "wathiq",
-  "version": "0.0.68",
+  "version": "0.1.0-reset-bootstrap",
   "private": true,
   "type": "module",
-  "description": "واثق: منصة لإعداد اختبارات مواد العلوم من مصادر موثقة، بخطة تقويم حتمية وتوليد تدريجي دائم وتحقيق علمي ومرئي وتصدير Word/PDF.",
+  "description": "Temporary two-file bootstrap for Wathiq 0.1.0 Quality Reset. Run Repository Maintenance once.",
   "scripts": {
     "build": "node scripts/build.mjs",
     "dev": "node scripts/serve.mjs",
     "test": "npm run build && node --test tests/*.test.mjs",
     "check": "npm run test",
-    "repo:check": "node scripts/check-repository-hygiene.mjs",
-    "d4:check": "node scripts/check-phase-3-0-readiness.mjs",
-    "repo:clean": "node scripts/check-repository-hygiene.mjs --clean"
+    "repo:check": "node -e \"console.log(\\\"RESET BOOTSTRAP PENDING: run Repository Maintenance\\\")\"",
+    "repo:clean": "node WATHIQ_RESET_0_1_0.mjs"
   },
   "devDependencies": {
     "typescript": "^5.8.0"
