@@ -1,6 +1,6 @@
 {
   "name": "wathiq",
-  "version": "0.0.67",
+  "version": "0.0.68",
   "private": true,
   "type": "module",
   "description": "واثق: منصة لإعداد اختبارات مواد العلوم من مصادر موثقة، بخطة تقويم حتمية وتوليد تدريجي دائم وتحقيق علمي ومرئي وتصدير Word/PDF.",
@@ -11,7 +11,7 @@
     "check": "npm run test",
     "repo:check": "node scripts/check-repository-hygiene.mjs",
     "d4:check": "node scripts/check-phase-3-0-readiness.mjs",
-    "repo:clean": "node scripts/check-repository-hygiene.mjs --clean"
+    "repo:clean": "node WATHIQ_APPLY_v0_0_68.mjs"
   },
   "devDependencies": {
     "typescript": "^5.8.0"
