@@ -197,8 +197,8 @@ async function processItem(itemId: string, ownerId: string, requestId: string): 
 
     await heartbeat(claimed, workerId, "validating");
     const validationStartedAt = Date.now();
-    validateContent(content, contract, scientific);
     const evidence = selectEvidenceAnchor(evidenceSegments, contract, content);
+    validateContent(content, contract, scientific);
     validationMs = Date.now() - validationStartedAt;
 
     const totalMs = Date.now() - totalStartedAt;
@@ -459,11 +459,9 @@ function normalizeModelContent(value: unknown, contract: ItemContract): ModelCon
   return { stimulus, text, options, answer, rationale, markScheme, needsReview: record.needsReview === true };
 }
 
-function validateContent(content: ModelContent, contract: ItemContract, scientific: ScientificBundle): void {
-  const combined = `${content.stimulus} ${content.text} ${content.answer} ${content.rationale} ${content.markScheme.join(" ")}`;
-  if (!hasTokenOverlap(combined, `${contract.lessonLabel} ${contract.outcomeLabel} ${contract.topic}`)) {
-    throw workerError("MODEL_ASSESSMENT_MISMATCH", "السؤال لا يرتبط بالدرس أو هدف التعلم في عقد المفردة.", "content_once", 422);
-  }
+function validateContent(content: ModelContent, _contract: ItemContract, scientific: ScientificBundle): void {
+  // الارتباط بالمصدر/الدرس يثبت عبر Evidence Anchor على المقطع المرتبط بالعقد نفسه.
+  // المقارنة الحرفية مع عنوان الدرس سببت رفضًا كاذبًا في العربية (مفرد/جمع/نسبة وصيغ صرفية).
   if (scientific.expectedAnswerTokens.length) {
     const normalized = normalizeArabic(`${content.answer} ${content.rationale} ${content.markScheme.join(" ")}`);
     const missing = scientific.expectedAnswerTokens.filter((token) => !normalized.includes(normalizeArabic(token)));
@@ -491,11 +489,18 @@ async function buildEvidenceSegments(sourceContent: string): Promise<EvidenceSeg
 }
 
 function selectEvidenceAnchor(segments: EvidenceSegment[], contract: ItemContract, content: ModelContent): Record<string, unknown> {
-  const query = tokens(`${contract.lessonLabel} ${contract.outcomeLabel} ${contract.topic} ${content.stimulus} ${content.text} ${content.answer} ${content.rationale}`);
+  const contentTokens = tokens(`${content.stimulus} ${content.text} ${content.answer} ${content.rationale} ${content.markScheme.join(" ")}`);
   const lesson = tokens(`${contract.lessonLabel} ${contract.outcomeLabel} ${contract.topic}`);
-  const ranked = segments.map((segment) => ({ segment, score: overlap(query, segment.tokens) * 0.7 + overlap(lesson, segment.tokens) * 0.3 })).sort((a, b) => b.score - a.score || a.segment.evidenceIndex - b.segment.evidenceIndex);
+  const ranked = segments.map((segment) => {
+    const contentSupport = overlap(contentTokens, segment.tokens);
+    const contentSharedTokens = sharedTokenCount(contentTokens, segment.tokens);
+    const contractSupport = overlap(lesson, segment.tokens);
+    return { segment, contentSupport, contentSharedTokens, contractSupport, score: contentSupport * 0.75 + contractSupport * 0.25 };
+  }).sort((a, b) => b.score - a.score || b.contentSupport - a.contentSupport || a.segment.evidenceIndex - b.segment.evidenceIndex);
   const best = ranked[0];
-  if (!best || best.score < 0.035) throw workerError("SOURCE_NOT_GROUNDED", "السؤال لا يرتبط بدليل كافٍ داخل مقطع المصدر المحدد.", "content_once", 422);
+  if (!best || best.contentSharedTokens < 2 || best.contentSupport < 0.06 || best.score < 0.05) {
+    throw workerError("SOURCE_NOT_GROUNDED", "السؤال لا يرتبط بدليل كافٍ داخل مقطع المصدر المحدد.", "content_once", 422);
+  }
   return { evidenceIndex: best.segment.evidenceIndex, evidenceHash: best.segment.evidenceHash, excerpt: best.segment.excerpt, score: Number(best.score.toFixed(4)) };
 }
 
@@ -543,7 +548,7 @@ function electrostaticBundle(contract: ItemContract): ScientificBundle {
     facts: [`شحنة الجسم الأول موجبة والثاني ${same ? "موجبة" : "سالبة"}.`, `العلاقة الصحيحة ${relation}.`],
     expectedAnswerTokens: [relation],
     scientificItem: { version: "scientific-item-v1", kind: "electrostatic_system", phenomenon: "تفاعل شحنتين", primaryEntity: "الجسم الأول", secondaryEntity: "الجسم الثاني", visualObject: "جسمان مشحونان", relationship: relationCode, primaryCharge: "positive", secondaryCharge: same ? "positive" : "negative", transferredParticle: "", quantities: [], resultValue: 0, resultUnit: "", resultDirection: same ? "away" : "toward", expectedResult: relation },
-    visual: visualSpec(contract, "electrostatic_diagram", "attraction_repulsion", { labels: ["الجسم الأول", "الجسم الثاني", relation], values: [same ? 0 : 1], annotations: [relationCode, "positive", same ? "positive" : "negative"] }),
+    visual: visualSpec(contract, "electrostatic_diagram", "attraction_repulsion", { role: "interpret", labels: ["الجسم الأول", "الجسم الثاني", relation], values: [same ? 0 : 1], annotations: [relationCode, "positive", same ? "positive" : "negative"] }),
   };
 }
 
@@ -616,6 +621,7 @@ function normalizeSource(value: string): string { return value.replace(/\r\n?/gu
 function normalizeArabic(value: string): string { return value.normalize("NFKC").replace(/[إأآٱ]/gu, "ا").replace(/ى/gu, "ي").replace(/ة/gu, "ه").replace(/[ًٌٍَُِّْـ]/gu, "").replace(/[٠-٩]/gu, (digit) => String("٠١٢٣٤٥٦٧٨٩".indexOf(digit))).replace(/[^\p{L}\p{N}\s.،؛:()/%+\-=]/gu, " ").replace(/\s+/gu, " ").trim().toLowerCase(); }
 function tokens(value: string): string[] { const stop = new Set(["في", "من", "الي", "على", "عن", "ان", "هو", "هي", "هذا", "هذه", "ذلك", "التي", "الذي", "مع", "ثم", "او", "و", "ف", "ب", "ل", "ما"]); return [...new Set(normalizeArabic(value).split(/\s+/u).map((token) => token.replace(/^[وفبكل]{1,2}(?=\p{L}{3,})/u, "")).filter((token) => token.length >= 2 && !stop.has(token)))]; }
 function overlap(left: string[], right: string[]): number { if (!left.length || !right.length) return 0; const rightSet = new Set(right); return left.filter((token) => rightSet.has(token)).length / Math.max(1, Math.min(left.length, right.length)); }
+function sharedTokenCount(left: string[], right: string[]): number { if (!left.length || !right.length) return 0; const rightSet = new Set(right); return left.filter((token) => rightSet.has(token)).length; }
 function hasTokenOverlap(left: string, right: string): boolean { const rightSet = new Set(tokens(right)); return tokens(left).some((token) => rightSet.has(token)); }
 function cleanModelText(value: unknown): string { return typeof value === "string" ? value.replace(/\s+/gu, " ").trim() : ""; }
 function stringArray(value: unknown): string[] { if (!Array.isArray(value)) return []; return value.filter((entry): entry is string => typeof entry === "string"); }

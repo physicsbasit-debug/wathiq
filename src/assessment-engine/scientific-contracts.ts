@@ -131,6 +131,7 @@ function electrostaticContract(contract: AssessmentItemContract): DeterministicS
     expectedAnswerTokens: [relation],
     scientificItem,
     visual: visualSpec(contract, "electrostatic_diagram", "attraction_repulsion", {
+      role: "interpret",
       labels: ["الجسم الأول", "الجسم الثاني", relation], values: [same ? 0 : 1],
       annotations: [relationship, "positive", same ? "positive" : "negative"],
     }),

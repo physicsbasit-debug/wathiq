@@ -774,7 +774,9 @@ export function isAiIllustrationEligible(spec: QuestionVisualSpec): boolean {
     return ["read", "interpret", "compare", "evaluate"].includes(spec.role ?? "read");
   }
   if (spec.type === "electrostatic_diagram" && ["charge_transfer", "attraction_repulsion"].includes(spec.variant ?? "")) {
-    return !["calculate", "complete", "draw"].includes(spec.role ?? "read");
+    // هذان النمطان التوضيحيان يحتاجان أصل 2D مهما كان تصنيف المهارة؛
+    // لا يسمح لدور calculate بإرجاع line-art القديم من الباب الخلفي.
+    return true;
   }
   if (spec.type === "pressure_diagram" && spec.variant === "submerged_object") {
     return ["read", "interpret", "evaluate"].includes(spec.role ?? "read");

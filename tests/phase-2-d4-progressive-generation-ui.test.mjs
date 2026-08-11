@@ -200,13 +200,14 @@ test("يحفظ التخزين معرف الدورة والإزاحة ويرفض 
   assert.doesNotMatch(app, /state\.draft\.generationMode = "legacy_items"/);
 });
 
-test("يثبت إصدار D4 ولا يربط الصور المحسنة بمسار توليد السؤال الحرج", async () => {
+test("يثبت D4 ويطلق أصول 2D تدريجيًا دون إدخال الصور في المسار الحرج لعامل السؤال", async () => {
   const pkg = JSON.parse(await text("package.json"));
   const app = await text("src/app.ts");
   const orchestrator = await text("src/assessment-generation-orchestrator.ts");
   assertWathiqPatchAtLeast(pkg.version, 66);
   assert.match(orchestrator, /concurrency \?\? 2/);
-  assert.match(app, /if \(completed\) window\.setTimeout\(\(\) => \{ void syncVisualJobs\(true\)/);
+  assert.match(app, /applyProgressiveGenerationSnapshot\(snapshot, payload\);\s*scheduleRequiredVisualJobSync\(\);/);
+  assert.match(app, /void syncVisualJobs\(true\)/);
   assert.doesNotMatch(orchestrator, /question-visual-jobs|VisualJobService/);
 });
 

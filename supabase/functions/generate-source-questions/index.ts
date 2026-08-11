@@ -620,7 +620,7 @@ function isControlledIllustrationEligible(visual: QuestionVisualSpec): boolean {
     return ["read", "interpret", "compare", "evaluate"].includes(visual.role);
   }
   if (visual.type === "electrostatic_diagram" && ["charge_transfer", "attraction_repulsion"].includes(visual.variant)) {
-    return !["calculate", "complete", "draw"].includes(visual.role);
+    return true;
   }
   if (visual.type === "pressure_diagram" && visual.variant === "submerged_object") {
     return ["read", "interpret", "evaluate"].includes(visual.role);

@@ -191,7 +191,10 @@ if (savedDraft) restoreDraftRuntimeContext(savedDraft);
 
 let saveTimer: number | undefined;
 let visualJobPollTimer: number | undefined;
+let visualJobAutoEnqueueTimer: number | undefined;
+let lastAutoVisualEnqueueSignature = "";
 const VISUAL_JOB_POLL_INTERVAL_MS = 3_500;
+const VISUAL_JOB_AUTO_ENQUEUE_DELAY_MS = 250;
 
 function persistDraftCheckpoint(showFailure = true): boolean {
   if (saveTimer) {
@@ -1721,6 +1724,9 @@ function handleAction(action: string, element: HTMLElement): void {
     state.questionGenerationMessage = "";
     state.sourceRetrievalMessage = "";
     stopVisualJobPolling();
+    lastAutoVisualEnqueueSignature = "";
+    if (visualJobAutoEnqueueTimer) window.clearTimeout(visualJobAutoEnqueueTimer);
+    visualJobAutoEnqueueTimer = undefined;
     if (profile) {
       state.draft.school = profile.school;
       state.draft.directorate = profile.directorate;
@@ -1744,8 +1750,12 @@ function handleAction(action: string, element: HTMLElement): void {
     navigate("wizard");
     if (loaded.currentStep >= 3 && state.sourceStorageStatus === "متصل") {
       window.setTimeout(() => {
-        if (!isPlanComplete(state.draft) && state.draft.plan.length) void generateQuestionsForPlan(state.draft.plan);
-        else void syncVisualJobs(true);
+        if (!isPlanComplete(state.draft) && state.draft.plan.length) {
+          void generateQuestionsForPlan(state.draft.plan);
+          scheduleRequiredVisualJobSync();
+        } else {
+          scheduleRequiredVisualJobSync();
+        }
       }, 0);
     }
     return;
@@ -1969,6 +1979,36 @@ function applyVisualJobSnapshots(jobs: QuestionVisualJobSnapshot[]): boolean {
   return changed;
 }
 
+function currentAutoVisualEnqueueSignature(): string {
+  if (state.sourceStorageStatus !== "متصل" || state.draft.grade === null) return "";
+  // هوية الحاجة البصرية لا تتغير عند وصول الأصل؛ هذا يمنع إعادة enqueue بعد الجاهزية.
+  return requiredVisualJobItems(state.draft, visualJobSubject())
+    .map((item) => `${item.planItemId}:${item.requiredMode}`)
+    .sort()
+    .join("|");
+}
+
+function scheduleRequiredVisualJobSync(): void {
+  if (!visualJobService || state.sourceStorageStatus !== "متصل" || state.draft.grade === null) return;
+  const signature = currentAutoVisualEnqueueSignature();
+  if (!signature || signature === lastAutoVisualEnqueueSignature) return;
+  if (visualJobAutoEnqueueTimer) window.clearTimeout(visualJobAutoEnqueueTimer);
+  const draftId = state.draft.id;
+  visualJobAutoEnqueueTimer = window.setTimeout(() => {
+    visualJobAutoEnqueueTimer = undefined;
+    if (state.draft.id !== draftId) return;
+    const latest = currentAutoVisualEnqueueSignature();
+    if (!latest || latest === lastAutoVisualEnqueueSignature) return;
+    if (state.visualJobSyncBusy) {
+      // مزامنة سابقة لا تعني أن هذه المفردة أُرسلت؛ أعد الجدولة بدل إسقاط أصل 2D بصمت.
+      scheduleRequiredVisualJobSync();
+      return;
+    }
+    lastAutoVisualEnqueueSignature = latest;
+    void syncVisualJobs(true);
+  }, VISUAL_JOB_AUTO_ENQUEUE_DELAY_MS);
+}
+
 function hasPendingVisualJobs(): boolean {
   return Object.values(state.draft.visualJobs).some((job) => isVisualJobPending(job.status));
 }
@@ -2183,6 +2223,7 @@ function progressiveGenerationHooks(payload: ProgressiveGenerationPayload, draft
       }
       state.questionGenerationMessage = progressiveRunMessage(snapshot);
       applyProgressiveGenerationSnapshot(snapshot, payload);
+      scheduleRequiredVisualJobSync();
       render();
     },
     onWorkerError: (_itemId: string, error: unknown): void => {
@@ -2248,7 +2289,7 @@ async function generateQuestionsForPlan(_plan: PlanItem[]): Promise<boolean> {
     state.questionGenerationBusy = false;
     persistDraftCheckpoint(false);
     render();
-    if (completed) window.setTimeout(() => { void syncVisualJobs(true); }, 0);
+    if (completed) scheduleRequiredVisualJobSync();
     return completed;
   } catch (error) {
     if (state.draft.id !== draftId || state.draft.generationEpoch !== generationEpoch) return false;
@@ -2281,7 +2322,7 @@ async function retryGenerationItem(itemId: string): Promise<void> {
     applyProgressiveGenerationSnapshot(finalSnapshot, payload);
     state.questionGenerationBusy = false;
     render();
-    if (finalSnapshot.items.every((item) => item.status === "ready")) window.setTimeout(() => { void syncVisualJobs(true); }, 0);
+    if (finalSnapshot.items.every((item) => item.status === "ready")) scheduleRequiredVisualJobSync();
   } catch (error) {
     state.questionGenerationBusy = false;
     state.questionGenerationMessage = error instanceof Error ? error.message : "تعذر إعادة المفردة الفاشلة.";
@@ -3185,9 +3226,8 @@ async function loadAndSyncCentralSources(): Promise<void> {
     if (state.draft.currentStep >= 3) {
       if (!isPlanComplete(state.draft) && state.draft.plan.length) {
         window.setTimeout(() => { void generateQuestionsForPlan(state.draft.plan); }, 0);
-      } else {
-        void syncVisualJobs(true);
       }
+      scheduleRequiredVisualJobSync();
     }
   } catch (error) {
     markCentralStorageError(error);

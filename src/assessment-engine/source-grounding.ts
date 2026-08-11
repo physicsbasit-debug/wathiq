@@ -78,27 +78,41 @@ function overlap(left: string[], right: string[]): number {
   return left.filter((token) => rightSet.has(token)).length / Math.max(1, Math.min(left.length, right.length));
 }
 
+function sharedTokenCount(left: string[], right: string[]): number {
+  if (!left.length || !right.length) return 0;
+  const rightSet = new Set(right);
+  return left.filter((token) => rightSet.has(token)).length;
+}
+
 export function selectEvidenceAnchor(
   segments: AssessmentEvidenceSegment[],
   contract: AssessmentItemContract,
   content: AssessmentModelContent,
 ): AssessmentEvidenceAnchor {
-  const query = groundingTokens([
-    contract.lessonLabel,
-    contract.outcomeLabel,
-    contract.topic,
+  const contentTokens = groundingTokens([
     content.stimulus,
     content.text,
     content.answer,
     content.rationale,
+    content.markScheme.join(" "),
   ].join(" "));
   const lessonTokens = groundingTokens(`${contract.lessonLabel} ${contract.outcomeLabel} ${contract.topic}`);
-  const ranked = segments.map((segment) => ({
-    segment,
-    score: overlap(query, segment.tokens) * 0.7 + overlap(lessonTokens, segment.tokens) * 0.3,
-  })).sort((a, b) => b.score - a.score || a.segment.evidenceIndex - b.segment.evidenceIndex);
+  const ranked = segments.map((segment) => {
+    const contentSupport = overlap(contentTokens, segment.tokens);
+    const contentSharedTokens = sharedTokenCount(contentTokens, segment.tokens);
+    const contractSupport = overlap(lessonTokens, segment.tokens);
+    return {
+      segment,
+      contentSupport,
+      contentSharedTokens,
+      contractSupport,
+      score: contentSupport * 0.75 + contractSupport * 0.25,
+    };
+  }).sort((a, b) => b.score - a.score || b.contentSupport - a.contentSupport || a.segment.evidenceIndex - b.segment.evidenceIndex);
   const best = ranked[0];
-  if (!best || best.score < 0.035) throw new Error("السؤال لا يرتبط بدليل كافٍ داخل مقطع المصدر المحدد.");
+  if (!best || best.contentSharedTokens < 2 || best.contentSupport < 0.06 || best.score < 0.05) {
+    throw new Error("السؤال لا يرتبط بدليل كافٍ داخل مقطع المصدر المحدد.");
+  }
   return {
     evidenceIndex: best.segment.evidenceIndex,
     evidenceHash: best.segment.evidenceHash,
