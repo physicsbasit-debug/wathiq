@@ -40,6 +40,7 @@ export interface ScienceAssessmentSpecification {
   difficultyMarks?: DifficultyDistribution;
   scientificInquiryRange?: readonly [number, number];
   operationalInquiryMarks?: number;
+  longItemMarks?: 3 | 4;
   notes: readonly string[];
 }
 
@@ -101,9 +102,10 @@ function officialShortSpec(grade: number, title: ExamTitleOption): ScienceAssess
       operationalItemCount: 6,
       counts: { mcq: 2, short: 3, long: 1 },
       objectiveMarks: { knowledge: 4, application: 4, reasoning: 2 },
+      longItemMarks: 3,
       notes: [
-        "مفردتان اختيار من متعدد تغطيان المعرفة والتطبيق.",
-        "مفردة واحدة إجابة طويلة، والبقية إجابات قصيرة.",
+        "مفردتان اختيار من متعدد: واحدة للمعرفة وواحدة للتطبيق.",
+        "مفردة واحدة إجابة طويلة من 3 درجات، والبقية إجابات قصيرة؛ هذا توزيع تشغيلي داخل واثق يحقق 40/40/20 دون تقسيم هدف المفردة الواحدة.",
         "زمن 20 دقيقة إعداد تشغيلي داخل واثق؛ صفحة جدول المواصفات المرجعية لا تحدد زمن الاختبار القصير.",
       ],
     };
@@ -259,7 +261,7 @@ export function buildAssessmentEntries(spec: ScienceAssessmentSpecification): As
   const entries: AssessmentPlanEntry[] = [];
   for (let i = 0; i < spec.counts.mcq; i += 1) entries.push({ type: "اختيار من متعدد", marks: 1 });
 
-  const longMarks = Array.from({ length: spec.counts.long }, () => 4);
+  const longMarks = Array.from({ length: spec.counts.long }, () => spec.longItemMarks ?? 4);
   const usedFixedMarks = spec.counts.mcq + longMarks.reduce((sum, marks) => sum + marks, 0);
   const shortMarksTotal = spec.totalMarks - usedFixedMarks;
   if (shortMarksTotal < spec.counts.short) throw new Error("جدول المواصفات لا يتيح درجة واحدة لكل إجابة قصيرة.");

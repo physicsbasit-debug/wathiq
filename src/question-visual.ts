@@ -440,9 +440,9 @@ export function questionVisualAssetRequirement(spec: QuestionVisualSpec): Questi
   const eligible = isAiIllustrationEligible(spec);
   const desired = eligible && spec.requirement !== "none";
   return {
-    level: spec.requirement,
+    level: desired ? "required" : "none",
     desired,
-    required: eligible && spec.requirement === "required",
+    required: desired,
     mode: desired ? "replace" : null,
     assetKind: desired ? "scene_2d" : null,
   };
@@ -463,12 +463,9 @@ export function renderQuestionVisualSvg(spec: QuestionVisualSpec): string {
 
   if (isAiIllustrationEligible(spec)) {
     if (!isValidated2DIllustration(spec)) {
-      const required = spec.requirement === "required";
-      const mode = required ? "2d-required" : "2d-helpful";
-      const title = required ? "الأصل العلمي ثنائي الأبعاد غير جاهز بعد" : "المرئي العلمي المساعد غير جاهز بعد";
-      const note = required
-        ? "سيظهر المرئي بعد إنشائه واجتياز المراجعة العلمية والبصرية. لا يوجد رسم خطي احتياطي."
-        : "هذا المرئي مساعد فقط، ولن يمنع اعتماد السؤال أو تصديره إذا بقي النص قائمًا بذاته.";
+      const mode = "2d-requested";
+      const title = "الأصل العلمي ثنائي الأبعاد غير جاهز بعد";
+      const note = "سيظهر المرئي بعد إنشائه واجتياز المراجعة العلمية والبصرية. لا يوجد رسم خطي احتياطي.";
       return `<figure class="question-visual question-visual-${spec.type} question-visual-${mode}" data-visual-id="${escapeXml(spec.visualId ?? "")}" data-visual-mode="${mode}" data-visual-asset-kind="pending"><div class="question-visual-2d-placeholder" role="status" aria-label="${escapeXml(spec.altText)}"><strong>${title}</strong><span>${note}</span></div><figcaption>${escapeXml(spec.altText)}</figcaption></figure>`;
     }
     return `<figure class="question-visual question-visual-${spec.type} question-visual-illustrated" data-visual-id="${escapeXml(spec.visualId ?? "")}" data-visual-mode="illustrated" data-visual-asset-kind="scene_2d"><div class="question-visual-illustrated" data-hybrid-visual="ready"><img class="question-visual-illustration" src="${escapeXml(spec.illustration!.url)}" alt="${escapeXml(spec.altText)}" loading="eager" decoding="async" crossorigin="anonymous"/></div><figcaption>${escapeXml(spec.altText)}</figcaption></figure>`;

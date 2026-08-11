@@ -594,22 +594,16 @@ function renderPlanVisual(item: PlanItem, compact = false): string {
     ? "تمثيل علمي منظم دقيق"
     : ready
       ? "صورة تعليمية ثنائية الأبعاد معتمدة"
-      : requirement.required
-        ? pending
-          ? "أصل بصري إلزامي قيد التنفيذ"
-          : failed
-            ? "تعذر الأصل البصري الإلزامي"
-            : "أصل بصري إلزامي قبل الاعتماد"
-        : pending
-          ? "مرئي مساعد قيد التنفيذ"
-          : failed
-            ? "تعذر المرئي المساعد دون تعطيل السؤال"
-            : "مرئي مساعد غير مانع للاعتماد";
+      : pending
+        ? "رسم علمي ثنائي الأبعاد قيد التنفيذ"
+        : failed
+          ? "تعذر إنشاء الرسم العلمي"
+          : "رسم علمي ثنائي الأبعاد ينتظر الإنشاء";
   const controls = !compact && requirement.desired ? `<div class="visual-action-row">
     <button class="secondary-btn compact" data-action="${ready ? "regenerate-visual-job" : failed ? "retry-visual-job" : "sync-visual-job"}" data-plan-id="${escapeHtml(item.id)}" ${(pending || state.draft.status === "معتمد" || state.visualJobSyncBusy) ? "disabled" : ""}>${icon("spark")} ${pending ? "جارٍ التنفيذ…" : ready ? "إعادة توليد الأصل" : failed ? "إعادة المحاولة" : "إنشاء الأصل البصري"}</button>
   </div>` : "";
   const message = !compact && requirement.desired
-    ? `<p class="visual-enhancement-message ${failed ? (requirement.required ? "error" : "") : ready ? "success" : ""}" aria-live="polite">${escapeHtml(visualJobMessage(job))}${failed && !requirement.required ? " المرئي مساعد فقط ولن يمنع الاعتماد أو التصدير." : ""}</p>`
+    ? `<p class="visual-enhancement-message ${failed ? "error" : ready ? "success" : ""}" aria-live="polite">${escapeHtml(visualJobMessage(job))}</p>`
     : "";
   const visualHtml = compact ? renderQuestionVisualForPaper(item.visual) : renderQuestionVisualSvg(item.visual);
   if (compact && !visualHtml) return "";
@@ -825,7 +819,7 @@ function reviewReadiness(selected: SelectedPaperItem[]): ReviewReadiness {
     { label: "توليد كامبريدج الحالي", okay: groundedGeneration },
     { label: "نموذج تصحيح لكل درجة", okay: markSchemesComplete },
     { label: `العناصر البصرية العلمية (${visualItems.length})`, okay: visualValidity && visualsUnique },
-    { label: `الأصول البصرية المطلوبة (${requiredVisualItems.length})`, okay: requiredVisualsReady },
+    { label: `الرسومات العلمية ثنائية الأبعاد (${requiredVisualItems.length})`, okay: requiredVisualsReady },
     { label: `المحقق العلمي الحتمي${scienceIssues.length ? ` (${scienceIssues.length} ملاحظة)` : ""}`, okay: scienceIssues.length === 0 },
     { label: "بيانات الاختبار والمواصفة", okay: setupValid },
   ];

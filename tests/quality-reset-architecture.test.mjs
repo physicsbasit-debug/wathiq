@@ -36,7 +36,10 @@ test("مولد المفردة يعتمد سياق كامبريدج العالم�
   assert.match(worker, /role: "assessment_author"/);
   assert.match(worker, /role: "independent_science_assessment_reviewer"/);
   assert.match(worker, /اختر أفضل سياق ومثير وبنية للسؤال بنفسك/);
+  assert.match(worker, /الحرية هنا حرية في التأليف، وليست إذنًا بإنتاج سؤال سهل أو سطحي/);
   assert.match(worker, /يمكنك إعادة كتابة finalItem كاملة/);
+  assert.match(worker, /التطبيق يعني توظيف المعرفة/);
+  assert.match(worker, /الاستدلال يعني معالجة دليل أو علاقة/);
   assert.match(worker, /Cambridge Primary Science 0097/);
   assert.match(worker, /Cambridge Lower Secondary Science 0893/);
   assert.match(worker, /Cambridge IGCSE science/);

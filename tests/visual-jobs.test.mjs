@@ -22,7 +22,7 @@ test("المرئي التوضيحي ينشئ مهمة 2D حتى في IGCSE بل�
   assert.equal(items[0].stageLabel, "كامبريدج للشهادة الدولية العامة للتعليم الثانوي");
 });
 
-test("المرئي المساعد يدخل طابور الصور لكنه لا يوصف كإلزامي", () => {
+test("أي مرئي توضيحي يختاره المؤلف يدخل طابور الصور كجزء من المفردة", () => {
   const draft = draftWithVisual("context_scene", { requirement: "helpful" });
   const items = visualJobItems(draft, "الفيزياء");
   assert.equal(items.length, 1);

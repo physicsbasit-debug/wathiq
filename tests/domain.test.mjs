@@ -131,6 +131,11 @@ test("يبني خطة الصف 10 القصيرة وفق 10 درجات و40/40/20
   assert.equal(markSum(plan, (item) => item.cognitiveLevel === "استدلال"), 2);
   assert.ok(plan.every((item) => !('sourceReferenceId' in item)));
   assert.deepEqual(new Set(plan.map((item) => item.lessonLabel)), new Set(draft.lessonTopics));
+  const mcq = plan.filter((item) => item.questionType === "اختيار من متعدد");
+  const long = plan.find((item) => item.questionType === "إجابة طويلة");
+  assert.deepEqual(mcq.map((item) => item.cognitiveLevel), ["معرفة", "تطبيق"]);
+  assert.equal(long?.marks, 3);
+  assert.equal(plan.reduce((sum, item) => sum + item.marks, 0), 10);
 });
 
 test("يبني الاختبار النهائي للصف 10 من جدول المواصفات لا من أعداد يدوية", () => {

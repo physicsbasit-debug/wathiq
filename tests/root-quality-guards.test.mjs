@@ -73,16 +73,26 @@ test("محقق الواجهة يمنع اعتماد المسودة القديم�
   assert.equal(issues.some((issue) => issue.code === "PHYSICS_GROUNDING_INSULATOR"), true);
 });
 
-test("المراجع يقرر صراحة ضرورة المثير والمرئي بدل فرضهما", async () => {
+test("منطق التأليف يلتزم بأنواع المفردات الرسمية وعمق التطبيق والاستدلال دون قوالب جامدة", async () => {
   const worker = await text("supabase/functions/assessment-generation-worker/index.ts");
-  assert.match(worker, /stimulusDisposition/);
-  assert.match(worker, /visualRequirement/);
-  assert.match(worker, /enum: \["none", "helpful", "required"\]/);
-  assert.match(worker, /required فقط إذا كان الطالب لا يستطيع الإجابة بعدل من النص وحده/);
-  assert.match(worker, /reviewed\.visualRequirement === "required" && content\.visual\.mode === "none"/);
-  assert.match(worker, /المثير الموجّه للطالب يبقى فقط إذا كان يحمل بيانات أو موقفًا لازمًا/);
+  assert.match(worker, /إكمال معادلة\/جدول/);
+  assert.match(worker, /إضافة معلومات إلى شبكة\/جدول\/شكل/);
+  assert.match(worker, /الإجابة الطويلة مجرد استرجاع أو تعداد نقاط/);
+  assert.match(worker, /هدف التطبيق يعني توظيف المعرفة والمهارات في موقف جديد أو غير معتاد/);
+  assert.match(worker, /لا تقبل سؤال استدلال يمكن حله باسترجاع حقيقة واحدة أو تعريف مباشر/);
+  assert.match(worker, /نوع المفردة وهدف التقويم ومستوى الصعوبة أبعاد مستقلة/);
+  assert.match(worker, /لا تجعل جميع الأسئلة القصيرة من نوع اذكر\/عرّف/);
 });
 
+test("قرار المرئي ثنائي بسيط: المؤلف يطلبه عند فائدته فينشأ مباشرة بلا تصنيف ضرورة ثلاثي", async () => {
+  const worker = await text("supabase/functions/assessment-generation-worker/index.ts");
+  assert.match(worker, /وظّف المخططات والرسومات والجداول والرسوم البيانية عندما تساهم فعلًا في الإجابة أو توضيح السؤال أو جزء منه/);
+  assert.match(worker, /لا توجد حصة صور مفروضة ولا تصنيف ضرورة ثلاثي/);
+  assert.doesNotMatch(worker, /visualRequirement/);
+  assert.doesNotMatch(worker, /enum: \["none", "helpful", "required"\]/);
+  assert.match(worker, /const requested = visual\.mode !== "none"/);
+  assert.match(worker, /requirement: requested \? "required" : "none"/);
+});
 test("ورقة الطالب لا تعرض رسائل فشل الأصول البصرية ولا العبارة النظامية الداخلية", async () => {
   const app = await text("src/app.ts");
   const visual = await text("src/question-visual.ts");

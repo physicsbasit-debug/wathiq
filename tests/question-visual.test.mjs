@@ -95,7 +95,7 @@ test("كل المرئيات التوضيحية تطلب أصلًا ثنائي ا
       assetKind: "scene_2d",
     });
     const html = renderQuestionVisualSvg(visual);
-    assert.match(html, /data-visual-mode="2d-required"/, raw.type);
+    assert.match(html, /data-visual-mode="2d-requested"/, raw.type);
     assert.match(html, /لا يوجد رسم خطي احتياطي/, raw.type);
     assert.doesNotMatch(html, /data-visual-mode="2d-vector"/, raw.type);
   }
@@ -122,25 +122,25 @@ test("يعرض أصل 2D المدقق كصورة نهائية بلا طبقة خ
   assert.doesNotMatch(html, /question-visual-overlay|qv-force-arrow/);
   const stripped = stripQuestionVisualIllustration(visual);
   assert.equal(stripped.illustration, undefined);
-  assert.match(renderQuestionVisualSvg(stripped), /2d-required/);
+  assert.match(renderQuestionVisualSvg(stripped), /2d-requested/);
 });
 
-test("المرئي المساعد يُطلب دون أن يصبح شرط اعتماد ولا يظهر كفشل في ورقة الطالب", () => {
+test("أي مرئي توضيحي قديم بتصنيف helpful يُعامل ثنائيًا كمرئي مطلوب دون إبقاء التعقيد السابق", () => {
   const visual = parseQuestionVisualSpec({ ...illustrated("context_scene"), requirement: "helpful" }, "context_scene");
   assert.deepEqual(questionVisualAssetRequirement(visual), {
-    level: "helpful",
+    level: "required",
     desired: true,
-    required: false,
+    required: true,
     mode: "replace",
     assetKind: "scene_2d",
   });
-  assert.match(renderQuestionVisualSvg(visual), /2d-helpful/);
+  assert.match(renderQuestionVisualSvg(visual), /2d-requested/);
   assert.equal(renderQuestionVisualForPaper(visual), "");
 });
 
 test("ورقة الطالب لا تعرض صندوق انتظار للأصل البصري الإلزامي", () => {
   const visual = parseQuestionVisualSpec(illustrated("electrostatic_diagram"), "electrostatic_diagram");
-  assert.match(renderQuestionVisualSvg(visual), /2d-required/);
+  assert.match(renderQuestionVisualSvg(visual), /2d-requested/);
   assert.equal(renderQuestionVisualForPaper(visual), "");
 });
 
