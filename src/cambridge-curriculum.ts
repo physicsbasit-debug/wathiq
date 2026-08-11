@@ -51,7 +51,7 @@ export const CAMBRIDGE_PROGRAMMES: readonly CambridgeProgrammeProfile[] = [
     id: "igcse",
     label: "كامبريدج للعلوم للشهادة الدولية العامة للتعليم الثانوي",
     syllabusCode: "",
-    note: "مسارات IGCSE للعلوم",
+    note: "مسارات العلوم للشهادة الدولية العامة للتعليم الثانوي",
   },
 ] as const;
 
@@ -81,11 +81,11 @@ export const CAMBRIDGE_LEVEL_OPTIONS: readonly CambridgeLevelOption[] = [
     note: `علوم كامبريدج 0893 · المرحلة ${index + 7}`,
   })),
   {
-    id: "igcse",
-    label: "كامبريدج IGCSE · المرحلة الثانوية",
+    id: "igcse:10",
+    label: "الصف 10 · كامبريدج للشهادة الدولية العامة للتعليم الثانوي",
     programmeId: "igcse",
-    stage: null,
-    note: "اختر مادة العلوم ثم الموضوع من السيلابس",
+    stage: 10,
+    note: "اختر مادة العلوم ثم الوحدة والدرس",
   },
 ] as const;
 
@@ -268,14 +268,65 @@ const LOWER_SECONDARY_TOPICS: Record<number, readonly CambridgeTopicOption[]> = 
   ],
 };
 
-const IGCSE_PHYSICS_TOPICS: readonly CambridgeTopicOption[] = [
-  T("ig-phy-1", "الحركة والقوى والطاقة", "الفيزياء"),
-  T("ig-phy-2", "الفيزياء الحرارية", "الفيزياء"),
-  T("ig-phy-3", "الموجات", "الفيزياء"),
-  T("ig-phy-4", "الكهرباء والمغناطيسية", "الفيزياء"),
-  T("ig-phy-5", "الفيزياء النووية", "الفيزياء"),
-  T("ig-phy-6", "فيزياء الفضاء", "الفيزياء"),
+const IGCSE_PHYSICS_SYLLABUS_TOPICS: readonly CambridgeTopicOption[] = [
+  T("ig-phys-1", "الحركة والقوى والطاقة", "الفيزياء"),
+  T("ig-phys-2", "الفيزياء الحرارية", "الفيزياء"),
+  T("ig-phys-3", "الموجات", "الفيزياء"),
+  T("ig-phys-4", "الكهرباء والمغناطيسية", "الفيزياء"),
+  T("ig-phys-5", "الفيزياء النووية", "الفيزياء"),
+  T("ig-phys-6", "فيزياء الفضاء", "الفيزياء"),
 ];
+
+const GRADE10_PHYSICS_TOPICS: readonly CambridgeTopicOption[] = [
+  T("10-phy-1-1", "الكهرباء الساكنة", "الوحدة الأولى: الشحنة الكهربائية"),
+  T("10-phy-1-2", "الاحتكاك والشحن الكهربائي", "الوحدة الأولى: الشحنة الكهربائية"),
+  T("10-phy-1-3", "المجالات الكهربائية والشحنة الكهربائية", "الوحدة الأولى: الشحنة الكهربائية"),
+  T("10-phy-1-4", "الموصلات الكهربائية والعوازل", "الوحدة الأولى: الشحنة الكهربائية"),
+  T("10-phy-2-1", "مكونات الدائرة الكهربائية", "الوحدة الثانية: مخططات الدوائر الكهربائية"),
+  T("10-phy-2-2", "توصيل المقاومات", "الوحدة الثانية: مخططات الدوائر الكهربائية"),
+  T("10-phy-3-1", "المخاطر الكهربائية", "الوحدة الثالثة: مخاطر الكهرباء"),
+  T("10-phy-3-2", "المنصهرات", "الوحدة الثالثة: مخاطر الكهرباء"),
+  T("10-phy-4-1", "القوى المؤثرة على قطار الملاهي", "الوحدة الرابعة: تأثيرات القوى"),
+  T("10-phy-4-2", "القوى المؤثرة على المركبة الفضائية", "الوحدة الرابعة: تأثيرات القوى"),
+  T("10-phy-4-3", "القوة والكتلة والتسارع", "الوحدة الرابعة: تأثيرات القوى"),
+  T("10-phy-4-4", "استطالة الزنبرك", "الوحدة الرابعة: تأثيرات القوى"),
+  T("10-phy-4-5", "قانون هوك", "الوحدة الرابعة: تأثيرات القوى"),
+  T("10-phy-5-1", "عزم القوة", "الوحدة الخامسة: عزم القوة ومركز الكتلة"),
+  T("10-phy-5-2", "حساب عزم القوة", "الوحدة الخامسة: عزم القوة ومركز الكتلة"),
+  T("10-phy-5-3", "الاستقرار ومركز الكتلة", "الوحدة الخامسة: عزم القوة ومركز الكتلة"),
+  T("10-phy-6-1", "الشغل المبذول", "الوحدة السادسة: الشغل والقدرة"),
+  T("10-phy-6-2", "حساب الشغل المبذول", "الوحدة السادسة: الشغل والقدرة"),
+  T("10-phy-6-3", "القدرة", "الوحدة السادسة: الشغل والقدرة"),
+  T("10-phy-7-1", "الضغط على سطح", "الوحدة السابعة: الضغط"),
+  T("10-phy-7-2", "حساب الضغط", "الوحدة السابعة: الضغط"),
+  T("10-phy-8-1", "بنية النواة", "الوحدة الثامنة: فيزياء النواة"),
+  T("10-phy-9-1", "النشاط الإشعاعي في كل مكان", "الوحدة التاسعة: النشاط الإشعاعي"),
+  T("10-phy-9-2", "فهم النشاط الإشعاعي", "الوحدة التاسعة: النشاط الإشعاعي"),
+  T("10-phy-9-3", "استخدام النظائر المشعة", "الوحدة التاسعة: النشاط الإشعاعي"),
+  T("10-phy-10-1", "تناقص النشاط الإشعاعي مع مرور الزمن", "الوحدة العاشرة: الاضمحلال الإشعاعي وعمر النصف"),
+  T("10-phy-10-2", "معادلات الاضمحلال الإشعاعي", "الوحدة العاشرة: الاضمحلال الإشعاعي وعمر النصف"),
+  T("10-phy-10-3", "عمر النصف للمادة المشعة", "الوحدة العاشرة: الاضمحلال الإشعاعي وعمر النصف"),
+  T("10-phy-11-1", "التعامل الآمن", "الوحدة الحادية عشرة: احتياطات السلامة"),
+  T("10-phy-12-1", "وصف الموجات", "الوحدة الثانية عشرة: خصائص الموجات"),
+  T("10-phy-12-2", "السرعة والتردد وطول الموجة", "الوحدة الثانية عشرة: خصائص الموجات"),
+  T("10-phy-12-3", "الظواهر المرتبطة بالموجات", "الوحدة الثانية عشرة: خصائص الموجات"),
+  T("10-phy-13-1", "الأشعة تحت الحمراء والأشعة فوق البنفسجية", "الوحدة الثالثة عشرة: الطيف الكهرومغناطيسي"),
+  T("10-phy-13-2", "الموجات الكهرومغناطيسية", "الوحدة الثالثة عشرة: الطيف الكهرومغناطيسي"),
+  T("10-phy-14-1", "إصدار الأصوات", "الوحدة الرابعة عشرة: الصوت"),
+  T("10-phy-14-2", "سرعة الصوت", "الوحدة الرابعة عشرة: الصوت"),
+  T("10-phy-14-3", "تمثيل الأصوات", "الوحدة الرابعة عشرة: الصوت"),
+  T("10-phy-14-4", "كيف تنتقل الأصوات", "الوحدة الرابعة عشرة: الصوت"),
+  T("10-phy-15-1", "المغناطيس الدائم", "الوحدة الخامسة عشرة: ظواهر بسيطة للمغناطيسية"),
+  T("10-phy-15-2", "المجالات المغناطيسية", "الوحدة الخامسة عشرة: ظواهر بسيطة للمغناطيسية"),
+  T("10-phy-16-1", "الكهرباء والمغناطيسية", "الوحدة السادسة عشرة: التأثير المغناطيسي للتيار الكهربائي"),
+  T("10-phy-16-2", "التأثير المغناطيسي لتيار كهربائي", "الوحدة السادسة عشرة: التأثير المغناطيسي للتيار الكهربائي"),
+  T("10-phy-17-1", "القوة المؤثرة على موصل حامل لتيار كهربائي موضوع داخل مجال مغناطيسي", "الوحدة السابعة عشرة: تأثير المحرك"),
+  T("10-phy-17-2", "المحركات الكهربائية", "الوحدة السابعة عشرة: تأثير المحرك"),
+  T("10-phy-18-1", "توليد الكهرباء", "الوحدة الثامنة عشرة: الحث الكهرومغناطيسي ومولد التيار المتردد"),
+  T("10-phy-19-1", "خطوط الطاقة الكهربائية والمحولات", "الوحدة التاسعة عشرة: المحولات الكهربائية"),
+];
+
+const IGCSE_PHYSICS_TOPICS: readonly CambridgeTopicOption[] = GRADE10_PHYSICS_TOPICS;
 
 const IGCSE_CHEMISTRY_TOPICS: readonly CambridgeTopicOption[] = [
   T("ig-chem-1", "حالات المادة", "الكيمياء"),
@@ -345,7 +396,7 @@ const IGCSE_COMBINED_SCIENCE_TOPICS: readonly CambridgeTopicOption[] = [
 const IGCSE_COORDINATED_SCIENCE_TOPICS: readonly CambridgeTopicOption[] = [
   ...prefixedTopics("coordinated-bio", "الأحياء", IGCSE_COORDINATED_BIOLOGY_TOPICS),
   ...prefixedTopics("coordinated-chem", "الكيمياء", IGCSE_CHEMISTRY_TOPICS),
-  ...prefixedTopics("coordinated-phys", "الفيزياء", IGCSE_PHYSICS_TOPICS),
+  ...prefixedTopics("coordinated-phys", "الفيزياء", IGCSE_PHYSICS_SYLLABUS_TOPICS),
 ];
 
 export function programmeProfile(id: CambridgeProgrammeId): CambridgeProgrammeProfile {
@@ -371,11 +422,12 @@ export function subjectProfile(programmeId: CambridgeProgrammeId, subjectId: str
 export function defaultStageForProgramme(id: CambridgeProgrammeId): number | null {
   if (id === "primary") return 1;
   if (id === "lower_secondary") return 7;
+  if (id === "igcse") return 10;
   return null;
 }
 
 export function stageLabel(programmeId: CambridgeProgrammeId, stage: number | null): string {
-  if (programmeId === "igcse") return "كامبريدج IGCSE";
+  if (programmeId === "igcse") return stage ? `الصف ${stage} · كامبريدج للشهادة الدولية العامة للتعليم الثانوي` : "كامبريدج للشهادة الدولية العامة للتعليم الثانوي";
   return stage ? `الصف ${stage} · المرحلة ${stage}` : "مرحلة غير محددة";
 }
 
@@ -387,7 +439,7 @@ export function curriculumDisplayName(
   const programme = programmeProfile(programmeId);
   const subject = subjectProfile(programmeId, subjectId);
   const code = subject?.syllabusCode || programme.syllabusCode;
-  const stagePart = programmeId === "igcse" ? "" : ` · ${stageLabel(programmeId, stage)}`;
+  const stagePart = stage ? ` · ${stageLabel(programmeId, stage)}` : "";
   return `${programme.label}${stagePart}${code ? ` · ${code}` : ""}`;
 }
 
@@ -397,13 +449,13 @@ export function syllabusCodeFor(programmeId: CambridgeProgrammeId, subjectId: st
 }
 
 export function isStageValidForProgramme(programmeId: CambridgeProgrammeId, stage: number | null): boolean {
-  if (programmeId === "igcse") return true;
+  if (programmeId === "igcse") return stage === 10;
   if (stage === null) return false;
   return stagesForProgramme(programmeId).includes(stage);
 }
 
 export function levelSelectionValue(programmeId: CambridgeProgrammeId, stage: number | null): string {
-  if (programmeId === "igcse") return "igcse";
+  if (programmeId === "igcse") return `igcse:${stage ?? 10}`;
   return `${programmeId}:${stage ?? defaultStageForProgramme(programmeId)}`;
 }
 

@@ -1,9 +1,13 @@
 import {
   CAMBRIDGE_ASSESSMENT_POLICY_ID,
   assessmentPreset,
+  assessmentSpecification,
   assessmentTypeForTitle,
+  buildAssessmentEntries,
+  cognitiveLevelsForEntries,
+  difficultyLevelsForEntries,
+  inquiryFlagsForEntries,
   isExamTitleOption,
-  suggestedCountsForMarks,
 } from "./cambridge-assessment.js";
 import {
   defaultStageForProgramme,
@@ -13,25 +17,15 @@ import {
   syllabusCodeFor,
 } from "./cambridge-curriculum.js";
 import type {
-  CognitiveLevel,
-  Difficulty,
   ExamDraft,
   ExamTitleOption,
   PlanItem,
-  QuestionCounts,
   QuestionProposal,
-  QuestionType,
   SpecValidation,
 } from "./types.js";
 
 export const MIN_LESSON_TOPICS = 1;
 export const MAX_LESSON_TOPICS = 5;
-
-export const MARKS_BY_TYPE: Readonly<Record<keyof QuestionCounts, number>> = {
-  mcq: 1,
-  short: 2,
-  long: 4,
-};
 
 export function getAcademicYear(date = new Date()): string {
   const year = date.getFullYear();
@@ -51,8 +45,8 @@ export function createEmptyDraft(now = new Date()): ExamDraft {
   const academicYear = getAcademicYear(now);
   const programmeId = "primary" as const;
   const grade = defaultStageForProgramme(programmeId);
-  const title: ExamTitleOption = "اختبار قصير";
-  const preset = assessmentPreset(title);
+  const title: ExamTitleOption = "الاختبار القصير الأول";
+  const preset = assessmentPreset(title, grade);
   return {
     id: `draft-${now.getTime()}`,
     assessmentType: assessmentTypeForTitle(title),
@@ -88,7 +82,7 @@ export function createEmptyDraft(now = new Date()): ExamDraft {
 }
 
 export function applyAssessmentPreset(draft: ExamDraft): ExamDraft {
-  const preset = assessmentPreset(draft.title);
+  const preset = assessmentPreset(draft.title, draft.grade);
   draft.assessmentType = preset.assessmentType;
   draft.assessmentPolicyId = CAMBRIDGE_ASSESSMENT_POLICY_ID;
   draft.totalMarks = preset.totalMarks;
@@ -186,13 +180,11 @@ function uniqueLessonTopics(values: readonly string[]): string[] {
   return result;
 }
 
-export function computeMarks(counts: QuestionCounts): number {
-  return counts.mcq * MARKS_BY_TYPE.mcq + counts.short * MARKS_BY_TYPE.short + counts.long * MARKS_BY_TYPE.long;
-}
-
 export function validateExamSetup(draft: ExamDraft): SpecValidation {
   const issues: SpecValidation["issues"] = [];
-  const computedMarks = computeMarks(draft.counts);
+  const spec = assessmentSpecification(draft.grade, draft.title);
+  const entries = buildAssessmentEntries(spec);
+  const computedMarks = entries.reduce((sum, item) => sum + item.marks, 0);
   const lessonTopics = normalizeLessonTopics(draft.lessonTopics);
   const uniqueLessons = uniqueLessonTopics(draft.lessonTopics);
 
@@ -212,44 +204,28 @@ export function validateExamSetup(draft: ExamDraft): SpecValidation {
   if (!draft.topic.trim()) issues.push({ field: "topic", message: "أدخل موضوع الاختبار." });
   if (!isExamTitleOption(draft.title)) issues.push({ field: "title", message: "اختر نوع الاختبار." });
   if (!/^\d{4}-\d{2}-\d{2}$/.test(draft.examDate)) issues.push({ field: "date", message: "اختر تاريخ الاختبار." });
-  if (draft.durationMinutes < 5 || draft.durationMinutes > 180) {
-    issues.push({ field: "duration", message: "اجعل زمن الاختبار بين 5 و180 دقيقة." });
+  if (draft.durationMinutes !== spec.durationMinutes) {
+    issues.push({ field: "duration", message: `زمن الاختبار يجب أن يطابق جدول المواصفات: ${spec.durationMinutes} دقيقة.` });
   }
-  if (draft.totalMarks < 5 || draft.totalMarks > 80) {
-    issues.push({ field: "marks", message: "اجعل الدرجة الكلية بين 5 و80 درجة." });
+  if (draft.totalMarks !== spec.totalMarks) {
+    issues.push({ field: "marks", message: `الدرجة الكلية يجب أن تطابق جدول المواصفات: ${spec.totalMarks} درجة.` });
   }
   const totalQuestions = draft.counts.mcq + draft.counts.short + draft.counts.long;
-  if (totalQuestions === 0) issues.push({ field: "counts", message: "أضف سؤالًا واحدًا على الأقل." });
-  if (totalQuestions > 30) issues.push({ field: "counts", message: "يدعم واثق حتى 30 مفردة في الاختبار الواحد." });
-  if (computedMarks !== draft.totalMarks) {
-    issues.push({ field: "counts", message: `مجموع درجات المفردات ${computedMarks}، بينما الدرجة الكلية ${draft.totalMarks}.` });
+  if (totalQuestions !== spec.operationalItemCount) {
+    issues.push({ field: "counts", message: `عدد المفردات التشغيلي المعتمد في واثق لهذا القالب هو ${spec.operationalItemCount}.` });
+  }
+  if (draft.counts.mcq !== spec.counts.mcq || draft.counts.short !== spec.counts.short || draft.counts.long !== spec.counts.long) {
+    issues.push({ field: "counts", message: "أنواع المفردات لا تطابق جدول المواصفات المعتمد." });
+  }
+  if (computedMarks !== spec.totalMarks) {
+    issues.push({ field: "counts", message: `تعذر تحقيق الدرجة الكلية لجدول المواصفات (${spec.totalMarks}).` });
   }
 
   const expectedCode = draft.subjectId ? syllabusCodeFor(draft.programmeId, draft.subjectId) : "";
   if (expectedCode && draft.syllabusCode !== expectedCode) draft.syllabusCode = expectedCode;
   draft.assessmentPolicyId = CAMBRIDGE_ASSESSMENT_POLICY_ID;
 
-  const result: SpecValidation = { valid: issues.length === 0, issues, computedMarks };
-  if (computedMarks !== draft.totalMarks) result.suggestedCounts = suggestedCountsForMarks(draft.totalMarks, draft.difficulty);
-  return result;
-}
-
-export function suggestCountsForMarks(totalMarks: number, difficulty: Difficulty): QuestionCounts {
-  return suggestedCountsForMarks(totalMarks, difficulty);
-}
-
-function cognitiveCycle(difficulty: Difficulty): CognitiveLevel[] {
-  if (difficulty === "سهل") return ["معرفة", "معرفة", "تطبيق"];
-  if (difficulty === "متقدم") return ["تطبيق", "استدلال", "استدلال"];
-  return ["معرفة", "تطبيق", "استدلال"];
-}
-
-function questionEntries(counts: QuestionCounts): Array<{ type: QuestionType; marks: number }> {
-  return [
-    ...Array.from({ length: counts.mcq }, () => ({ type: "اختيار من متعدد" as const, marks: 1 })),
-    ...Array.from({ length: counts.short }, () => ({ type: "إجابة قصيرة" as const, marks: 2 })),
-    ...Array.from({ length: counts.long }, () => ({ type: "إجابة طويلة" as const, marks: 4 })),
-  ];
+  return { valid: issues.length === 0, issues, computedMarks };
 }
 
 export function buildPlan(draft: ExamDraft): PlanItem[] {
@@ -258,11 +234,11 @@ export function buildPlan(draft: ExamDraft): PlanItem[] {
     throw new Error(`تعذر بناء الخطة: أدخل ${MIN_LESSON_TOPICS}-${MAX_LESSON_TOPICS} موضوعات مختلفة.`);
   }
   syncDraftTopicFromLessons(draft);
-  const cycle = cognitiveCycle(draft.difficulty);
-  const entries = questionEntries(draft.counts).map((entry, index) => ({
-    ...entry,
-    level: cycle[index % cycle.length] ?? "معرفة",
-  }));
+  const spec = assessmentSpecification(draft.grade, draft.title);
+  const entries = buildAssessmentEntries(spec);
+  const cognitiveLevels = cognitiveLevelsForEntries(entries, spec);
+  const difficultyLevels = difficultyLevelsForEntries(entries, spec);
+  const inquiryFlags = inquiryFlagsForEntries(entries, spec);
 
   return entries.map((entry, index) => {
     const lessonIndex = index % lessons.length;
@@ -272,7 +248,9 @@ export function buildPlan(draft: ExamDraft): PlanItem[] {
       id: `plan-${index + 1}`,
       lessonId: `topic-${lessonIndex + 1}`,
       lessonLabel: lesson,
-      cognitiveLevel: entry.level,
+      cognitiveLevel: cognitiveLevels[index] ?? "معرفة",
+      ...(difficultyLevels[index] ? { difficultyLevel: difficultyLevels[index] } : {}),
+      ...(inquiryFlags[index] ? { assessmentFocus: "استقصاء علمي" as const } : {}),
       questionType: entry.type,
       marks: entry.marks,
       proposals: [],

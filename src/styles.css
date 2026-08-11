@@ -836,3 +836,80 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
   .account-login-grid { max-width: none; grid-template-columns: 1fr; }
   .account-login-grid .primary-btn { width: 100%; }
 }
+
+/* جدول مواصفات الاختبار: مرجع عربي RTL، وليس حقولًا قابلة للعبث اليدوي. */
+.assessment-spec-card {
+  display: grid;
+  gap: 16px;
+  margin-top: 22px;
+  padding: 20px;
+  border: 1px solid #cbd8e6;
+  border-radius: 18px;
+  background: #fbfdff;
+}
+.assessment-spec-card.official { border-color: #9fbbd7; background: linear-gradient(180deg, #fbfdff 0%, #f3f8fd 100%); }
+.assessment-spec-card.internal { border-style: dashed; }
+.assessment-spec-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+.assessment-spec-head h3 { margin: 3px 0 5px; color: var(--navy-deep); }
+.assessment-spec-head p { margin: 0; color: var(--muted); line-height: 1.65; }
+.assessment-spec-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+.assessment-spec-metrics > div {
+  display: grid;
+  gap: 5px;
+  padding: 13px;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  background: #fff;
+}
+.assessment-spec-metrics span { color: var(--muted); font-size: 12px; }
+.assessment-spec-metrics strong { color: var(--navy-deep); font-size: 17px; }
+.assessment-spec-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.assessment-spec-block {
+  display: grid;
+  gap: 10px;
+  padding: 15px;
+  border-radius: 14px;
+  background: #fff;
+  border: 1px solid var(--border);
+}
+.assessment-spec-block > strong { color: var(--navy-deep); }
+.spec-bars { display: grid; gap: 8px; }
+.spec-bars span {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid #edf1f5;
+  color: #52677f;
+}
+.spec-bars span:last-child { border-bottom: 0; padding-bottom: 0; }
+.spec-bars b { color: var(--navy-deep); }
+.assessment-inquiry-note {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: #f3f8f4;
+  border: 1px solid #c8dfcf;
+  color: #315d43;
+  line-height: 1.7;
+}
+.assessment-spec-notes { margin: 0; padding-inline-start: 20px; color: #52677f; line-height: 1.8; }
+
+@media (max-width: 760px) {
+  .assessment-spec-head { flex-direction: column; }
+  .assessment-spec-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .assessment-spec-grid { grid-template-columns: 1fr; }
+}

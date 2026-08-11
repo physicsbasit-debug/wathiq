@@ -8,7 +8,7 @@ import {
   type AssessmentItemSeed,
 } from "./assessment-engine/index.js";
 
-export const ASSESSMENT_PROGRESSIVE_GENERATION_VERSION = "assessment-engine-v3-cambridge-global-only";
+export const ASSESSMENT_PROGRESSIVE_GENERATION_VERSION = "assessment-engine-v4-official-blueprint";
 
 export interface ProgressiveGenerationPayload {
   blueprint: AssessmentBlueprint;
@@ -33,6 +33,7 @@ export async function buildProgressiveGenerationPayload(input: ProgressiveGenera
     questionType: item.questionType,
     cognitiveLevel: item.cognitiveLevel,
     ...(item.difficultyLevel ? { difficultyLevel: item.difficultyLevel } : {}),
+    ...(item.assessmentFocus ? { assessmentFocus: item.assessmentFocus } : {}),
     marks: item.marks,
   }));
 

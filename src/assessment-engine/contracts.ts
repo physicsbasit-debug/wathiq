@@ -9,8 +9,8 @@ import type {
 } from "../types.js";
 
 export const ASSESSMENT_ENGINE_SCHEMA_VERSION = 1 as const;
-export const ASSESSMENT_CONTRACT_VERSION = 3 as const;
-export const ASSESSMENT_BLUEPRINT_VERSION = 3 as const;
+export const ASSESSMENT_CONTRACT_VERSION = 4 as const;
+export const ASSESSMENT_BLUEPRINT_VERSION = 4 as const;
 
 export type AssessmentGenerationRunStatus =
   | "queued" | "running" | "reviewing" | "completed" | "partial" | "failed" | "cancelled" | "superseded";
@@ -48,6 +48,7 @@ export interface AssessmentItemSeed {
   questionType: QuestionType;
   cognitiveLevel: CognitiveLevel;
   difficultyLevel?: ItemDifficulty;
+  assessmentFocus?: "استقصاء علمي";
   marks: number;
 }
 
@@ -99,6 +100,7 @@ export interface AssessmentItemContract extends AssessmentCurriculumIdentity {
   questionType: QuestionType;
   cognitiveLevel: CognitiveLevel;
   difficultyLevel?: ItemDifficulty;
+  assessmentFocus?: "استقصاء علمي";
   marks: number;
   source: AssessmentSourceSnapshot;
   contractHash: string;

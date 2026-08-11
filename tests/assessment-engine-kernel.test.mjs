@@ -13,7 +13,7 @@ function baseInput() {
     draftId: "draft-cambridge-1",
     generationEpoch: 2,
     assessmentType: "اختبار قصير",
-    assessmentPolicyId: "wathiq-cambridge-science-quality-v1",
+    assessmentPolicyId: "oman-science-assessment-2025-2026-v1",
     programmeId: "lower_secondary",
     syllabusCode: "0893",
     stageLabel: "المرحلة 8",
@@ -27,6 +27,7 @@ function baseInput() {
       lessonLabel: "القوى والحركة",
       questionType: "إجابة قصيرة",
       cognitiveLevel: "تطبيق",
+      assessmentFocus: "استقصاء علمي",
       marks: 2,
     }],
   };
@@ -34,7 +35,7 @@ function baseInput() {
 
 test("يبني سياق كامبريدج العالمي تلقائيًا من المرحلة والمادة والموضوع", async () => {
   const blueprint = await buildAssessmentBlueprint(baseInput());
-  assert.equal(blueprint.blueprintVersion, 3);
+  assert.equal(blueprint.blueprintVersion, 4);
   assert.equal(blueprint.programmeId, "lower_secondary");
   assert.equal(blueprint.syllabusCode, "0893");
   assert.equal(blueprint.stageLabel, "المرحلة 8");
@@ -46,10 +47,11 @@ test("يبني سياق كامبريدج العالمي تلقائيًا من ا
 test("عقد المفردة يحمل هوية كامبريدج ولا يحمل قيود التأليف القديمة", async () => {
   const blueprint = await buildAssessmentBlueprint(baseInput());
   const [contract] = await buildAssessmentItemContracts(blueprint);
-  assert.equal(contract.contractVersion, 3);
+  assert.equal(contract.contractVersion, 4);
   assert.equal(contract.programmeId, "lower_secondary");
   assert.equal(contract.syllabusCode, "0893");
   assert.equal(contract.stageLabel, "المرحلة 8");
+  assert.equal(contract.assessmentFocus, "استقصاء علمي");
   for (const forbidden of ["styleTarget", "scenarioTarget", "visualTarget", "numericSeed", "scientificContractKey", "outcomeId", "outcomeLabel"]) {
     assert.equal(Object.hasOwn(contract, forbidden), false, forbidden);
   }

@@ -52,6 +52,9 @@ for (const token of forbiddenVisible) {
 if (!app.includes("الصف / المرحلة") || !app.includes("الموضوع / الدرس")) failures.push("واجهة اختيار المنهج لا تعرض حقول الصف والمادة والموضوع بالعربية.");
 if (app.includes('id="lesson-topics-input"') || app.includes('id="programme-select"')) failures.push("عادت واجهة الإدخال الحر أو اختيار البرنامج القديمة بدل القوائم المبسطة.");
 if (!app.includes("اسم الموضوع يكفي")) failures.push("واجهة البداية لا تعرض فلسفة واثق المبسطة بالعربية.");
+if (!app.includes("جدول المواصفات") || !app.includes("المواصفة الرسمية المعتمدة")) failures.push("واجهة الإعداد لا تعرض جدول المواصفات العربي.");
+if (app.includes("data-count-key") || app.includes("apply-suggestion") || app.includes("countField(")) failures.push("عادت أدوات تعديل عدد المفردات يدويًا رغم أن جدول المواصفات يحكم الخطة.");
+if (!app.includes("الاختبار القصير الأول") && !app.includes("EXAM_TITLE_OPTIONS")) failures.push("واجهة الاختبار لا تعتمد عناوين الاختبارات الرسمية الحالية.");
 if (!curriculum.includes("كامبريدج للعلوم في المرحلة الابتدائية") || !curriculum.includes("كامبريدج للعلوم في المرحلة الإعدادية")) {
   failures.push("تسميات مسارات كامبريدج ليست عربية بالكامل.");
 }

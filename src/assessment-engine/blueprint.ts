@@ -57,6 +57,7 @@ async function blueprintItemFromSeed(
     questionType: item.questionType,
     cognitiveLevel: item.cognitiveLevel,
     ...(item.difficultyLevel ? { difficultyLevel: item.difficultyLevel } : {}),
+    ...(item.assessmentFocus ? { assessmentFocus: item.assessmentFocus } : {}),
     marks: item.marks,
     source: await globalCurriculumSnapshot(input, item),
   };
@@ -121,6 +122,7 @@ export async function buildAssessmentItemContracts(blueprint: AssessmentBlueprin
       questionType: item.questionType,
       cognitiveLevel: item.cognitiveLevel,
       ...(item.difficultyLevel ? { difficultyLevel: item.difficultyLevel } : {}),
+      ...(item.assessmentFocus ? { assessmentFocus: item.assessmentFocus } : {}),
       marks: item.marks,
       source: item.source,
     };

@@ -148,7 +148,7 @@ async function verifyGenerationPayload(
   const generationEpoch = requireInteger(blueprint.generationEpoch, "إزاحة التوليد غير صالحة.", 1, Number.MAX_SAFE_INTEGER);
   const planHash = requireHash(blueprint.planHash, "بصمة الخطة غير صالحة.");
   const sourceSnapshotHash = requireHash(blueprint.sourceSnapshotHash, "بصمة المصادر غير صالحة.");
-  if (blueprint.engineSchemaVersion !== 1 || blueprint.blueprintVersion !== 3) {
+  if (blueprint.engineSchemaVersion !== 1 || blueprint.blueprintVersion !== 4) {
     throw httpError("إصدار مخطط التوليد غير مدعوم.", 409);
   }
 
@@ -174,7 +174,7 @@ async function verifyGenerationPayload(
 
   const blueprintBase = {
     engineSchemaVersion: 1,
-    contractVersion: 3,
+    contractVersion: 4,
     draftId,
     generationEpoch,
     planHash,
@@ -211,6 +211,7 @@ async function verifyGenerationPayload(
       questionType: item.record.questionType,
       cognitiveLevel: item.record.cognitiveLevel,
       ...(Object.hasOwn(item.record, "difficultyLevel") ? { difficultyLevel: item.record.difficultyLevel } : {}),
+      ...(item.record.assessmentFocus === "استقصاء علمي" ? { assessmentFocus: "استقصاء علمي" } : {}),
       marks: item.record.marks,
       source: item.source,
     };
@@ -233,7 +234,7 @@ function parseBlueprintItem(value: unknown, expectedOrder: number): {
   const record = requireRecord(value, "مفردة المخطط غير صالحة.");
   assertAllowedFields(record, new Set([
     "order", "planItemId", "lessonId", "lessonLabel", "questionType",
-    "cognitiveLevel", "difficultyLevel", "marks", "source",
+    "cognitiveLevel", "difficultyLevel", "assessmentFocus", "marks", "source",
   ]), "مفردة المخطط");
   const order = requireInteger(record.order, "ترتيب مفردة المخطط غير صالح.", 1, MAX_ITEMS);
   if (order !== expectedOrder) throw httpError("ترتيب مفردات المخطط غير متصل.", 400);
@@ -243,6 +244,7 @@ function parseBlueprintItem(value: unknown, expectedOrder: number): {
   requireText(record.questionType, "نوع السؤال غير صالح.", 100);
   requireText(record.cognitiveLevel, "المستوى المعرفي غير صالح.", 100);
   if (Object.hasOwn(record, "difficultyLevel")) requireText(record.difficultyLevel, "صعوبة المفردة غير صالحة.", 100);
+  if (Object.hasOwn(record, "assessmentFocus") && record.assessmentFocus !== "استقصاء علمي") throw httpError("تركيز التقويم غير صالح.", 400);
   requireInteger(record.marks, "درجة المفردة غير صالحة.", 1, 20);
   const source = requireRecord(record.source, "لقطة مصدر المفردة غير صالحة.");
   const allowedSourceFields = new Set([

@@ -46,6 +46,11 @@ const FORBIDDEN = [
   /مصادر اختيارية/u,
   /رفع PDF/iu,
   /منهج عُماني/u,
+  /suggestedCountsForMarks/u,
+  /apply-suggestion/u,
+  /data-count-key/u,
+  /MARKS_BY_TYPE/u,
+  /computeMarks\s*\(/u,
 ];
 
 const FORBIDDEN_PATHS = [

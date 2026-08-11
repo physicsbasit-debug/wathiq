@@ -8,7 +8,7 @@ import type {
   VisualJobStatus,
 } from "./types.js";
 import { createEmptyDraft, toDateInputValue } from "./domain.js";
-import { CAMBRIDGE_ASSESSMENT_POLICY_ID, assessmentTypeForTitle, isExamTitleOption } from "./cambridge-assessment.js";
+import { CAMBRIDGE_ASSESSMENT_POLICY_ID, assessmentSpecification, assessmentTypeForTitle, isExamTitleOption } from "./cambridge-assessment.js";
 import { defaultStageForProgramme, isStageValidForProgramme, subjectProfile, syllabusCodeFor } from "./cambridge-curriculum.js";
 import { ASSESSMENT_PROGRESSIVE_GENERATION_VERSION } from "./assessment-generation-progressive.js";
 import { diversifyQuestionVisualSpec } from "./question-visual.js";
@@ -86,6 +86,7 @@ function normalizeStoredPlan(value: unknown): PlanItem[] {
       lessonLabel: item.lessonLabel,
       cognitiveLevel: item.cognitiveLevel,
       ...(item.difficultyLevel ? { difficultyLevel: item.difficultyLevel } : {}),
+      ...(item.assessmentFocus === "استقصاء علمي" ? { assessmentFocus: "استقصاء علمي" as const } : {}),
       questionType: item.questionType,
       marks: item.marks,
       proposals,
@@ -103,15 +104,16 @@ export function normalizeExamDraft(value: unknown): ExamDraft | null {
   const base = createEmptyDraft();
   const programmeId = currentProgramme(candidate.programmeId);
   const requestedGrade = typeof candidate.grade === "number" ? candidate.grade : defaultStageForProgramme(programmeId);
-  const grade = programmeId === "igcse" ? null : (isStageValidForProgramme(programmeId, requestedGrade) ? requestedGrade : defaultStageForProgramme(programmeId));
+  const grade = isStageValidForProgramme(programmeId, requestedGrade) ? requestedGrade : defaultStageForProgramme(programmeId);
   const requestedSubject = typeof candidate.subjectId === "string" ? candidate.subjectId.trim() : "";
   const subjectId = subjectProfile(programmeId, requestedSubject)
     ? requestedSubject
     : programmeId === "igcse" ? "" : "science";
-  const title: ExamTitleOption = typeof candidate.title === "string" && isExamTitleOption(candidate.title) ? candidate.title : "اختبار قصير";
+  const title: ExamTitleOption = typeof candidate.title === "string" && isExamTitleOption(candidate.title) ? candidate.title : "الاختبار القصير الأول";
   const lessons = Array.isArray(candidate.lessonTopics)
     ? candidate.lessonTopics.filter((item): item is string => typeof item === "string" && Boolean(item.trim())).map((item) => item.trim()).slice(0, 5)
     : [];
+  const spec = assessmentSpecification(grade, title);
   const plan = normalizeStoredPlan(candidate.plan);
   const draft: ExamDraft = {
     id: typeof candidate.id === "string" && candidate.id ? candidate.id : base.id,
@@ -127,18 +129,14 @@ export function normalizeExamDraft(value: unknown): ExamDraft | null {
     examDate: typeof candidate.examDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(candidate.examDate) ? candidate.examDate : toDateInputValue(),
     school: typeof candidate.school === "string" ? candidate.school : "",
     academicYear: typeof candidate.academicYear === "string" && candidate.academicYear ? candidate.academicYear : base.academicYear,
-    durationMinutes: typeof candidate.durationMinutes === "number" ? candidate.durationMinutes : base.durationMinutes,
-    totalMarks: typeof candidate.totalMarks === "number" ? candidate.totalMarks : base.totalMarks,
+    durationMinutes: spec.durationMinutes,
+    totalMarks: spec.totalMarks,
     difficulty: candidate.difficulty === "سهل" || candidate.difficulty === "متوسط" || candidate.difficulty === "متقدم" ? candidate.difficulty : base.difficulty,
     visualJobs: normalizeVisualJobs(candidate.visualJobs),
     generationMode: "progressive_items_v1",
     generationRunId: typeof candidate.generationRunId === "string" ? candidate.generationRunId : "",
     generationEpoch: typeof candidate.generationEpoch === "number" && Number.isSafeInteger(candidate.generationEpoch) && candidate.generationEpoch >= 1 ? candidate.generationEpoch : 1,
-    counts: {
-      mcq: typeof candidate.counts?.mcq === "number" ? candidate.counts.mcq : base.counts.mcq,
-      short: typeof candidate.counts?.short === "number" ? candidate.counts.short : base.counts.short,
-      long: typeof candidate.counts?.long === "number" ? candidate.counts.long : base.counts.long,
-    },
+    counts: { ...spec.counts },
     plan,
     selectedProposalByPlanItem: typeof candidate.selectedProposalByPlanItem === "object" && candidate.selectedProposalByPlanItem !== null
       ? candidate.selectedProposalByPlanItem as Record<string, string> : {},
@@ -151,7 +149,19 @@ export function normalizeExamDraft(value: unknown): ExamDraft | null {
     status: candidate.status === "معتمد" || candidate.status === "جاهز للمراجعة" ? candidate.status : "مسودة",
   };
 
-  const hasGeneratedContent = plan.some((item) => item.proposals.some((proposal) => proposal.text.trim()));
+
+  const planMarks = draft.plan.reduce((sum, item) => sum + item.marks, 0);
+  const expectedItemCount = spec.operationalItemCount;
+  if (draft.plan.length && (draft.plan.length !== expectedItemCount || planMarks !== spec.totalMarks)) {
+    draft.plan = [];
+    draft.selectedProposalByPlanItem = {};
+    draft.visualJobs = {};
+    draft.generationRunId = "";
+    draft.generationVersion = "";
+    draft.currentStep = 2;
+  }
+
+  const hasGeneratedContent = draft.plan.some((item) => item.proposals.some((proposal) => proposal.text.trim()));
   if (hasGeneratedContent) {
     draft.currentStep = Math.max(3, draft.currentStep) as ExamDraft["currentStep"];
   } else if (plan.length && draft.generationVersion !== ASSESSMENT_PROGRESSIVE_GENERATION_VERSION) {

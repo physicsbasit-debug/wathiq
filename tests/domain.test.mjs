@@ -2,8 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   approveExamDraft,
+  applyAssessmentPreset,
   buildPlan,
-  computeMarks,
   createEmptyDraft,
   getAcademicYear,
   isPlanComplete,
@@ -18,12 +18,13 @@ import {
   validateExamSetup,
 } from "../dist/assets/domain.js";
 
-function completePrimaryDraft() {
+function completePrimaryDraft(grade = 5) {
   const draft = createEmptyDraft(new Date("2026-09-01T08:00:00Z"));
   draft.programmeId = "primary";
-  draft.grade = 5;
+  draft.grade = grade;
   draft.subjectId = "science";
   draft.syllabusCode = "0097";
+  applyAssessmentPreset(draft);
   draft.lessonTopics = ["القوى ومخططات القوى"];
   syncDraftTopicFromLessons(draft);
   draft.examDate = "2026-09-15";
@@ -34,6 +35,8 @@ function completeLowerDraft(stage = 8) {
   const draft = createEmptyDraft(new Date("2026-09-01T08:00:00Z"));
   setCambridgeProgramme(draft, "lower_secondary");
   draft.grade = stage;
+  setCambridgeSubject(draft, "science");
+  applyAssessmentPreset(draft);
   draft.lessonTopics = ["القوى المتزنة وغير المتزنة"];
   syncDraftTopicFromLessons(draft);
   draft.examDate = "2026-09-15";
@@ -43,25 +46,27 @@ function completeLowerDraft(stage = 8) {
 function completeIgcsePhysicsDraft() {
   const draft = createEmptyDraft(new Date("2026-09-01T08:00:00Z"));
   setCambridgeProgramme(draft, "igcse");
+  draft.grade = 10;
   setCambridgeSubject(draft, "physics");
-  draft.lessonTopics = ["الكهرباء والمغناطيسية", "الحركة والقوى والطاقة"];
+  applyAssessmentPreset(draft);
+  draft.lessonTopics = ["الكهرباء الساكنة", "الاحتكاك والشحن الكهربائي"];
   syncDraftTopicFromLessons(draft);
   draft.examDate = "2026-09-15";
   return draft;
 }
 
-test("ينشئ واثق افتراضيًا مسودة علوم كامبريدج للمرحلة الأولى من دون ملفات", () => {
+function markSum(plan, predicate) {
+  return plan.reduce((sum, item) => sum + (predicate(item) ? item.marks : 0), 0);
+}
+
+test("ينشئ واثق افتراضيًا مسودة علوم كامبريدج عربية من دون ملفات", () => {
   const draft = createEmptyDraft(new Date("2026-09-01T08:00:00Z"));
   assert.equal(draft.programmeId, "primary");
   assert.equal(draft.grade, 1);
   assert.equal(draft.subjectId, "science");
   assert.equal(draft.syllabusCode, "0097");
-  assert.equal(draft.title, "اختبار قصير");
+  assert.equal(draft.title, "الاختبار القصير الأول");
   assert.equal("sourceReferences" in draft, false);
-});
-
-test("يحسب درجات أنواع الأسئلة", () => {
-  assert.equal(computeMarks({ mcq: 4, short: 4, long: 2 }), 20);
 });
 
 test("يستخرج العام الأكاديمي للعرض فقط", () => {
@@ -74,28 +79,34 @@ test("يدعم من موضوع واحد إلى خمسة موضوعات مختا�
   assert.deepEqual(normalizeLessonTopics([" القوى ", "", "الطاقة"]), ["القوى", "الطاقة"]);
 });
 
-test("يقبل Cambridge Primary من موضوع مطابق لقائمة المرحلة", () => {
-  const validation = validateExamSetup(completePrimaryDraft());
+test("يقبل الصف الخامس من موضوع مطابق ويطبق جدول الاختبار القصير تلقائيًا", () => {
+  const draft = completePrimaryDraft(5);
+  const validation = validateExamSetup(draft);
   assert.equal(validation.valid, true, validation.issues.map((issue) => issue.message).join(" | "));
-  assert.equal(validation.computedMarks, 10);
+  assert.equal(validation.computedMarks, 15);
+  assert.equal(draft.counts.mcq + draft.counts.short + draft.counts.long, 10);
 });
 
-test("يغطي المرحلة 8 ضمن Cambridge Lower Secondary", () => {
+test("يغطي الصف 8 ضمن Cambridge Lower Secondary بجدول الصفوف 5-8", () => {
   const draft = completeLowerDraft(8);
   const validation = validateExamSetup(draft);
   assert.equal(validation.valid, true, validation.issues.map((issue) => issue.message).join(" | "));
   assert.equal(draft.syllabusCode, "0893");
+  assert.equal(draft.totalMarks, 15);
 });
 
-test("يدعم IGCSE Physics 0625 من موضوعات السيلابس", () => {
+test("يدعم الصف 10 فيزياء 0625 من موضوعات كتاب الصف العاشر", () => {
   const draft = completeIgcsePhysicsDraft();
   const validation = validateExamSetup(draft);
   assert.equal(validation.valid, true, validation.issues.map((issue) => issue.message).join(" | "));
   assert.equal(draft.syllabusCode, "0625");
+  assert.equal(draft.grade, 10);
+  assert.equal(draft.totalMarks, 10);
 });
 
 test("يرفض مرحلة لا تنتمي للمسار", () => {
-  const draft = completeLowerDraft(6);
+  const draft = completeLowerDraft(8);
+  draft.grade = 6;
   const validation = validateExamSetup(draft);
   assert.equal(validation.valid, false);
   assert.ok(validation.issues.some((issue) => issue.field === "grade"));
@@ -110,25 +121,49 @@ test("يرفض موضوعًا مكررًا بعد التطبيع العربي", 
   assert.match(validation.issues.map((issue) => issue.message).join(" "), /لا تكرر/);
 });
 
-test("يبني خطة كاملة من الموضوعات فقط ولا يضيف مراجع ملفات", () => {
+test("يبني خطة الصف 10 القصيرة وفق 10 درجات و40/40/20", () => {
   const draft = completeIgcsePhysicsDraft();
   const plan = buildPlan(draft);
   assert.equal(plan.length, 6);
   assert.equal(plan.reduce((sum, item) => sum + item.marks, 0), 10);
-  assert.ok(plan.every((item) => !("sourceReferenceId" in item)));
+  assert.equal(markSum(plan, (item) => item.cognitiveLevel === "معرفة"), 4);
+  assert.equal(markSum(plan, (item) => item.cognitiveLevel === "تطبيق"), 4);
+  assert.equal(markSum(plan, (item) => item.cognitiveLevel === "استدلال"), 2);
+  assert.ok(plan.every((item) => !('sourceReferenceId' in item)));
   assert.deepEqual(new Set(plan.map((item) => item.lessonLabel)), new Set(draft.lessonTopics));
 });
 
-test("تغيير نوع الاختبار مجرد إعداد داخلي ويمكن للمستخدم تعديله", () => {
-  const draft = completePrimaryDraft();
-  setExamTitle(draft, "اختبار شامل");
-  assert.equal(draft.title, "اختبار شامل");
+test("يبني الاختبار النهائي للصف 10 من جدول المواصفات لا من أعداد يدوية", () => {
+  const draft = completeIgcsePhysicsDraft();
+  setExamTitle(draft, "الاختبار النهائي");
+  const validation = validateExamSetup(draft);
+  assert.equal(validation.valid, true, validation.issues.map((issue) => issue.message).join(" | "));
+  const plan = buildPlan(draft);
+  assert.equal(draft.totalMarks, 60);
+  assert.equal(draft.durationMinutes, 120);
+  assert.deepEqual(draft.counts, { mcq: 10, short: 22, long: 2 });
+  assert.equal(plan.length, 34);
+  assert.equal(plan.reduce((sum, item) => sum + item.marks, 0), 60);
+  assert.equal(markSum(plan, (item) => item.cognitiveLevel === "معرفة"), 24);
+  assert.equal(markSum(plan, (item) => item.cognitiveLevel === "تطبيق"), 24);
+  assert.equal(markSum(plan, (item) => item.cognitiveLevel === "استدلال"), 12);
+  assert.equal(markSum(plan, (item) => item.difficultyLevel === "منخفض"), 24);
+  assert.equal(markSum(plan, (item) => item.difficultyLevel === "متوسط"), 24);
+  assert.equal(markSum(plan, (item) => item.difficultyLevel === "مرتفع"), 12);
+  assert.equal(markSum(plan, (item) => item.assessmentFocus === "استقصاء علمي"), 10);
+});
+
+test("تغيير عنوان الاختبار يطبق المواصفة الجديدة تلقائيًا", () => {
+  const draft = completePrimaryDraft(5);
+  setExamTitle(draft, "الاختبار النهائي");
+  assert.equal(draft.title, "الاختبار النهائي");
   assert.equal(draft.totalMarks, 40);
-  assert.equal(computeMarks(draft.counts), 40);
+  assert.equal(draft.durationMinutes, 90);
+  assert.deepEqual(draft.counts, { mcq: 8, short: 17, long: 0 });
 });
 
 test("اعتماد الاختبار وإعادة فتحه لا يفقد الخطة", () => {
-  const draft = completePrimaryDraft();
+  const draft = completePrimaryDraft(5);
   draft.plan = buildPlan(draft);
   const ids = draft.plan.map((item) => item.id);
   approveExamDraft(draft, "2026-09-15T10:00:00.000Z");
@@ -139,7 +174,7 @@ test("اعتماد الاختبار وإعادة فتحه لا يفقد الخط
 });
 
 test("لا تعد الخطة مكتملة قبل وجود صياغة مختارة لكل مفردة", () => {
-  const draft = completePrimaryDraft();
+  const draft = completePrimaryDraft(5);
   draft.plan = buildPlan(draft);
   assert.equal(isPlanComplete(draft), false);
   for (const item of draft.plan) {

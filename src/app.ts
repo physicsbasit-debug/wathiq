@@ -17,7 +17,7 @@ import {
   validateExamSetup,
 } from "./domain.js";
 import { clearDraft, loadDraft, loadDrafts, loadProfile, saveDraft, saveProfile, setActiveDraftId } from "./storage.js";
-import type { ExamDraft, ExamTitleOption, PlanItem, QuestionCounts, QuestionVisualJobSnapshot, ViewName, WizardStep } from "./types.js";
+import type { ExamDraft, ExamTitleOption, PlanItem, QuestionVisualJobSnapshot, ViewName, WizardStep } from "./types.js";
 import { escapeHtml, formatArabicDate, icon } from "./ui.js";
 import { questionVisualAssetRequirement, questionVisualTypeLabel, renderQuestionVisualSvg, stripQuestionVisualIllustration, validateQuestionVisualSpec } from "./question-visual.js";
 import { buildStandaloneExamDocument, downloadWordHtml, interleaveAssessmentItems, printHtmlDocument, safeExportFileName } from "./exam-export.js";
@@ -39,7 +39,7 @@ import {
   type AssessmentItemContract,
 } from "./assessment-engine/index.js";
 import { VisualJobService, isVisualJobPending, requiredVisualJobItems } from "./visual-jobs.js";
-import { EXAM_TITLE_OPTIONS } from "./cambridge-assessment.js";
+import { EXAM_TITLE_OPTIONS, assessmentSpecification } from "./cambridge-assessment.js";
 import {
   CAMBRIDGE_LEVEL_OPTIONS,
   curriculumDisplayName,
@@ -315,7 +315,7 @@ function renderHome(): string {
       <div class="hero-copy">
         <span class="eyebrow">علوم كامبريدج: المرحلة الابتدائية · المرحلة الإعدادية · الشهادة الدولية العامة للتعليم الثانوي</span>
         <h1>اسم الموضوع يكفي.</h1>
-        <p>اختر برنامج كامبريدج والمرحلة ومادة العلوم والموضوع. واثق يؤلف السؤال بحرية، ثم يراجعه علميًا وتقويميًا قبل اعتماده.</p>
+        <p>اختر الصف ثم مادة العلوم والموضوع. واثق يبني الاختبار وفق جدول المواصفات، ويؤلف كل مفردة بحرية ثم يراجعها علميًا وتقويميًا.</p>
         <div class="hero-actions">
           <button class="primary-btn" data-action="new-exam">${icon("plus")} إنشاء اختبار</button>
           ${hasDraft ? `<button class="secondary-btn" data-action="resume-draft">متابعة المسودة ${icon("arrow")}</button>` : ""}
@@ -330,7 +330,7 @@ function renderHome(): string {
     </section>
     ${renderSessionPanel()}
     <section class="dashboard-grid two-actions">
-      <article class="action-card featured"><span class="card-icon">${icon("plus")}</span><div><h2>اختبار جديد</h2><p>برنامج، مرحلة، مادة، موضوع. لا رفع ملفات ولا إعداد محتوى.</p></div><button class="card-link" data-action="new-exam">ابدأ الآن ${icon("arrow")}</button></article>
+      <article class="action-card featured"><span class="card-icon">${icon("plus")}</span><div><h2>اختبار جديد</h2><p>صف، مادة، موضوع. جدول المواصفات يضبط الاختبار تلقائيًا.</p></div><button class="card-link" data-action="new-exam">ابدأ الآن ${icon("arrow")}</button></article>
       <article class="action-card"><span class="card-icon">${icon("files")}</span><div><h2>اختباراتي</h2><p>المسودات والاختبارات المعتمدة في مكان واحد.</p></div><button class="card-link" data-nav="library">فتح المكتبة ${icon("arrow")}</button></article>
     </section>
   `;
@@ -419,7 +419,7 @@ function renderContentStep(): string {
     <div class="section-intro"><h2>اختر الصف والمادة والموضوع</h2><p>ثلاث خطوات واضحة فقط. يعرض واثق موضوعات علوم كامبريدج المناسبة لاختيارك تلقائيًا.</p></div>
     <div class="curriculum-picker" aria-label="اختيار منهج كامبريدج">
       <label class="field curriculum-picker-step"><span><b>1</b> الصف / المرحلة</span><select id="level-select">${CAMBRIDGE_LEVEL_OPTIONS.map((item) => `<option value="${item.id}" ${levelValue === item.id ? "selected" : ""}>${item.label}</option>`).join("")}</select><small>${escapeHtml(CAMBRIDGE_LEVEL_OPTIONS.find((item) => item.id === levelValue)?.note ?? "")}</small></label>
-      <label class="field curriculum-picker-step"><span><b>2</b> المادة</span><select id="subject-select">${state.draft.programmeId === "igcse" ? `<option value="">اختر مادة العلوم</option>` : ""}${subjects.map((item) => `<option value="${item.id}" ${state.draft.subjectId === item.id ? "selected" : ""}>${item.label} · ${item.syllabusCode}</option>`).join("")}</select><small>${state.draft.programmeId === "igcse" ? "اختر مسار العلوم في IGCSE" : "العلوم هي المادة المعتمدة لهذه المرحلة"}</small></label>
+      <label class="field curriculum-picker-step"><span><b>2</b> المادة</span><select id="subject-select">${state.draft.programmeId === "igcse" ? `<option value="">اختر مادة العلوم</option>` : ""}${subjects.map((item) => `<option value="${item.id}" ${state.draft.subjectId === item.id ? "selected" : ""}>${item.label} · ${item.syllabusCode}</option>`).join("")}</select><small>${state.draft.programmeId === "igcse" ? "اختر مسار العلوم للشهادة الدولية العامة للتعليم الثانوي" : "العلوم هي المادة المعتمدة لهذه المرحلة"}</small></label>
       <label class="field curriculum-picker-step"><span><b>3</b> الموضوع / الدرس</span><select id="topic-select" ${!state.draft.subjectId || !topics.length || selectedTopics.length >= MAX_LESSON_TOPICS ? "disabled" : ""}>${renderTopicOptions()}</select><small>${topics.length ? `متاح ${topics.length} موضوعًا منظمًا حسب محاور المنهج` : "اختر المادة أولًا لعرض الموضوعات"}</small></label>
     </div>
     <section class="topic-selection-panel" aria-labelledby="selected-topics-title">
@@ -433,28 +433,43 @@ function renderContentStep(): string {
   `;
 }
 
+function renderAssessmentSpecification(): string {
+  const spec = assessmentSpecification(state.draft.grade, state.draft.title);
+  const objective = spec.objectiveMarks;
+  const difficulty = spec.difficultyMarks;
+  const inquiry = spec.scientificInquiryRange;
+  return `<section class="assessment-spec-card ${spec.official ? "official" : "internal"}" aria-labelledby="assessment-spec-title">
+    <div class="assessment-spec-head"><div><span class="eyebrow">جدول المواصفات</span><h3 id="assessment-spec-title">${spec.official ? "المواصفة الرسمية المعتمدة" : "قالب المرحلة المبكرة"}</h3><p>${escapeHtml(spec.sourceLabel)}</p></div><span class="generation-mode-badge">${spec.totalMarks} درجة · ${spec.operationalItemCount} مفردة</span></div>
+    <div class="assessment-spec-metrics">
+      <div><span>${spec.durationOfficial ? "زمن الإجابة الرسمي" : "زمن واثق التشغيلي"}</span><strong>${spec.durationMinutes} دقيقة</strong></div>
+      <div><span>الاختيار من متعدد</span><strong>${spec.counts.mcq}</strong></div>
+      <div><span>الإجابة القصيرة</span><strong>${spec.counts.short}</strong></div>
+      <div><span>الإجابة الطويلة</span><strong>${spec.counts.long}</strong></div>
+    </div>
+    <div class="assessment-spec-grid">
+      <div class="assessment-spec-block"><strong>أهداف التقويم</strong><div class="spec-bars"><span>المعرفة <b>${objective.knowledge} (${Math.round(objective.knowledge / spec.totalMarks * 100)}%)</b></span><span>التطبيق <b>${objective.application} (${Math.round(objective.application / spec.totalMarks * 100)}%)</b></span><span>الاستدلال <b>${objective.reasoning} (${Math.round(objective.reasoning / spec.totalMarks * 100)}%)</b></span></div></div>
+      ${difficulty ? `<div class="assessment-spec-block"><strong>مستويات الصعوبة</strong><div class="spec-bars"><span>منخفض <b>${difficulty.low} (${Math.round(difficulty.low / spec.totalMarks * 100)}%)</b></span><span>متوسط <b>${difficulty.medium} (${Math.round(difficulty.medium / spec.totalMarks * 100)}%)</b></span><span>مرتفع <b>${difficulty.high} (${Math.round(difficulty.high / spec.totalMarks * 100)}%)</b></span></div></div>` : ""}
+    </div>
+    ${inquiry ? `<p class="assessment-inquiry-note"><b>الاستقصاء العلمي:</b> النطاق الرسمي ${inquiry[0]}–${inquiry[1]} درجات، ويخصص واثق ${spec.operationalInquiryMarks} درجات داخل الخطة.</p>` : ""}
+    <ul class="assessment-spec-notes">${spec.notes.map((note) => `<li>${escapeHtml(note)}</li>`).join("")}</ul>
+  </section>`;
+}
+
 function renderSetupStep(): string {
   const validation = validateExamSetup(state.draft);
   return `
-    <div class="section-intro"><h2>إعداد بسيط</h2><p>حدد الزمن والدرجة وأنواع الأسئلة. لا توجد إعدادات خفية تفرض على المؤلف سيناريو أو قالبًا بعينه.</p></div>
+    <div class="section-intro"><h2>إعداد الاختبار</h2><p>اختر نوع الاختبار فقط؛ الدرجة وعدد المفردات وأهداف التقويم تضبط تلقائيًا من جدول المواصفات.</p></div>
     <div class="form-grid two-columns">
       ${examTitleSelect()}
       ${inputField("date-input", "تاريخ الاختبار", state.draft.examDate, "date")}
       ${inputField("school-input", "المدرسة (اختياري)", state.draft.school, "text")}
       ${inputField("academic-year-input", "العام الدراسي", state.draft.academicYear, "text")}
-      ${inputField("duration-input", "الزمن بالدقائق", state.draft.durationMinutes, "number", "", "5")}
-      ${inputField("marks-input", "الدرجة الكلية", state.draft.totalMarks, "number", "", "5")}
     </div>
-    <div class="compact-section"><h3>مستوى التحدي</h3><div class="segmented">${["سهل", "متوسط", "متقدم"].map((level) => `<button data-difficulty="${level}" class="${state.draft.difficulty === level ? "active" : ""}">${level}</button>`).join("")}</div></div>
-    <div class="compact-section"><div class="selection-header"><div><h3>أنواع الأسئلة</h3><p>المؤلف حر في بناء أفضل سياق داخل النوع والدرجة المطلوبة.</p></div><span class="marks-summary">المجموع: <b>${validation.computedMarks}</b></span></div><div class="count-grid">
-      ${countField("mcq", "اختيار من متعدد", state.draft.counts.mcq, "أربعة بدائل ومشتتات علمية معقولة")}
-      ${countField("short", "إجابة قصيرة", state.draft.counts.short, "تفسير أو حساب أو قراءة بيانات")}
-      ${countField("long", "إجابة طويلة", state.draft.counts.long, "استدلال أو تفسير ممتد أو استقصاء")}
-    </div></div>
-    <section class="generation-mode-panel progressive-engine-panel"><div class="generation-mode-heading"><div><span class="eyebrow">محرك الجودة</span><h3>تأليف حر + مراجعة علمية مستقلة</h3></div><span class="generation-mode-badge">كامبريدج أولًا</span></div><div class="progressive-engine-summary">
-      <div><strong>المؤلف يكتب بحرية</strong><small>لا قوالب قديمة تحدد السيناريو أو شكل السؤال.</small></div>
-      <div><strong>المراجع يحكم على العلم</strong><small>يفحص الدقة والملاءمة للمرحلة ونموذج التصحيح ويعيد الكتابة عند الحاجة.</small></div>
-      <div><strong>السياق من كامبريدج</strong><small>المرحلة والمادة والموضوع هي مدخلات المعرفة الأساسية.</small></div>
+    ${renderAssessmentSpecification()}
+    <section class="generation-mode-panel progressive-engine-panel"><div class="generation-mode-heading"><div><span class="eyebrow">محرك الجودة</span><h3>تأليف حر داخل جدول المواصفات</h3></div><span class="generation-mode-badge">كامبريدج + المواصفة الرسمية</span></div><div class="progressive-engine-summary">
+      <div><strong>المواصفة تحكم القياس</strong><small>الدرجة، أنواع المفردات، المعرفة والتطبيق والاستدلال، والصعوبة حيث تفرضها الوثيقة.</small></div>
+      <div><strong>المؤلف حر في الصياغة</strong><small>لا قوالب قديمة تحدد السيناريو أو شكل السؤال.</small></div>
+      <div><strong>المراجع يحكم على العلم</strong><small>يفحص الدقة وملاءمة المرحلة ونموذج التصحيح ويعيد الكتابة عند الحاجة.</small></div>
     </div></section>
     <div class="quality-policy-card visual-enhancement-card enabled durable-visual-policy"><span class="quality-policy-check">${icon("check")}</span><span><strong>مرئيات علمية ثنائية الأبعاد فقط عند الحاجة</strong><small>لا رسم خطي احتياطي. الجداول والرسوم البيانية الرقمية تبقى حتمية لضمان الدقة.</small></span></div>
     ${renderCompliance(validation)}
@@ -471,13 +486,9 @@ function inputField(id: string, label: string, value: string | number, type: str
   return `<label class="field"><span>${label}</span><input id="${id}" type="${type}" value="${escapeHtml(value)}" ${placeholder ? `placeholder="${placeholder}"` : ""} ${min ? `min="${min}"` : ""}/></label>`;
 }
 
-function countField(key: keyof QuestionCounts, label: string, value: number, description: string): string {
-  return `<div class="count-card"><div><strong>${label}</strong><small>${description}</small></div><div class="counter"><button data-count-key="${key}" data-count-change="-1" aria-label="تقليل ${label}">−</button><input data-count-input="${key}" type="number" min="0" value="${value}" aria-label="عدد أسئلة ${label}"/><button data-count-key="${key}" data-count-change="1" aria-label="زيادة ${label}">+</button></div></div>`;
-}
-
 function renderCompliance(validation: ReturnType<typeof validateExamSetup>): string {
   if (validation.valid) return `<div class="compliance success">${icon("check")}<div><strong>جاهز للتوليد</strong><p>${escapeHtml(curriculumDisplayName(state.draft.programmeId, state.draft.subjectId, state.draft.grade))} · جاهز للتأليف مباشرة.</p></div></div>`;
-  return `<div class="compliance warning"><div class="warning-mark">!</div><div><strong>اضبط هذه البيانات</strong><ul>${validation.issues.map((issue) => `<li>${escapeHtml(issue.message)}</li>`).join("")}</ul>${validation.suggestedCounts ? `<button class="secondary-btn compact" data-action="apply-suggestion">ضبط الأعداد لتناسب ${state.draft.totalMarks} درجة</button>` : ""}</div></div>`;
+  return `<div class="compliance warning"><div class="warning-mark">!</div><div><strong>اضبط هذه البيانات</strong><ul>${validation.issues.map((issue) => `<li>${escapeHtml(issue.message)}</li>`).join("")}</ul></div></div>`;
 }
 
 function generationItemStatusLabel(status: AssessmentGenerationItemSnapshot["status"] | "pending"): string {
@@ -630,7 +641,7 @@ function renderPlanItem(item: PlanItem, index: number): string {
       ? `<footer class="generation-item-footer"><span>${icon("check")} محفوظة داخل دورة التوليد الدائمة</span>${task?.stageTimings.totalMs ? `<small>${Math.max(1, Math.round(task.stageTimings.totalMs / 1000))} ثانية</small>` : ""}</footer>`
       : "";
   return `<article class="plan-card generation-plan-card ${generationItemStatusClass(status)}">
-    <header><div class="question-number">${index + 1}</div><div><h3>${item.questionType}</h3><p>${escapeHtml(item.lessonLabel)} · ${escapeHtml(sourceLabel)}</p></div><div class="plan-tags"><span>${item.cognitiveLevel}</span><span>${item.marks} ${item.marks === 1 ? "درجة" : "درجات"}</span></div></header>
+    <header><div class="question-number">${index + 1}</div><div><h3>${item.questionType}</h3><p>${escapeHtml(item.lessonLabel)} · ${escapeHtml(sourceLabel)}</p></div><div class="plan-tags"><span>${item.cognitiveLevel}</span>${item.difficultyLevel ? `<span>${item.difficultyLevel} الصعوبة</span>` : ""}${item.assessmentFocus ? `<span>${item.assessmentFocus}</span>` : ""}<span>${item.marks} ${item.marks === 1 ? "درجة" : "درجات"}</span></div></header>
     ${renderPlanVisual(item)}
     ${proposals}
     ${footer}
@@ -1065,7 +1076,6 @@ function handleAction(action: string, element: HTMLElement): void {
   }
   if (action === "previous-step") return setStep(Math.max(1, state.draft.currentStep - 1) as WizardStep);
   if (action === "next-step") { void nextStep(); return; }
-  if (action === "apply-suggestion") return applySuggestedCounts();
   if (action === "delete-draft") {
     const targetDraftId = requestedDraftId || state.draft.id;
     if (targetDraftId === state.draft.id) {
@@ -1413,7 +1423,7 @@ async function generateQuestionsForPlan(_plan: PlanItem[]): Promise<boolean> {
   render();
   try {
     const workerHealth = await assessmentGenerationWorkerService.health();
-    if (workerHealth.engineSchemaVersion !== 1 || workerHealth.contractVersion !== 3) {
+    if (workerHealth.engineSchemaVersion !== 1 || workerHealth.contractVersion !== 4) {
       throw new Error("عامل توليد المفردات المنشور لا يطابق عقد كامبريدج الحالي. أعد نشر وظيفة عامل التوليد ثم أعد المحاولة.");
     }
     const payload = await buildCurrentProgressivePayload();
@@ -1521,6 +1531,7 @@ function bindContentStep(): void {
     const programmeChanged = state.draft.programmeId !== level.programmeId;
     if (programmeChanged) setCambridgeProgramme(state.draft, level.programmeId);
     state.draft.grade = level.stage;
+    applyAssessmentPreset(state.draft);
     if (level.programmeId !== "igcse") setCambridgeSubject(state.draft, "science");
     else if (programmeChanged) setCambridgeSubject(state.draft, "");
     state.draft.lessonTopics = [];
@@ -1553,15 +1564,9 @@ function bindContentStep(): void {
 
 function syncSetupFieldsFromDom(): void {
   const value = (id: string): string => document.querySelector<HTMLInputElement>(`#${id}`)?.value ?? "";
-  const numberValue = (id: string, fallback: number): number => {
-    const raw = Number(value(id));
-    return Number.isFinite(raw) ? raw : fallback;
-  };
   state.draft.examDate = value("date-input") || state.draft.examDate;
   state.draft.school = value("school-input");
   state.draft.academicYear = value("academic-year-input") || state.draft.academicYear;
-  state.draft.durationMinutes = numberValue("duration-input", state.draft.durationMinutes);
-  state.draft.totalMarks = numberValue("marks-input", state.draft.totalMarks);
 }
 
 function bindSetupStep(): void {
@@ -1590,55 +1595,7 @@ function bindSetupStep(): void {
   });
 
 
-  document.querySelector<HTMLInputElement>("#duration-input")?.addEventListener("change", (event) => {
-    state.draft.durationMinutes = Number((event.target as HTMLInputElement).value);
-    scheduleSave();
-    render();
-  });
 
-  document.querySelector<HTMLInputElement>("#marks-input")?.addEventListener("change", (event) => {
-    state.draft.totalMarks = Number((event.target as HTMLInputElement).value);
-    invalidateGeneratedQuestions();
-    scheduleSave();
-    render();
-  });
-
-  document.querySelectorAll<HTMLElement>("[data-difficulty]").forEach((button) => {
-    button.addEventListener("click", () => {
-      state.draft.difficulty = button.dataset.difficulty as ExamDraft["difficulty"];
-      invalidateGeneratedQuestions();
-      scheduleSave();
-      render();
-    });
-  });
-
-  document.querySelectorAll<HTMLElement>("[data-count-change]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const key = button.dataset.countKey as keyof QuestionCounts;
-      const change = Number(button.dataset.countChange);
-      state.draft.counts[key] = Math.max(0, state.draft.counts[key] + change);
-      invalidateGeneratedQuestions();
-      scheduleSave();
-      render();
-    });
-  });
-
-  document.querySelectorAll<HTMLInputElement>("[data-count-input]").forEach((input) => {
-    input.addEventListener("change", () => {
-      const key = input.dataset.countInput as keyof QuestionCounts;
-      state.draft.counts[key] = Math.max(0, Number(input.value));
-      invalidateGeneratedQuestions();
-      scheduleSave();
-      render();
-    });
-  });
-}
-
-function applySuggestedCounts(): void {
-  const suggestion = validateExamSetup(state.draft).suggestedCounts;
-  if (!suggestion) return;
-  state.draft.counts = suggestion;
-  invalidateGeneratedQuestions(); scheduleSave(); render();
 }
 
 function bindPlanStep(): void {

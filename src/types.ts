@@ -4,8 +4,8 @@ export type Difficulty = "سهل" | "متوسط" | "متقدم";
 export type QuestionType = "اختيار من متعدد" | "إجابة قصيرة" | "إجابة طويلة";
 export type CognitiveLevel = "معرفة" | "تطبيق" | "استدلال";
 export type ItemDifficulty = "منخفض" | "متوسط" | "مرتفع";
-export type ExamTitleOption = "اختبار قصير" | "اختبار تدريبي" | "اختبار شامل";
-export type AssessmentType = "اختبار قصير" | "اختبار تدريبي" | "اختبار شامل";
+export type ExamTitleOption = "الاختبار القصير الأول" | "الاختبار القصير الثاني" | "الاختبار النهائي";
+export type AssessmentType = "اختبار قصير" | "اختبار نهائي";
 export type AssessmentGenerationMode = "progressive_items_v1";
 export type CambridgeProgrammeId = "primary" | "lower_secondary" | "igcse";
 export type QuestionVisualType = "none" | "context_scene" | "line_graph" | "bar_chart" | "pressure_diagram" | "circuit_diagram" | "electrostatic_diagram" | "data_table" | "instrument_scale" | "ray_diagram" | "force_diagram" | "flow_diagram";
@@ -147,6 +147,7 @@ export interface PlanItem {
   lessonLabel: string;
   cognitiveLevel: CognitiveLevel;
   difficultyLevel?: ItemDifficulty;
+  assessmentFocus?: "استقصاء علمي";
   questionType: QuestionType;
   marks: number;
   proposals: QuestionProposal[];
@@ -174,5 +175,4 @@ export interface SpecValidation {
   valid: boolean;
   issues: ValidationIssue[];
   computedMarks: number;
-  suggestedCounts?: QuestionCounts;
 }
