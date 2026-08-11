@@ -39,6 +39,7 @@ const forbiddenRootPatterns = [
   /^HIDDEN_FILES_RESTORE_INSTRUCTIONS/i,
   /^GITHUB_WORKFLOW_VISIBLE$/i,
   /^WATHIQ_(?:RESET|APPLY)_/i,
+  /^WATHIQ_.*CHANGED_FILES_MANIFEST.*\.txt$/i,
   /~\d*\./,
   /\.(bak|tmp|zip)$/i,
 ];
