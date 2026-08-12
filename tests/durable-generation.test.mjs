@@ -49,12 +49,15 @@ test("فحص صحة عامل المفردات يطابق عقد المؤلف و�
       worker: "assessment-generation-worker",
       engineSchemaVersion: 1,
       contractVersion: 4,
-      visualContractVersion: 2,
+      visualContractVersion: 3,
+      thinItemContractVersion: 1,
+      visualPlannerVersion: 1,
       pressureControlVersion: 4,
-      providerProtocolVersion: 2,
+      providerProtocolVersion: 3,
       databaseContractVersion: 1,
       authorModel: "gemini-author",
       reviewModel: "gemini-reviewer",
+      visualPlannerModel: "gemini-visual",
       requestId: "r-health",
     }), { status: 200 }),
   );
@@ -62,9 +65,11 @@ test("فحص صحة عامل المفردات يطابق عقد المؤلف و�
   assert.equal(health.authorModel, "gemini-author");
   assert.equal(health.reviewModel, "gemini-reviewer");
   assert.equal(health.contractVersion, 4);
-  assert.equal(health.visualContractVersion, 2);
+  assert.equal(health.visualContractVersion, 3);
+  assert.equal(health.thinItemContractVersion, 1);
+  assert.equal(health.visualPlannerVersion, 1);
   assert.equal(health.pressureControlVersion, 4);
-  assert.equal(health.providerProtocolVersion, 2);
+  assert.equal(health.providerProtocolVersion, 3);
   assert.equal(health.databaseContractVersion, 1);
 });
 
@@ -82,7 +87,7 @@ test("فحص الصحة يرفض عاملًا قديمًا لا يعرف عقد 
       requestId: "r-old",
     }), { status: 200 }),
   );
-  await assert.rejects(() => service.health(), /بروتوكول Gemini وعقد الاسترداد الحالي/);
+  await assert.rejects(() => service.health(), /عقد التأليف النحيف ومخطط المرئيات المتخصص الحالي/);
 });
 
 test("عامل المفردة يستخدم المسار الدائم ولا يحتاج استجابة اختبار كاملة", async () => {
@@ -121,7 +126,7 @@ test("عامل المفردة يلتزم بآلة حالات Supabase: generatin
   const generating = body.indexOf('await heartbeat(claimed, workerId, "generating")');
   const author = body.indexOf("await callAuthor(");
   const normalizing = body.indexOf('await heartbeat(claimed, workerId, "normalizing")');
-  const normalizeAuthor = body.indexOf("normalizeModelContent(author.value, contract)");
+  const normalizeAuthor = body.indexOf("normalizeAuthoredItemContent(author.value, contract)");
   const validating = body.indexOf('await heartbeat(claimed, workerId, "validating")');
   const reviewer = body.indexOf("await callReviewer(");
 
@@ -238,7 +243,7 @@ test("v0.3.12 يفحص عقد قاعدة البيانات وGemini مسبقًا 
     async () => ({ accessToken: "token" }),
     async (_url, init) => {
       calls.push(JSON.parse(init.body));
-      return new Response(JSON.stringify({ ok: true, worker: "assessment-generation-worker", providerProtocolVersion: 2, databaseContractVersion: 1, requestId: "p" }), { status: 200 });
+      return new Response(JSON.stringify({ ok: true, worker: "assessment-generation-worker", providerProtocolVersion: 3, thinItemContractVersion: 1, visualPlannerVersion: 1, databaseContractVersion: 1, requestId: "p" }), { status: 200 });
     },
   );
   await service.preflight();
@@ -292,4 +297,60 @@ test("v0.3.12 يستخرج تفاصيل QuotaFailure الآمنة بدل رسا�
   assert.match(worker, /quotaId/);
   assert.match(worker, /quotaValue/);
   assert.match(worker, /quotaDimensions/);
+});
+
+test("v0.3.13 يفصل عقد السؤال النحيف عن بيانات الرسم التفصيلية", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const worker = await readFile(new URL("../supabase/functions/assessment-generation-worker/index.ts", import.meta.url), "utf8");
+  const itemStart = worker.indexOf("function itemSchema(");
+  const itemEnd = worker.indexOf("function authorSchema(", itemStart);
+  assert.ok(itemStart >= 0 && itemEnd > itemStart);
+  const itemSchemaBody = worker.slice(itemStart, itemEnd);
+  assert.match(itemSchemaBody, /visualIntent:\s*visualIntentSchema\(\)/);
+  assert.doesNotMatch(itemSchemaBody, /vectors|anchors|segments|dimensions|series|components/);
+  assert.doesNotMatch(worker, /function visualSchema\(/);
+});
+
+test("v0.3.13 يستخدم مخطط مرئي متخصص حسب النوع بعد اعتماد السؤال", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const worker = await readFile(new URL("../supabase/functions/assessment-generation-worker/index.ts", import.meta.url), "utf8");
+  assert.match(worker, /function visualPlannerSchema\(mode: VisualMode\)/);
+  assert.match(worker, /mode === "force_diagram"[\s\S]*vectors[\s\S]*anchors[\s\S]*segments[\s\S]*dimensions/);
+  assert.match(worker, /mode === "circuit_diagram"[\s\S]*components/);
+  assert.match(worker, /mode === "line_graph" \|\| mode === "bar_chart"[\s\S]*series/);
+  assert.match(worker, /VISUAL_PLANNER_MODEL/);
+  assert.match(worker, /visualPlannerVersion:\s*1/);
+});
+
+test("v0.3.13 لا يطلب Visual Planner عند عدم وجود مرئي أو عند المشهد السياقي الحر", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const worker = await readFile(new URL("../supabase/functions/assessment-generation-worker/index.ts", import.meta.url), "utf8");
+  const start = worker.indexOf("async function callVisualPlanner(");
+  const end = worker.indexOf("function emptyVisualProposal", start);
+  assert.ok(start >= 0 && end > start);
+  const body = worker.slice(start, end);
+  assert.match(body, /intent\.mode === "none" \|\| intent\.mode === "illustration_2d"/);
+  assert.match(body, /return \{ visual: emptyVisualProposal/);
+});
+
+test("v0.3.13 يخطط المرئي بعد المراجعة العلمية لا قبلها", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const worker = await readFile(new URL("../supabase/functions/assessment-generation-worker/index.ts", import.meta.url), "utf8");
+  const start = worker.indexOf("async function processItem(");
+  const end = worker.indexOf("function parseAuthorCheckpoint", start);
+  const body = worker.slice(start, end);
+  const reviewer = body.indexOf("await callReviewer(");
+  const approved = body.indexOf("if (!reviewed.approved)");
+  const planner = body.indexOf("await callVisualPlanner(");
+  assert.ok(reviewer >= 0 && approved > reviewer && planner > approved, "يجب أن يأتي تخطيط المرئي بعد المراجعة والاعتماد");
+});
+
+test("v0.3.13 يختبر عقد التأليف والمراجعة النحيفين في preflight", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const worker = await readFile(new URL("../supabase/functions/assessment-generation-worker/index.ts", import.meta.url), "utf8");
+  assert.match(worker, /await preflightThinContracts\(requestId\)/);
+  assert.match(worker, /wathiq_thin_author_contract_probe/);
+  assert.match(worker, /wathiq_thin_review_contract_probe/);
+  assert.match(worker, /providerProtocolVersion:\s*3/);
+  assert.match(worker, /thinItemContractVersion:\s*1/);
 });

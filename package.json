@@ -1,9 +1,9 @@
 {
   "name": "wathiq",
-  "version": "0.3.12",
+  "version": "0.3.13",
   "private": true,
   "type": "module",
-  "description": "واثق: مولد اختبارات علوم كامبريدج عربي بتأليف عميق ومرئيات علمية دلالية، مع عقد تشغيل موحد بين Supabase وGemini يفصل ضغط المزود عن فشل المحتوى ويكشف تفاصيل الحصة قبل استهلاك محاولات الأسئلة.",
+  "description": "واثق: مولد اختبارات علوم كامبريدج عربي بتأليف عميق ومراجعة مستقلة وعقد مفردة نحيف، مع مخطط مرئيات علمية متخصص لكل نوع لتقليل تعقيد Structured Output ومنع رفض طلبات Gemini.",
   "scripts": {
     "build": "node scripts/build.mjs",
     "dev": "node scripts/serve.mjs",

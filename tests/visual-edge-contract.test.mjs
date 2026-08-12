@@ -30,7 +30,7 @@ test("عامل المفردات يطلب بيانات منظمة للرسوم ا
   assert.match(worker, /magnitude/);
   assert.match(worker, /unit/);
   assert.match(worker, /رسم القوى لا يحمل كل القيم العددية الواردة في السؤال/);
-  assert.match(worker, /illustration_2d فقط للمشهد السياقي/);
+  assert.match(worker, /استخدم illustration_2d للمشهد السياقي فقط/);
 });
 
 test("وظيفة مهام الصور لا ترسل المخططات المنظمة إلى مولد الصور حتى مع عميل قديم", async () => {

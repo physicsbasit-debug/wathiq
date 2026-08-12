@@ -1,5 +1,15 @@
 # التاريخ المختصر
 
+## 0.3.13 — Thin Item Contract + Typed Visual Planner
+- فصل عقد التأليف والمراجعة عن بيانات المرئيات الهندسية التفصيلية بعد ظهور `MODEL_REQUEST_INVALID` مع Structured Output الرئيسي الكبير.
+- أصبح المؤلف والمراجع يعيدان `visualIntent` فقط (`mode` + `brief`) مع نص المفردة ونموذج التصحيح.
+- أضيف Visual Planner متخصص لكل نوع مرئي منظم؛ كل استدعاء يستخدم JSON Schema صغيرًا لا يحتوي إلا حقول النوع المطلوب.
+- `none` و`illustration_2d` لا يدخلان Visual Planner المنظم؛ المشهد السياقي يبقى في مسار الصور 2D الحالي.
+- أضيف preflight للعقود الفعلية: thin author + thin reviewer + typed force-diagram planner قبل بدء الدورة.
+- ارتفعت عقود الصحة إلى `visualContractVersion=3`, `thinItemContractVersion=1`, `visualPlannerVersion=1`, `providerProtocolVersion=3`.
+- لا SQL جديد؛ Runtime Contract v0.3.12 وقواعد quota/retry تبقى كما هي.
+- تم تحديث README والتوثيق التشغيلي والمعماري مع الإصدار.
+
 ## 0.3.12 — Runtime Contract + Quota Truth
 - فصل ضغط Gemini عن فشل المحتوى إلى RPCs مستقلة، بحيث لا يستطيع 429/503/timeout التحول إلى `failed` عبر مسار قاعدة البيانات نفسه.
 - إضافة `assessment_generation_runtime_contract_v1` وفحصه في Worker قبل health/preflight لمنع تشغيل Edge أحدث من SQL المنشور.
@@ -102,6 +112,16 @@
 - لا تغيير في منطق Cambridge-first أو التوليد أو Supabase.
 
 # التاريخ المختصر
+
+## 0.3.13 — Thin Item Contract + Typed Visual Planner
+- فصل عقد التأليف والمراجعة عن بيانات المرئيات الهندسية التفصيلية بعد ظهور `MODEL_REQUEST_INVALID` مع Structured Output الرئيسي الكبير.
+- أصبح المؤلف والمراجع يعيدان `visualIntent` فقط (`mode` + `brief`) مع نص المفردة ونموذج التصحيح.
+- أضيف Visual Planner متخصص لكل نوع مرئي منظم؛ كل استدعاء يستخدم JSON Schema صغيرًا لا يحتوي إلا حقول النوع المطلوب.
+- `none` و`illustration_2d` لا يدخلان Visual Planner المنظم؛ المشهد السياقي يبقى في مسار الصور 2D الحالي.
+- أضيف preflight للعقود الفعلية: thin author + thin reviewer + typed force-diagram planner قبل بدء الدورة.
+- ارتفعت عقود الصحة إلى `visualContractVersion=3`, `thinItemContractVersion=1`, `visualPlannerVersion=1`, `providerProtocolVersion=3`.
+- لا SQL جديد؛ Runtime Contract v0.3.12 وقواعد quota/retry تبقى كما هي.
+- تم تحديث README والتوثيق التشغيلي والمعماري مع الإصدار.
 
 ## 0.3.0 — Cambridge Core Purge
 

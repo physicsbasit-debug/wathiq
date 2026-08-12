@@ -11,7 +11,7 @@ function extractScienceValidator(worker) {
   const end = worker.indexOf("function selectEvidenceAnchor(", start);
   assert.ok(start >= 0 && end > start, "تعذر العثور على محقق العلوم داخل العامل");
   const source = worker.slice(start, end)
-    .replace("function validateScienceAdapters(content: ModelContent, contract: ItemContract): string[]", "function validateScienceAdapters(content, contract)")
+    .replace("function validateScienceAdapters(content: AuthoredItemContent, contract: ItemContract): string[]", "function validateScienceAdapters(content, contract)")
     .replace("const issues: string[] = [];", "const issues = [];");
   return new Function(`${source}; return validateScienceAdapters;`)();
 }
@@ -86,14 +86,14 @@ test("منطق التأليف يلتزم بأنواع المفردات الرس�
 
 test("قرار المرئي يبقى بسيطًا لكن البيانات العلمية الدقيقة تستخدم مخططًا دلاليًا لا صورة حرة", async () => {
   const worker = await text("supabase/functions/assessment-generation-worker/index.ts");
-  assert.match(worker, /وظّف المخططات والرسومات والجداول والرسوم البيانية عندما تساهم فعلًا في الإجابة أو توضيح السؤال أو جزء منه/);
-  assert.match(worker, /لا توجد حصة صور مفروضة ولا تصنيف ضرورة ثلاثي/);
+  assert.match(worker, /وظّف المرئي عندما يساهم فعلًا في الإجابة أو يوضح السؤال أو جزءًا منه/);
+  assert.match(worker, /لا توجد نسبة صور مفروضة/);
   assert.doesNotMatch(worker, /visualRequirement/);
   assert.doesNotMatch(worker, /enum: \["none", "helpful", "required"\]/);
   assert.doesNotMatch(worker, /requirement:\s*requested/);
   assert.match(worker, /force_diagram/);
   assert.match(worker, /رسم القوى لا يحمل كل القيم العددية الواردة في السؤال/);
-  assert.match(worker, /illustration_2d فقط للمشهد السياقي/);
+  assert.match(worker, /استخدم illustration_2d للمشهد السياقي فقط/);
   assert.match(worker, /const requested = visual\.mode !== "none"/);
 });
 test("ورقة الطالب لا تعرض رسائل فشل الأصول البصرية ولا العبارة النظامية الداخلية", async () => {

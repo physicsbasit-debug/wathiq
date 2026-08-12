@@ -74,7 +74,7 @@ test("المرئيات العلمية الدقيقة ترسم من بيانات 
   assert.match(visual, /renderCircuitDiagram/);
   assert.match(visual, /renderRayDiagram/);
   assert.match(worker, /force_diagram/);
-  assert.match(worker, /القيم والتسميات والاتجاهات/);
+  assert.match(worker, /مخطط مرئي علمي متخصص/);
   assert.match(edge, /المخططات العلمية ذات البيانات والاتجاهات تُرسم حتميًا داخل واثق/);
   assert.match(edge, /gemini-3\.1-flash-image/);
   assert.match(edge, /wathiq-context-scene-v2/);
