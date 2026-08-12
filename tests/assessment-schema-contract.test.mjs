@@ -36,3 +36,13 @@ test("سياسة الضغط تفصل تأجيل خدمة Gemini عن محاول�
     assert.match(sql, /create or replace function public\.retry_assessment_generation_item[\s\S]*retry_after_at\s*=\s*null[\s\S]*author_checkpoint\s*=\s*null/i);
   }
 });
+
+
+test("v0.3.11 يزيل overload القديم ويثبت RPC فشل واحدًا فقط", async () => {
+  const migration = await readFile(new URL("../supabase/migrations/20260812_assessment_generation_provider_protocol_repair.sql", import.meta.url), "utf8");
+  assert.match(migration, /drop function if exists public\.fail_assessment_generation_item\(uuid, text, uuid, text, text, text\);/i);
+  assert.match(migration, /drop function if exists public\.fail_assessment_generation_item\(uuid, text, uuid, text, text, text, integer\);/i);
+  assert.match(migration, /create function public\.fail_assessment_generation_item\([\s\S]*p_retry_after_seconds integer/i);
+  assert.match(migration, /notify pgrst, 'reload schema'/i);
+  assert.match(migration, /canonical_fail_rpc_count/i);
+});

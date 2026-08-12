@@ -30,6 +30,7 @@ export interface QuestionVisualVector {
   dy: number;
   magnitude: number;
   unit?: string;
+  valueLabel?: string;
 }
 
 

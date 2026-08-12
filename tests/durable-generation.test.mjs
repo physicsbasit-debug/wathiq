@@ -50,7 +50,8 @@ test("فحص صحة عامل المفردات يطابق عقد المؤلف و�
       engineSchemaVersion: 1,
       contractVersion: 4,
       visualContractVersion: 2,
-      pressureControlVersion: 2,
+      pressureControlVersion: 3,
+      providerProtocolVersion: 1,
       authorModel: "gemini-author",
       reviewModel: "gemini-reviewer",
       requestId: "r-health",
@@ -61,7 +62,8 @@ test("فحص صحة عامل المفردات يطابق عقد المؤلف و�
   assert.equal(health.reviewModel, "gemini-reviewer");
   assert.equal(health.contractVersion, 4);
   assert.equal(health.visualContractVersion, 2);
-  assert.equal(health.pressureControlVersion, 2);
+  assert.equal(health.pressureControlVersion, 3);
+  assert.equal(health.providerProtocolVersion, 1);
 });
 
 test("فحص الصحة يرفض عاملًا قديمًا لا يعرف عقد القرار البصري الواحد", async () => {
@@ -78,7 +80,7 @@ test("فحص الصحة يرفض عاملًا قديمًا لا يعرف عقد 
       requestId: "r-old",
     }), { status: 200 }),
   );
-  await assert.rejects(() => service.health(), /عقد المرئيات وإدارة الحصة الحالية/);
+  await assert.rejects(() => service.health(), /بروتوكول Gemini وعقد الاسترداد الحالي/);
 });
 
 test("عامل المفردة يستخدم المسار الدائم ولا يحتاج استجابة اختبار كاملة", async () => {
@@ -224,4 +226,40 @@ test("العامل يحفظ خرج المؤلف قبل المراجع ويعيد
   assert.match(worker, /checkpoint_assessment_generation_author/);
   assert.match(worker, /MODEL_QUOTA_EXHAUSTED/);
   assert.match(worker, /providerRetryInfoSeconds/);
+});
+
+
+test("v0.3.11 يفحص Gemini مسبقًا قبل إنشاء دورة كاملة", async () => {
+  const calls = [];
+  const service = new AssessmentGenerationWorkerService(
+    { supabaseUrl: "https://example.supabase.co", supabasePublishableKey: "sb_publishable_test" },
+    async () => ({ accessToken: "token" }),
+    async (_url, init) => {
+      calls.push(JSON.parse(init.body));
+      return new Response(JSON.stringify({ ok: true, worker: "assessment-generation-worker", providerProtocolVersion: 1, requestId: "p" }), { status: 200 });
+    },
+  );
+  await service.preflight();
+  assert.equal(calls[0].action, "preflight");
+});
+
+test("عامل v0.3.11 لا يصنف HTTP 400 من Gemini على أنه JSON محتوى", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const worker = await readFile(new URL("../supabase/functions/assessment-generation-worker/index.ts", import.meta.url), "utf8");
+  assert.match(worker, /status === 400[\s\S]*MODEL_REQUEST_INVALID/);
+  assert.match(worker, /status === 401 \|\| status === 403[\s\S]*MODEL_AUTH_FAILED/);
+  assert.match(worker, /status === 404[\s\S]*MODEL_NOT_FOUND/);
+  assert.match(worker, /finishReason === "MAX_TOKENS"[\s\S]*MODEL_OUTPUT_TRUNCATED/);
+  assert.match(worker, /thinkingLevel: "high" \| "medium" \| "low"/);
+  assert.match(worker, /"medium", AUTHOR_MODEL_TIMEOUT_MS/);
+  assert.match(worker, /"medium", REVIEW_MODEL_TIMEOUT_MS/);
+});
+
+test("مخطط المرئي v0.3.11 يقيد الإحداثيات ويدعم القوة الرمزية F", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const worker = await readFile(new URL("../supabase/functions/assessment-generation-worker/index.ts", import.meta.url), "utf8");
+  assert.match(worker, /valueLabel:\s*\{ type: "string" \}/);
+  assert.match(worker, /minimum: 0, maximum: 100/);
+  assert.match(worker, /required: \["mode", "brief"\]/);
+  assert.match(worker, /magnitude=0 وvalueLabel=F/);
 });

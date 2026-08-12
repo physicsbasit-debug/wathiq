@@ -624,7 +624,7 @@ declare
   v_status text;
   v_retry_after integer;
 begin
-  if p_retry_class not in ('none', 'transport_once', 'transport_backoff', 'content_once') then
+  if p_retry_class not in ('none', 'transport_backoff', 'content_once') then
     raise exception using errcode = '22023', message = 'INVALID_RETRY_CLASS';
   end if;
 
@@ -638,7 +638,7 @@ begin
   for update;
   if not found then return 'stale'; end if;
 
-  if p_retry_class in ('transport_once', 'transport_backoff') then
+  if p_retry_class = 'transport_backoff' then
     v_status := 'retry_pending';
     v_retry_after := greatest(5, least(coalesce(p_retry_after_seconds, 60), 86400));
   elsif p_retry_class = 'content_once' and v_row.attempt_count < v_row.max_attempts and v_row.content_retry_count < 1 then
@@ -652,12 +652,12 @@ begin
   update public.assessment_generation_items
   set status = v_status,
       attempt_count = case
-        when p_retry_class in ('transport_once', 'transport_backoff') then greatest(attempt_count - 1, 0)
+        when p_retry_class = 'transport_backoff' then greatest(attempt_count - 1, 0)
         else attempt_count
       end,
-      transport_retry_count = least(100, transport_retry_count + case when p_retry_class in ('transport_once', 'transport_backoff') then 1 else 0 end),
+      transport_retry_count = least(100, transport_retry_count + case when p_retry_class = 'transport_backoff' then 1 else 0 end),
       content_retry_count = content_retry_count + case when v_status = 'retry_pending' and p_retry_class = 'content_once' then 1 else 0 end,
-      retry_after_at = case when v_status = 'retry_pending' and p_retry_class in ('transport_once', 'transport_backoff') then now() + make_interval(secs => v_retry_after) else null end,
+      retry_after_at = case when v_status = 'retry_pending' and p_retry_class = 'transport_backoff' then now() + make_interval(secs => v_retry_after) else null end,
       author_checkpoint = case when p_retry_class = 'content_once' or v_status = 'failed' then null else author_checkpoint end,
       error_code = left(coalesce(p_error_code, 'INTERNAL_ERROR'), 120),
       error_message = left(coalesce(p_error_message, 'تعذر توليد المفردة.'), 800),

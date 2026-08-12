@@ -177,16 +177,18 @@ function cleanVectors(value: unknown): QuestionVisualVector[] {
   return value.flatMap((entry) => {
     const record = asRecord(entry);
     if (!record) return [];
-    const fields = [record.x, record.y, record.dx, record.dy, record.magnitude];
+    const fields = [record.x, record.y, record.dx, record.dy];
     if (fields.some((field) => typeof field !== "number" || !Number.isFinite(field))) return [];
+    const magnitude = typeof record.magnitude === "number" && Number.isFinite(record.magnitude) && record.magnitude >= 0 ? record.magnitude : 0;
     return [{
       label: cleanText(record.label, 50),
       x: record.x as number,
       y: record.y as number,
       dx: record.dx as number,
       dy: record.dy as number,
-      magnitude: record.magnitude as number,
+      magnitude,
       unit: cleanText(record.unit, 16),
+      valueLabel: cleanText(record.valueLabel, 40),
     }];
   }).slice(0, 8);
 }
@@ -512,7 +514,7 @@ function renderInstrumentScale(spec: QuestionVisualSpec): string {
 
 
 function vectorCaption(vector: QuestionVisualVector): string {
-  const value = vector.magnitude > 0 ? ` ${numberLabel(vector.magnitude)}${vector.unit ? ` ${vector.unit}` : ""}` : "";
+  const value = vector.valueLabel ? ` ${vector.valueLabel}` : vector.magnitude > 0 ? ` ${numberLabel(vector.magnitude)}${vector.unit ? ` ${vector.unit}` : ""}` : "";
   return `${vector.label}${value}`.trim();
 }
 
@@ -558,7 +560,7 @@ function renderForceDiagram(spec: QuestionVisualSpec): string {
     const labelX = mostlyVertical ? endX : endX + (ux >= 0 ? 12 : -12);
     const labelY = mostlyVertical ? endY + (uy >= 0 ? -18 : 26) : endY - 10;
     const anchor = mostlyVertical ? "middle" : ux >= 0 ? "start" : "end";
-    const value = vector.magnitude > 0 ? `${numberLabel(vector.magnitude)}${vector.unit ? ` ${vector.unit}` : ""}` : "";
+    const value = vector.valueLabel || (vector.magnitude > 0 ? `${numberLabel(vector.magnitude)}${vector.unit ? ` ${vector.unit}` : ""}` : "");
     return `<g class="qv-semantic-vector qv-semantic-vector-${index}"><line x1="${startX}" y1="${startY}" x2="${endX}" y2="${endY}" class="qv-semantic-arrow" marker-end="url(#${markerId})"/><text x="${labelX}" y="${labelY}" class="qv-semantic-label" text-anchor="${anchor}">${escapeXml(vector.label)}</text>${value ? `<text x="${labelX}" y="${labelY + 16}" class="qv-semantic-value" text-anchor="${anchor}">${escapeXml(value)}</text>` : ""}</g>`;
   }).join("");
 

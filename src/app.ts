@@ -519,7 +519,10 @@ function generationItemStatusClass(status: AssessmentGenerationItemSnapshot["sta
 
 function generationItemUserMessage(task: AssessmentGenerationItemSnapshot): string {
   const transient = task.errorCode === "MODEL_RATE_LIMITED" || task.errorCode === "MODEL_QUOTA_EXHAUSTED" || task.errorCode === "MODEL_UNAVAILABLE" || task.errorCode === "MODEL_TIMEOUT";
-  if (!transient) return task.errorMessage;
+  if (!transient) {
+    const prefix = task.errorCode ? `[${task.errorCode}] ` : "";
+    return `${prefix}${task.errorMessage || "تعذر توليد المفردة."}`;
+  }
   if (task.status === "retry_pending") {
     const retryAt = Date.parse(task.retryAfterAt);
     const remainingSeconds = Number.isFinite(retryAt) ? Math.max(0, Math.ceil((retryAt - Date.now()) / 1000)) : 0;
@@ -531,7 +534,7 @@ function generationItemUserMessage(task: AssessmentGenerationItemSnapshot): stri
       : `خدمة التوليد تحت ضغط مؤقت. سيستأنف واثق تلقائيًا ${waitLabel} دون احتساب التأجيل محاولة فاشلة للسؤال.`;
   }
   if (task.status === "failed") {
-    return "تعذرت المفردة بسبب خطأ محتوى أو خطأ غير قابل لإعادة المحاولة تلقائيًا. المفردات المكتملة محفوظة ويمكن إعادة هذه المفردة وحدها.";
+    return `[${task.errorCode}] خلل في عقد الاسترداد: سجّلت قاعدة البيانات ضغط Gemini المؤقت كفشل نهائي. شغّل إصلاح قاعدة البيانات للإصدار الحالي ثم استكمل الدورة نفسها.`;
   }
   return task.errorMessage || "خدمة توليد الأسئلة مشغولة مؤقتًا.";
 }
@@ -1477,6 +1480,9 @@ async function generateQuestionsForPlan(_plan: PlanItem[]): Promise<boolean> {
     if (workerHealth.engineSchemaVersion !== 1 || workerHealth.contractVersion !== 4) {
       throw new Error("عامل توليد المفردات المنشور لا يطابق عقد كامبريدج الحالي. أعد نشر وظيفة عامل التوليد ثم أعد المحاولة.");
     }
+    state.questionGenerationMessage = "يفحص واثق اتصال Gemini والنموذج والعقد البنيوي قبل إطلاق الأسئلة…";
+    render();
+    await assessmentGenerationWorkerService.preflight();
     const payload = await buildCurrentProgressivePayload();
     let finalSnapshot: AssessmentGenerationRunSnapshot | null = null;
     if (state.draft.generationRunId) {

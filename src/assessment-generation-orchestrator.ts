@@ -22,6 +22,7 @@ export interface ProgressiveGenerationOrchestratorOptions {
 const ACTIVE_ITEM_STATUSES = new Set(["grounding", "generating", "normalizing", "validating"]);
 const DISPATCHABLE_ITEM_STATUSES = new Set(["queued", "retry_pending"]);
 const TRANSIENT_PRESSURE_CODES = new Set(["MODEL_RATE_LIMITED", "MODEL_QUOTA_EXHAUSTED", "MODEL_UNAVAILABLE", "MODEL_TIMEOUT"]);
+const GLOBAL_PROVIDER_FAILURE_CODES = new Set(["MODEL_REQUEST_INVALID", "MODEL_AUTH_FAILED", "MODEL_NOT_FOUND"]);
 const MAX_PRESSURE_BACKOFF_MS = 180_000;
 
 function transientBackoffMs(errorCode: string, transportRetryCount: number): number {
@@ -140,6 +141,10 @@ export class ProgressiveAssessmentGenerationOrchestrator {
     snapshot: AssessmentGenerationRunSnapshot,
     hooks: ProgressiveGenerationHooks,
   ): Promise<void> {
+    const globalProviderFailure = snapshot.items.find((item) => item.status === "failed" && GLOBAL_PROVIDER_FAILURE_CODES.has(item.errorCode));
+    if (globalProviderFailure) {
+      throw new Error(globalProviderFailure.errorMessage || `تعذر الاتصال بمزود التوليد (${globalProviderFailure.errorCode}).`);
+    }
     const now = this.now();
     const pressureUntil = this.observePressure(snapshot, now);
     if (now < pressureUntil) return;
