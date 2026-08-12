@@ -1,4 +1,4 @@
-# معمارية واثق 0.3.11
+# معمارية واثق 0.3.12
 
 ## المبدأ
 
@@ -111,3 +111,8 @@ Supabase مسؤول عن الجلسة، المسودات، مهام التولي
 
 ### Provider protocol v1
 تسبق الدورة preflight حقيقية إلى Gemini. أخطاء HTTP غير المؤقتة تصنف على مستوى المزود وتوقف الإرسال، بينما 429/5xx فقط تدخل transport_backoff. يوجد توقيع RPC واحد فقط للفشل لمنع غموض PostgREST.
+
+
+## Runtime Contract v0.3.12
+
+أخطاء النقل المؤقتة لا تمر من دالة قادرة على إنهاء المفردة. `defer_assessment_generation_item_v1` مسؤول حصريًا عن 429/503/timeout، بينما `fail_assessment_generation_content_v1` مسؤول عن فشل المحتوى. يفحص Worker عقد قاعدة البيانات قبل health/preflight، ويستخدم Jobs استردادًا versioned للـ stale leases.

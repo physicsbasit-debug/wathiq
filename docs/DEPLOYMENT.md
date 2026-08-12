@@ -1,4 +1,4 @@
-# نشر واثق 0.3.11
+# نشر واثق 0.3.12
 
 ## متغيرات GitHub Pages
 
@@ -22,35 +22,45 @@ GEMINI_REVIEW_MODEL
 GEMINI_IMAGE_MODEL
 ```
 
-## ترتيب تحديث 0.3.11
+## ترتيب تحديث 0.3.12
 
-إذا كانت البيئة الحالية على 0.3.10:
+إذا كانت البيئة الحالية على 0.3.11:
 
-1. ارفع حزمة ملفات 0.3.11 إلى GitHub وانتظر نجاح Actions وPages.
+1. ارفع حزمة ملفات 0.3.12 إلى GitHub وانتظر نجاح Actions وPages.
 2. في Supabase SQL Editor شغّل:
 
 ```text
-supabase/migrations/20260812_assessment_generation_provider_protocol_repair.sql
+supabase/migrations/20260812_assessment_generation_runtime_contract_repair.sql
 ```
 
-3. يجب أن يعرض فحص SQL في النهاية `canonical_fail_rpc_count = 1`.
-4. أعد نشر:
+3. يجب أن يعرض SQL في النهاية `runtime_contract` وفيه:
+
+```text
+version = 1
+transportDefer = true
+contentFail = true
+staleRecovery = true
+```
+
+4. أعد نشر وظيفتين فقط:
 
 ```text
 supabase/functions/assessment-generation-worker/index.ts
+supabase/functions/assessment-generation-jobs/index.ts
 ```
 
-5. لا يلزم إعادة نشر `assessment-generation-jobs` أو وظائف الصور في هذه المرحلة.
-6. اعمل تحديثًا قويًا للصفحة وافتح المسودة نفسها. سيعمل preflight قبل استكمال الدورة، وإذا كان الخلل من Gemini سيظهر نوعه الحقيقي بدل رسالة محتوى عامة.
+5. لا يلزم إعادة نشر وظائف الصور.
+6. اعمل تحديثًا قويًا للصفحة وافتح المسودة نفسها ثم استكمل المفردات المتبقية.
 
-إذا كانت البيئة أقدم من 0.3.10، طبّق migrations بالترتيب الزمني أو استخدم `supabase/schema-current.sql` لبيئة جديدة من الصفر.
+إذا كانت البيئة أقدم من 0.3.11، طبّق migrations بالترتيب الزمني أو استخدم `supabase/schema-current.sql` لبيئة جديدة من الصفر.
 
 ## ما يضيفه SQL الحالي
 
-- `retry_after_at`: الموعد الذي يسمح بعده بإعادة حجز المفردة.
-- `author_checkpoint`: نقطة استئناف تحفظ خرج المؤلف قبل المراجع.
-- أخطاء النقل تعيد `attempt_count` إلى ما كان عليه قبل الحجز ولا تستهلك محاولة محتوى.
-- `transport_retry_count` يصبح عداد تأجيلات تشغيلية لا بوابة تسقط المفردة بعد تأجيلين.
+- RPC مستقلة لتأجيل أخطاء النقل، لا يمكنها إنتاج حالة `failed`.
+- RPC مستقلة لفشل المحتوى والمراجعة.
+- استرداد Canonical للمهام ذات lease المنتهي.
+- Runtime contract قابل للفحص من Worker قبل بدء التوليد.
+- إصلاح تلقائي للمفردات الحالية التي تحمل خطأ Gemini مؤقتًا لكنها سُجلت `failed` بالإصدارات السابقة.
 
 ## الفحص قبل النشر
 

@@ -271,7 +271,7 @@ function parseBlueprintItem(value: unknown, expectedOrder: number): {
 }
 
 async function recoverStale(ownerId: string, draftId: string): Promise<void> {
-  const rpc = await admin.rpc("recover_stale_assessment_generation_items", {
+  const rpc = await admin.rpc("recover_stale_assessment_generation_items_v1", {
     p_owner_id: ownerId,
     p_draft_id: draftId,
   });

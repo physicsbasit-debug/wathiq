@@ -175,24 +175,28 @@ Deno.serve(async (req) => {
     const payload = requireRecord(await readJsonBody(req), "الطلب غير صالح.");
     const action = requireText(payload.action, "نوع العملية غير محدد.", 30);
     if (action === "health") {
+      const databaseContract = await assertDatabaseRuntimeContract();
       return json(req, {
         ok: true,
         worker: "assessment-generation-worker",
         engineSchemaVersion: 1,
         contractVersion: 4,
         visualContractVersion: 2,
-        pressureControlVersion: 3,
-        providerProtocolVersion: 1,
+        pressureControlVersion: 4,
+        providerProtocolVersion: 2,
+        databaseContractVersion: 1,
         authorModel: AUTHOR_MODEL,
         reviewModel: REVIEW_MODEL,
-        philosophy: "cambridge-first-provider-truth-preflight-v8",
+        databaseContract,
+        philosophy: "cambridge-first-runtime-contract-quota-truth-v9",
         requestId,
       });
     }
     if (action === "preflight") {
+      await assertDatabaseRuntimeContract();
       const models = [...new Set([AUTHOR_MODEL, REVIEW_MODEL])];
       for (const model of models) await preflightModel(model, requestId);
-      return json(req, { ok: true, worker: "assessment-generation-worker", providerProtocolVersion: 1, models, requestId });
+      return json(req, { ok: true, worker: "assessment-generation-worker", providerProtocolVersion: 2, databaseContractVersion: 1, models, requestId });
     }
     if (action !== "process" && action !== "process-sync") throw httpError("العملية المطلوبة غير مدعومة.", 404);
     const itemId = requireUuid(payload.itemId, "معرف مهمة المفردة غير صالح.");
@@ -211,6 +215,28 @@ Deno.serve(async (req) => {
     return json(req, { error: mapped.message, code: mapped.code, retryAfterSeconds: mapped.retryAfterSeconds, requestId }, mapped.status);
   }
 });
+
+async function assertDatabaseRuntimeContract(): Promise<Record<string, unknown>> {
+  const rpc = await admin.rpc("assessment_generation_runtime_contract_v1");
+  if (rpc.error) {
+    throw workerError(
+      "DATABASE_RUNTIME_MISMATCH",
+      "قاعدة بيانات واثق لا تحمل عقد التوليد التشغيلي الحالي. نفّذ SQL الإصدار الحالي قبل تشغيل أي اختبار.",
+      "none",
+      503,
+    );
+  }
+  const contract = asRecord(rpc.data);
+  if (!contract || contract.version !== 1 || contract.transportDefer !== true || contract.contentFail !== true || contract.staleRecovery !== true) {
+    throw workerError(
+      "DATABASE_RUNTIME_MISMATCH",
+      "عقد قاعدة بيانات التوليد غير مكتمل أو قديم. أوقف واثق التوليد بدل استهلاك محاولات الأسئلة.",
+      "none",
+      503,
+    );
+  }
+  return contract;
+}
 
 async function processItem(itemId: string, ownerId: string, requestId: string): Promise<WorkerOutcome> {
   const workerId = `wathiq-quality-reset:${requestId}`;
@@ -317,14 +343,27 @@ async function processItem(itemId: string, ownerId: string, requestId: string): 
     const mapped = mapWorkerError(error);
     console.error(JSON.stringify({ event: "wathiq_assessment_generation_item_failed", requestId, itemId, code: mapped.code, retryClass: mapped.retryClass, message: mapped.message }));
     if (!claimed) throw error;
-    const failed = await admin.rpc("fail_assessment_generation_item", {
+    if (mapped.retryClass === "transport_backoff") {
+      const deferred = await admin.rpc("defer_assessment_generation_item_v1", {
+        p_item_id: claimed.id,
+        p_worker_id: workerId,
+        p_lease_token: claimed.lease_token,
+        p_error_code: mapped.code,
+        p_error_message: mapped.message,
+        p_retry_after_seconds: mapped.retryAfterSeconds,
+      });
+      if (deferred.error) throw databaseError("تعذر تأجيل مفردة التوليد بعد ضغط المزود", deferred.error);
+      const status = deferred.data === "retry_pending" ? "retry_pending" : deferred.data === "stale" ? "stale" : "failed";
+      return { itemId, status, errorCode: mapped.code, errorMessage: mapped.message };
+    }
+
+    const failed = await admin.rpc("fail_assessment_generation_content_v1", {
       p_item_id: claimed.id,
       p_worker_id: workerId,
       p_lease_token: claimed.lease_token,
       p_error_code: mapped.code,
       p_error_message: mapped.message,
-      p_retry_class: mapped.retryClass,
-      p_retry_after_seconds: mapped.retryAfterSeconds,
+      p_retry_class: mapped.retryClass === "content_once" ? "content_once" : "none",
     });
     if (failed.error) throw databaseError("تعذر تسجيل فشل مفردة التوليد", failed.error);
     const status = failed.data === "retry_pending" ? "retry_pending" : failed.data === "stale" ? "stale" : "failed";
@@ -889,9 +928,13 @@ function providerHttpError(payload: unknown, status: number, retryAfterHeader: s
   console.error(JSON.stringify({ event: "wathiq_provider_http_error", role, status, providerMessage: providerMessage.slice(0, 500) }));
   if (MODEL_TRANSIENT_HTTP_STATUSES.has(status)) {
     const pressure = classifyProviderPressure(payload, status, retryAfterHeader);
+    const quota = quotaFailureSummary(payload);
+    const retryLabel = pressure.retryAfterSeconds >= 60
+      ? `موعد المحاولة بعد نحو ${Math.ceil(pressure.retryAfterSeconds / 60)} دقيقة`
+      : `موعد المحاولة بعد نحو ${pressure.retryAfterSeconds} ثانية`;
     const message = pressure.code === "MODEL_QUOTA_EXHAUSTED"
-      ? "حصة Gemini الحالية مستنفدة. سيوقف واثق الطابور ويحترم مهلة المزود دون استهلاك محاولة السؤال."
-      : "خدمة Gemini تحت ضغط أو غير متاحة مؤقتًا. سيؤجل واثق المهمة دون استهلاك محاولة السؤال.";
+      ? `حصة Gemini الحالية مستنفدة. ${quota ? `${quota}. ` : ""}${retryLabel}. لن يحتسب واثق ذلك محاولة فاشلة للسؤال.`
+      : `Gemini أعاد حد معدل/ضغط مؤقت. ${quota ? `${quota}. ` : ""}${retryLabel}. لن يحتسب واثق ذلك محاولة فاشلة للسؤال.`;
     return workerError(pressure.code, message, "transport_backoff", status === 429 ? 429 : 503, pressure.retryAfterSeconds);
   }
   if (status === 400) return workerError("MODEL_REQUEST_INVALID", "رفض Gemini بنية طلب واثق. هذه مشكلة عقد/إعداد برمجية وليست خطأ في محتوى السؤال.", "none", 502);
@@ -1281,6 +1324,32 @@ function providerRetryInfoSeconds(payload: unknown): number | null {
   const messageMatch = message.match(/retry\s+in\s+([0-9]+(?:\.[0-9]+)?)s/iu);
   return messageMatch ? Math.max(1, Math.ceil(Number(messageMatch[1]))) : null;
 }
+function quotaFailureSummary(payload: unknown): string {
+  const error = asRecord(asRecord(payload)?.error);
+  const details = Array.isArray(error?.details) ? error.details : [];
+  for (const detailValue of details) {
+    const detail = asRecord(detailValue);
+    const violations = Array.isArray(detail?.violations) ? detail.violations : [];
+    for (const violationValue of violations) {
+      const violation = asRecord(violationValue);
+      if (!violation) continue;
+      const metric = typeof violation.quotaMetric === "string" ? violation.quotaMetric.split("/").pop() ?? violation.quotaMetric : "";
+      const quotaId = typeof violation.quotaId === "string" ? violation.quotaId : "";
+      const quotaValue = typeof violation.quotaValue === "string" || typeof violation.quotaValue === "number" ? String(violation.quotaValue) : "";
+      const dimensions = asOptionalRecord(violation.quotaDimensions);
+      const model = typeof dimensions?.model === "string" ? dimensions.model : "";
+      const pieces = [
+        metric ? `المقياس ${metric}` : "",
+        quotaId ? `الحد ${quotaId}` : "",
+        quotaValue ? `القيمة ${quotaValue}` : "",
+        model ? `النموذج ${model}` : "",
+      ].filter(Boolean);
+      if (pieces.length) return pieces.join("، ").slice(0, 420);
+    }
+  }
+  return "";
+}
+
 function classifyProviderPressure(payload: unknown, status: number, retryAfterHeader: string | null): { code: string; retryAfterSeconds: number } {
   const error = asRecord(asRecord(payload)?.error);
   const serialized = JSON.stringify(payload ?? {}).toLowerCase();

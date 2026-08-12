@@ -50,8 +50,9 @@ test("فحص صحة عامل المفردات يطابق عقد المؤلف و�
       engineSchemaVersion: 1,
       contractVersion: 4,
       visualContractVersion: 2,
-      pressureControlVersion: 3,
-      providerProtocolVersion: 1,
+      pressureControlVersion: 4,
+      providerProtocolVersion: 2,
+      databaseContractVersion: 1,
       authorModel: "gemini-author",
       reviewModel: "gemini-reviewer",
       requestId: "r-health",
@@ -62,8 +63,9 @@ test("فحص صحة عامل المفردات يطابق عقد المؤلف و�
   assert.equal(health.reviewModel, "gemini-reviewer");
   assert.equal(health.contractVersion, 4);
   assert.equal(health.visualContractVersion, 2);
-  assert.equal(health.pressureControlVersion, 3);
-  assert.equal(health.providerProtocolVersion, 1);
+  assert.equal(health.pressureControlVersion, 4);
+  assert.equal(health.providerProtocolVersion, 2);
+  assert.equal(health.databaseContractVersion, 1);
 });
 
 test("فحص الصحة يرفض عاملًا قديمًا لا يعرف عقد القرار البصري الواحد", async () => {
@@ -229,21 +231,21 @@ test("العامل يحفظ خرج المؤلف قبل المراجع ويعيد
 });
 
 
-test("v0.3.11 يفحص Gemini مسبقًا قبل إنشاء دورة كاملة", async () => {
+test("v0.3.12 يفحص عقد قاعدة البيانات وGemini مسبقًا قبل إنشاء دورة كاملة", async () => {
   const calls = [];
   const service = new AssessmentGenerationWorkerService(
     { supabaseUrl: "https://example.supabase.co", supabasePublishableKey: "sb_publishable_test" },
     async () => ({ accessToken: "token" }),
     async (_url, init) => {
       calls.push(JSON.parse(init.body));
-      return new Response(JSON.stringify({ ok: true, worker: "assessment-generation-worker", providerProtocolVersion: 1, requestId: "p" }), { status: 200 });
+      return new Response(JSON.stringify({ ok: true, worker: "assessment-generation-worker", providerProtocolVersion: 2, databaseContractVersion: 1, requestId: "p" }), { status: 200 });
     },
   );
   await service.preflight();
   assert.equal(calls[0].action, "preflight");
 });
 
-test("عامل v0.3.11 لا يصنف HTTP 400 من Gemini على أنه JSON محتوى", async () => {
+test("عامل v0.3.12 لا يصنف HTTP 400 من Gemini على أنه JSON محتوى", async () => {
   const { readFile } = await import("node:fs/promises");
   const worker = await readFile(new URL("../supabase/functions/assessment-generation-worker/index.ts", import.meta.url), "utf8");
   assert.match(worker, /status === 400[\s\S]*MODEL_REQUEST_INVALID/);
@@ -255,11 +257,39 @@ test("عامل v0.3.11 لا يصنف HTTP 400 من Gemini على أنه JSON م�
   assert.match(worker, /"medium", REVIEW_MODEL_TIMEOUT_MS/);
 });
 
-test("مخطط المرئي v0.3.11 يقيد الإحداثيات ويدعم القوة الرمزية F", async () => {
+test("مخطط المرئي v0.3.12 يقيد الإحداثيات ويدعم القوة الرمزية F", async () => {
   const { readFile } = await import("node:fs/promises");
   const worker = await readFile(new URL("../supabase/functions/assessment-generation-worker/index.ts", import.meta.url), "utf8");
   assert.match(worker, /valueLabel:\s*\{ type: "string" \}/);
   assert.match(worker, /minimum: 0, maximum: 100/);
   assert.match(worker, /required: \["mode", "brief"\]/);
   assert.match(worker, /magnitude=0 وvalueLabel=F/);
+});
+
+
+test("v0.3.12 يفصل تأجيل ضغط المزود عن فشل المحتوى في RPC مستقلتين", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const worker = await readFile(new URL("../supabase/functions/assessment-generation-worker/index.ts", import.meta.url), "utf8");
+  assert.match(worker, /defer_assessment_generation_item_v1/);
+  assert.match(worker, /fail_assessment_generation_content_v1/);
+  const catchStart = worker.indexOf("if (mapped.retryClass === \"transport_backoff\")");
+  assert.ok(catchStart >= 0, "يجب أن يملك ضغط المزود مسار RPC مستقلًا");
+});
+
+test("v0.3.12 يفحص عقد قاعدة البيانات في health قبل بدء التوليد", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const worker = await readFile(new URL("../supabase/functions/assessment-generation-worker/index.ts", import.meta.url), "utf8");
+  assert.match(worker, /assessment_generation_runtime_contract_v1/);
+  assert.match(worker, /databaseContractVersion:\s*1/);
+  assert.match(worker, /DATABASE_RUNTIME_MISMATCH/);
+});
+
+test("v0.3.12 يستخرج تفاصيل QuotaFailure الآمنة بدل رسالة 429 عامة فقط", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const worker = await readFile(new URL("../supabase/functions/assessment-generation-worker/index.ts", import.meta.url), "utf8");
+  assert.match(worker, /function quotaFailureSummary/);
+  assert.match(worker, /quotaMetric/);
+  assert.match(worker, /quotaId/);
+  assert.match(worker, /quotaValue/);
+  assert.match(worker, /quotaDimensions/);
 });

@@ -46,3 +46,23 @@ test("v0.3.11 يزيل overload القديم ويثبت RPC فشل واحدًا 
   assert.match(migration, /notify pgrst, 'reload schema'/i);
   assert.match(migration, /canonical_fail_rpc_count/i);
 });
+
+
+test("v0.3.12 يثبت عقد تشغيل واحدًا لا يسمح لضغط Gemini بالتحول إلى failed", async () => {
+  const migration = await readFile(new URL("../supabase/migrations/20260812_assessment_generation_runtime_contract_repair.sql", import.meta.url), "utf8");
+  const schema = await readFile(schemaPath, "utf8");
+  for (const sql of [migration, schema]) {
+    assert.match(sql, /create or replace function public\.defer_assessment_generation_item_v1/);
+    assert.match(sql, /set status = 'retry_pending'[\s\S]*attempt_count = greatest\(attempt_count - 1, 0\)/i);
+    assert.match(sql, /create or replace function public\.fail_assessment_generation_content_v1/);
+    assert.match(sql, /create or replace function public\.recover_stale_assessment_generation_items_v1/);
+    assert.match(sql, /create or replace function public\.assessment_generation_runtime_contract_v1/);
+  }
+  assert.match(migration, /item\.error_code in \('MODEL_RATE_LIMITED','MODEL_QUOTA_EXHAUSTED','MODEL_UNAVAILABLE','MODEL_TIMEOUT'\)/);
+});
+
+test("schema-current يعيد تعريف recover_stale ولا يعتمد على دالة مفقودة من نسخة أقدم", async () => {
+  const schema = await readFile(schemaPath, "utf8");
+  assert.match(schema, /create or replace function public\.recover_stale_assessment_generation_items_v1/);
+  assert.match(schema, /create or replace function public\.recover_stale_assessment_generation_items\(/);
+});

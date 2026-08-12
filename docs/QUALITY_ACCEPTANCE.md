@@ -33,10 +33,13 @@
 
 أي خطأ علمي جوهري، مرئي مضلل، أو فرق نوعي واضح لمصلحة الأداة المرجعية = **FAIL**. عند الفشل يعود العمل إلى Author/Reviewer قبل إضافة أي ميزة جديدة.
 
-### بوابة قبول المزود v0.3.11
+### بوابة قبول المزود v0.3.12
 - يجب أن ينجح preflight قبل enqueue.
 - 400 لا يجوز أن يظهر MODEL_INVALID_JSON.
 - 403 يجب أن يظهر MODEL_AUTH_FAILED.
 - 404 يجب أن يظهر MODEL_NOT_FOUND.
 - MAX_TOKENS يجب أن يظهر MODEL_OUTPUT_TRUNCATED.
 - يجب أن يوجد توقيع واحد فقط لـ fail_assessment_generation_item.
+
+- يجب أن يفشل health قبل بدء الدورة إذا غاب Runtime Contract لقاعدة البيانات.
+- يجب ألا تنتج `defer_assessment_generation_item_v1` حالة `failed` لأي رمز نقل مؤقت.

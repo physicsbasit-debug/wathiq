@@ -28,6 +28,7 @@ export interface AssessmentGenerationWorkerHealth {
   visualContractVersion: number;
   pressureControlVersion: number;
   providerProtocolVersion: number;
+  databaseContractVersion: number;
   authorModel: string;
   reviewModel: string;
   requestId: string;
@@ -51,8 +52,9 @@ export class AssessmentGenerationWorkerService {
     if (!record || record.ok !== true || record.worker !== "assessment-generation-worker"
       || typeof record.engineSchemaVersion !== "number" || typeof record.contractVersion !== "number"
       || record.visualContractVersion !== 2
-      || record.pressureControlVersion !== 3
-      || record.providerProtocolVersion !== 1
+      || record.pressureControlVersion !== 4
+      || record.providerProtocolVersion !== 2
+      || record.databaseContractVersion !== 1
       || typeof record.authorModel !== "string" || typeof record.reviewModel !== "string"
       || typeof record.requestId !== "string") {
       throw new Error("عامل توليد المفردات المنشور لا يطابق بروتوكول Gemini وعقد الاسترداد الحالي. أعد نشر وظيفة عامل التوليد ثم أعد المحاولة.");
@@ -63,7 +65,7 @@ export class AssessmentGenerationWorkerService {
 
   async preflight(): Promise<void> {
     const record = asRecord(await this.post({ action: "preflight" }));
-    if (!record || record.ok !== true || record.worker !== "assessment-generation-worker" || record.providerProtocolVersion !== 1) {
+    if (!record || record.ok !== true || record.worker !== "assessment-generation-worker" || record.providerProtocolVersion !== 2 || record.databaseContractVersion !== 1) {
       throw new Error("فشل الفحص المسبق لخدمة Gemini قبل إنشاء دورة الاختبار.");
     }
   }
