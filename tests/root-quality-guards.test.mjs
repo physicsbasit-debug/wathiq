@@ -90,6 +90,7 @@ test("قرار المرئي يبقى بسيطًا لكن البيانات الع
   assert.match(worker, /لا توجد حصة صور مفروضة ولا تصنيف ضرورة ثلاثي/);
   assert.doesNotMatch(worker, /visualRequirement/);
   assert.doesNotMatch(worker, /enum: \["none", "helpful", "required"\]/);
+  assert.doesNotMatch(worker, /requirement:\s*requested/);
   assert.match(worker, /force_diagram/);
   assert.match(worker, /رسم القوى لا يحمل كل القيم العددية الواردة في السؤال/);
   assert.match(worker, /illustration_2d فقط للمشهد السياقي/);
@@ -111,4 +112,18 @@ test("واجهة المراجعة تفصل نموذج التصحيح عن الت
   assert.match(app, /<summary>الإجابة ونموذج التصحيح<\/summary>/);
   assert.match(app, /<summary>التفسير العلمي وملاحظات المراجع<\/summary>/);
   assert.match(app, /<small>\$\{escapeHtml\(item\.lessonLabel\)\}<\/small>/);
+});
+
+test("العقد البصري الحالي لا يحمل helpful/required ويستمد قرار الأصل الخارجي من نوع المرئي فقط", async () => {
+  const types = await text("src/types.ts");
+  const visual = await text("src/question-visual.ts");
+  const app = await text("src/app.ts");
+  assert.doesNotMatch(types, /QuestionVisualRequirement/);
+  assert.doesNotMatch(types, /\brequirement:\s*QuestionVisual/);
+  assert.doesNotMatch(visual, /QUESTION_VISUAL_REQUIREMENTS|questionVisualAssetRequirement|\.requirement/);
+  assert.match(visual, /function questionVisualExternalAsset/);
+  assert.match(visual, /const needed = isAiIllustrationEligible\(spec\)/);
+  assert.doesNotMatch(app, /requiredVisualItems|requiredVisualsReady|verifyRequiredVisualAssetsForExport/);
+  assert.match(app, /contextSceneItems/);
+  assert.match(app, /verifyContextSceneAssetsForExport/);
 });

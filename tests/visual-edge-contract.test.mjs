@@ -32,3 +32,22 @@ test("عامل المفردات يطلب بيانات منظمة للرسوم ا
   assert.match(worker, /رسم القوى لا يحمل كل القيم العددية الواردة في السؤال/);
   assert.match(worker, /illustration_2d فقط للمشهد السياقي/);
 });
+
+test("وظيفة مهام الصور لا ترسل المخططات المنظمة إلى مولد الصور حتى مع عميل قديم", async () => {
+  const jobs = await text("supabase/functions/question-visual-jobs/index.ts");
+  assert.match(jobs, /isContextSceneJobInput/);
+  assert.match(jobs, /STRUCTURED_VISUAL_RENDERED_LOCALLY/);
+  assert.match(jobs, /المخططات العلمية المنظمة لا تنشئ مهام صور/);
+  const duplicateRow = jobs.match(/const row = data as JobRow;/g) ?? [];
+  assert.equal(duplicateRow.length, 1, "يجب ألا يعود تعريف row المكرر الذي يكسر Edge Function");
+});
+
+test("عامل المفردات يفرض هندسة العزم داخل المرئي المنظم", async () => {
+  const worker = await text("supabase/functions/assessment-generation-worker/index.ts");
+  assert.match(worker, /anchors/);
+  assert.match(worker, /segments/);
+  assert.match(worker, /dimensions/);
+  assert.match(worker, /مسألة العزم تحتاج تمثيل الساق أو القضيب هندسيًا داخل الرسم/);
+  assert.match(worker, /مسألة العزم تحتاج نقطة ارتكاز مسماة داخل الرسم/);
+  assert.match(worker, /رسم العزم لا يحمل كل المسافات العددية اللازمة للحل/);
+});

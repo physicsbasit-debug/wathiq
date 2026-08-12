@@ -19,7 +19,7 @@ import {
 import { clearDraft, loadDraft, loadDrafts, loadProfile, saveDraft, saveProfile, setActiveDraftId } from "./storage.js";
 import type { ExamDraft, ExamTitleOption, PlanItem, QuestionVisualJobSnapshot, ViewName, WizardStep } from "./types.js";
 import { escapeHtml, formatArabicDate, icon } from "./ui.js";
-import { questionVisualAssetRequirement, questionVisualTypeLabel, renderQuestionVisualForPaper, renderQuestionVisualSvg, stripQuestionVisualIllustration, validateQuestionVisualSpec } from "./question-visual.js";
+import { questionVisualExternalAsset, questionVisualTypeLabel, renderQuestionVisualForPaper, renderQuestionVisualSvg, stripQuestionVisualIllustration, validateQuestionVisualSpec } from "./question-visual.js";
 import { buildStandaloneExamDocument, downloadWordHtml, interleaveAssessmentItems, printHtmlDocument, safeExportFileName } from "./exam-export.js";
 import { getRuntimeConfig, isCentralStorageConfigured } from "./runtime-config.js";
 import { OwnerSessionService } from "./owner-session.js";
@@ -585,12 +585,12 @@ function visualJobMessage(job: QuestionVisualJobSnapshot | undefined): string {
 
 function renderPlanVisual(item: PlanItem, compact = false): string {
   if (!item.visual || item.visual.type === "none") return "";
-  const requirement = questionVisualAssetRequirement(item.visual);
+  const externalAsset = questionVisualExternalAsset(item.visual);
   const job = state.draft.visualJobs[item.id];
   const ready = Boolean(job?.status === "ready" && job.asset?.validated && item.visual.illustration?.validated);
   const pending = Boolean(job && isVisualJobPending(job.status));
   const failed = job?.status === "failed" || job?.status === "cancelled";
-  const modeLabel = !requirement.desired
+  const modeLabel = !externalAsset.needed
     ? "تمثيل علمي منظم دقيق"
     : ready
       ? "صورة تعليمية ثنائية الأبعاد معتمدة"
@@ -599,10 +599,10 @@ function renderPlanVisual(item: PlanItem, compact = false): string {
         : failed
           ? "تعذر إنشاء الرسم العلمي"
           : "رسم علمي ثنائي الأبعاد ينتظر الإنشاء";
-  const controls = !compact && requirement.desired ? `<div class="visual-action-row">
+  const controls = !compact && externalAsset.needed ? `<div class="visual-action-row">
     <button class="secondary-btn compact" data-action="${ready ? "regenerate-visual-job" : failed ? "retry-visual-job" : "sync-visual-job"}" data-plan-id="${escapeHtml(item.id)}" ${(pending || state.draft.status === "معتمد" || state.visualJobSyncBusy) ? "disabled" : ""}>${icon("spark")} ${pending ? "جارٍ التنفيذ…" : ready ? "إعادة توليد الأصل" : failed ? "إعادة المحاولة" : "إنشاء الأصل البصري"}</button>
   </div>` : "";
-  const message = !compact && requirement.desired
+  const message = !compact && externalAsset.needed
     ? `<p class="visual-enhancement-message ${failed ? "error" : ready ? "success" : ""}" aria-live="polite">${escapeHtml(visualJobMessage(job))}</p>`
     : "";
   const visualHtml = compact ? renderQuestionVisualForPaper(item.visual) : renderQuestionVisualSvg(item.visual);
@@ -793,15 +793,15 @@ function reviewReadiness(selected: SelectedPaperItem[]): ReviewReadiness {
   });
   const signatures = visualItems.map(visualSignature).filter(Boolean);
   const visualsUnique = signatures.length === new Set(signatures).size;
-  const requiredVisualItems = visualItems.filter((item) => questionVisualAssetRequirement(item.visual!).required);
-  const requiredVisualsReady = requiredVisualItems.every((item) => {
-    const requirement = questionVisualAssetRequirement(item.visual!);
+  const contextSceneItems = visualItems.filter((item) => questionVisualExternalAsset(item.visual!).needed);
+  const contextScenesReady = contextSceneItems.every((item) => {
+    const externalAsset = questionVisualExternalAsset(item.visual!);
     const job = state.draft.visualJobs[item.id];
     const illustration = item.visual?.illustration;
     return job?.status === "ready"
-      && job.requiredMode === requirement.mode
+      && job.requiredMode === externalAsset.mode
       && Boolean(job.asset?.validated)
-      && job.asset?.renderMode === requirement.mode
+      && job.asset?.renderMode === externalAsset.mode
       && Boolean(illustration?.validated)
       && job.asset?.assetPath === illustration?.assetPath;
   });
@@ -819,7 +819,7 @@ function reviewReadiness(selected: SelectedPaperItem[]): ReviewReadiness {
     { label: "توليد كامبريدج الحالي", okay: groundedGeneration },
     { label: "نموذج تصحيح لكل درجة", okay: markSchemesComplete },
     { label: `العناصر البصرية العلمية (${visualItems.length})`, okay: visualValidity && visualsUnique },
-    { label: `الرسومات العلمية ثنائية الأبعاد (${requiredVisualItems.length})`, okay: requiredVisualsReady },
+    { label: `المشاهد السياقية ثنائية الأبعاد (${contextSceneItems.length})`, okay: contextScenesReady },
     { label: `المحقق العلمي الحتمي${scienceIssues.length ? ` (${scienceIssues.length} ملاحظة)` : ""}`, okay: scienceIssues.length === 0 },
     { label: "بيانات الاختبار والمواصفة", okay: setupValid },
   ];
@@ -843,11 +843,10 @@ function renderStudentPaper(subject: string, paperLayout: PaperLayout): string {
   </section>`;
 }
 
-async function verifyRequiredVisualAssetsForExport(): Promise<void> {
-  const selected = selectedPaperItems();
-  const required = state.draft.plan.filter((item) => item.visual && questionVisualAssetRequirement(item.visual).required);
-  const urls = required.map((item) => item.visual?.illustration?.url ?? "");
-  if (urls.some((url) => !url)) throw new Error("تعذر التصدير لأن أحد الأصول البصرية المطلوبة غير مرتبط بالمفردة.");
+async function verifyContextSceneAssetsForExport(): Promise<void> {
+  const contextScenes = state.draft.plan.filter((item) => item.visual && questionVisualExternalAsset(item.visual).needed);
+  const urls = contextScenes.map((item) => item.visual?.illustration?.url ?? "");
+  if (urls.some((url) => !url)) throw new Error("تعذر التصدير لأن أحد المشاهد السياقية التي اختارها المؤلف لم يكتمل بعد.");
   await Promise.all([...new Set(urls)].map(async (url) => {
     const response = await fetch(url, { mode: "cors", credentials: "omit" });
     if (!response.ok) throw new Error(`تعذر الوصول إلى أحد الأصول البصرية (${response.status}).`);
@@ -858,7 +857,7 @@ async function verifyRequiredVisualAssetsForExport(): Promise<void> {
 
 async function executeExamExport(action: string, approved: boolean): Promise<void> {
   try {
-    await verifyRequiredVisualAssetsForExport();
+    await verifyContextSceneAssetsForExport();
     const kind = action.includes("answer") ? "answer" as const : "student" as const;
     const document = exportDocumentHtml(kind);
     if (action.endsWith("word")) {
@@ -1045,9 +1044,9 @@ function handleAction(action: string, element: HTMLElement): void {
       window.setTimeout(() => {
         if (!isPlanComplete(state.draft) && state.draft.plan.length) {
           void generateQuestionsForPlan(state.draft.plan);
-          scheduleRequiredVisualJobSync();
+          scheduleContextSceneVisualJobSync();
         } else {
-          scheduleRequiredVisualJobSync();
+          scheduleContextSceneVisualJobSync();
         }
       }, 0);
     }
@@ -1186,7 +1185,7 @@ function currentAutoVisualEnqueueSignature(): string {
     .join("|");
 }
 
-function scheduleRequiredVisualJobSync(): void {
+function scheduleContextSceneVisualJobSync(): void {
   if (!visualJobService || state.authStatus !== "متصل" || state.draft.grade === null) return;
   const signature = currentAutoVisualEnqueueSignature();
   if (!signature || signature === lastAutoVisualEnqueueSignature) return;
@@ -1198,7 +1197,7 @@ function scheduleRequiredVisualJobSync(): void {
     const latest = currentAutoVisualEnqueueSignature();
     if (!latest || latest === lastAutoVisualEnqueueSignature) return;
     if (state.visualJobSyncBusy) {
-      scheduleRequiredVisualJobSync();
+      scheduleContextSceneVisualJobSync();
       return;
     }
     void autoEnqueueVisualJobs(latest);
@@ -1211,8 +1210,8 @@ async function autoEnqueueVisualJobs(signature: string): Promise<void> {
     lastAutoVisualEnqueueSignature = signature;
     return;
   }
-  // A temporary network/session/race failure must not silently lose the required ثنائية الأبعاد task.
-  window.setTimeout(() => scheduleRequiredVisualJobSync(), VISUAL_JOB_AUTO_ENQUEUE_DELAY_MS * 4);
+  // A temporary network/session/race failure must not silently lose the context-scene 2D task.
+  window.setTimeout(() => scheduleContextSceneVisualJobSync(), VISUAL_JOB_AUTO_ENQUEUE_DELAY_MS * 4);
 }
 
 function hasPendingVisualJobs(): boolean {
@@ -1425,7 +1424,7 @@ function progressiveGenerationHooks(payload: ProgressiveGenerationPayload, draft
       }
       state.questionGenerationMessage = progressiveRunMessage(snapshot);
       applyProgressiveGenerationSnapshot(snapshot, payload);
-      scheduleRequiredVisualJobSync();
+      scheduleContextSceneVisualJobSync();
       render();
     },
     onWorkerError: (_itemId: string, error: unknown): void => {
@@ -1491,7 +1490,7 @@ async function generateQuestionsForPlan(_plan: PlanItem[]): Promise<boolean> {
     state.questionGenerationBusy = false;
     persistDraftCheckpoint(false);
     render();
-    if (completed) scheduleRequiredVisualJobSync();
+    if (completed) scheduleContextSceneVisualJobSync();
     return completed;
   } catch (error) {
     if (state.draft.id !== draftId || state.draft.generationEpoch !== generationEpoch) return false;
@@ -1524,7 +1523,7 @@ async function retryGenerationItem(itemId: string): Promise<void> {
     applyProgressiveGenerationSnapshot(finalSnapshot, payload);
     state.questionGenerationBusy = false;
     render();
-    if (finalSnapshot.items.every((item) => item.status === "ready")) scheduleRequiredVisualJobSync();
+    if (finalSnapshot.items.every((item) => item.status === "ready")) scheduleContextSceneVisualJobSync();
   } catch (error) {
     state.questionGenerationBusy = false;
     state.questionGenerationMessage = userFacingError(error, "تعذر إعادة المفردة الفاشلة.");
@@ -1764,7 +1763,7 @@ async function bootstrapSession(): Promise<void> {
     if (state.draft.currentStep >= 3 && state.draft.generationRunId && !isPlanComplete(state.draft)) {
       window.setTimeout(() => { void generateQuestionsForPlan(state.draft.plan); }, 0);
     } else {
-      scheduleRequiredVisualJobSync();
+      scheduleContextSceneVisualJobSync();
     }
   } catch (error) {
     state.authStatus = "يتطلب تسجيل الدخول";

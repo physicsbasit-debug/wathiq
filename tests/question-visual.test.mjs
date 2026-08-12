@@ -4,7 +4,7 @@ import {
   emptyQuestionVisualSpec,
   isAiIllustrationEligible,
   parseQuestionVisualSpec,
-  questionVisualAssetRequirement,
+  questionVisualExternalAsset,
   renderQuestionVisualForPaper,
   renderQuestionVisualSvg,
   stripQuestionVisualIllustration,
@@ -14,7 +14,6 @@ function lineVisual() {
   return {
     ...emptyQuestionVisualSpec(),
     type: "line_graph",
-    requirement: "required",
     title: "المسافة والزمن",
     altText: "رسم خطي يوضح تغير المسافة مع الزمن",
     xAxisLabel: "الزمن",
@@ -33,7 +32,6 @@ function contextScene(extra = {}) {
   return {
     ...emptyQuestionVisualSpec(),
     type: "context_scene",
-    requirement: "required",
     visualId: "visual-scene",
     title: "مشهد علمي",
     altText: "مشهد علمي سياقي لا يحمل بيانات كمية حاكمة",
@@ -47,7 +45,6 @@ function forceVisual() {
   return {
     ...emptyQuestionVisualSpec(),
     type: "force_diagram",
-    requirement: "required",
     visualId: "visual-force",
     title: "القوى المؤثرة على العربة",
     altText: "مخطط قوى يوضح قوة الدفع إلى الأعلى والوزن إلى الأسفل بالقيم المعطاة",
@@ -63,8 +60,7 @@ function forceVisual() {
 test("تبقى الرسوم البيانية العددية حتمية لأن واثق يملك قيمها الدقيقة", () => {
   const visual = parseQuestionVisualSpec(lineVisual(), "line_graph");
   assert.equal(isAiIllustrationEligible(visual), false);
-  assert.equal(questionVisualAssetRequirement(visual).required, false);
-  assert.equal(questionVisualAssetRequirement(visual).desired, false);
+  assert.equal(questionVisualExternalAsset(visual).needed, false);
   const html = renderQuestionVisualSvg(visual);
   assert.match(html, /<svg/);
   assert.match(html, /polyline/);
@@ -73,14 +69,14 @@ test("تبقى الرسوم البيانية العددية حتمية لأن و
 
 test("يبقى جدول البيانات وتدريج القياس حتميين ولا يتحولان إلى صورة حرة", () => {
   const table = parseQuestionVisualSpec({
-    ...emptyQuestionVisualSpec(), type: "data_table", requirement: "required", title: "نتائج تجربة", altText: "جدول قراءات",
+    ...emptyQuestionVisualSpec(), type: "data_table", title: "نتائج تجربة", altText: "جدول قراءات",
     tableColumns: ["الزمن", "المسافة"], tableRows: ["1", "2"], tableCells: [["0", "0"], ["1", "2"]], hiddenCells: [],
   }, "data_table");
   const scale = parseQuestionVisualSpec({
-    ...emptyQuestionVisualSpec(), type: "instrument_scale", requirement: "required", title: "ميزان حرارة", altText: "تدريج حرارة", values: [-10, 100, 10, 40],
+    ...emptyQuestionVisualSpec(), type: "instrument_scale", title: "ميزان حرارة", altText: "تدريج حرارة", values: [-10, 100, 10, 40],
   }, "instrument_scale");
-  assert.equal(questionVisualAssetRequirement(table).required, false);
-  assert.equal(questionVisualAssetRequirement(scale).required, false);
+  assert.equal(questionVisualExternalAsset(table).needed, false);
+  assert.equal(questionVisualExternalAsset(scale).needed, false);
   assert.match(renderQuestionVisualSvg(table), /question-visual-structured/);
   assert.match(renderQuestionVisualSvg(scale), /question-visual-structured-exact/);
 });
@@ -88,8 +84,8 @@ test("يبقى جدول البيانات وتدريج القياس حتميين 
 test("مخطط القوى العلمي يرسم حتميًا بالقيم والوحدات ولا يذهب إلى نموذج الصور", () => {
   const visual = parseQuestionVisualSpec(forceVisual(), "force_diagram");
   assert.equal(isAiIllustrationEligible(visual), false);
-  assert.deepEqual(questionVisualAssetRequirement(visual), {
-    level: "none", desired: false, required: false, mode: null, assetKind: null,
+  assert.deepEqual(questionVisualExternalAsset(visual), {
+    needed: false, mode: null, assetKind: null,
   });
   const html = renderQuestionVisualSvg(visual);
   assert.match(html, /قوة الدفع/);
@@ -103,16 +99,16 @@ test("مخطط القوى العلمي يرسم حتميًا بالقيم وال
 
 test("المخططات الدلالية الحساسة علميًا لا تعتمد صورة حرة", () => {
   const cases = [
-    { ...emptyQuestionVisualSpec(), type: "flow_diagram", requirement: "required", title: "تسلسل", altText: "تسلسل", labels: ["بداية", "تحول", "ناتج"] },
-    { ...emptyQuestionVisualSpec(), type: "electrostatic_diagram", requirement: "required", title: "شحنات", altText: "جسمان مشحونان", labels: ["A", "B"], annotations: ["+", "-"] },
-    { ...emptyQuestionVisualSpec(), type: "ray_diagram", requirement: "required", title: "أشعة", altText: "مسار شعاع", vectors: [{ label: "شعاع", x: 10, y: 50, dx: 1, dy: 0, magnitude: 1, unit: "" }] },
-    { ...emptyQuestionVisualSpec(), type: "circuit_diagram", requirement: "required", title: "دائرة", altText: "دائرة كهربائية", components: ["battery", "lamp"] },
-    { ...emptyQuestionVisualSpec(), type: "pressure_diagram", requirement: "required", title: "ضغط", altText: "موضعان في سائل", labels: ["A", "B"], values: [1, 2] },
+    { ...emptyQuestionVisualSpec(), type: "flow_diagram", title: "تسلسل", altText: "تسلسل", labels: ["بداية", "تحول", "ناتج"] },
+    { ...emptyQuestionVisualSpec(), type: "electrostatic_diagram", title: "شحنات", altText: "جسمان مشحونان", labels: ["A", "B"], annotations: ["+", "-"] },
+    { ...emptyQuestionVisualSpec(), type: "ray_diagram", title: "أشعة", altText: "مسار شعاع", vectors: [{ label: "شعاع", x: 10, y: 50, dx: 1, dy: 0, magnitude: 1, unit: "" }] },
+    { ...emptyQuestionVisualSpec(), type: "circuit_diagram", title: "دائرة", altText: "دائرة كهربائية", components: ["battery", "lamp"] },
+    { ...emptyQuestionVisualSpec(), type: "pressure_diagram", title: "ضغط", altText: "موضعان في سائل", labels: ["A", "B"], values: [1, 2] },
   ];
   for (const raw of cases) {
     const visual = parseQuestionVisualSpec(raw, raw.type);
     assert.equal(isAiIllustrationEligible(visual), false, raw.type);
-    assert.equal(questionVisualAssetRequirement(visual).desired, false, raw.type);
+    assert.equal(questionVisualExternalAsset(visual).needed, false, raw.type);
     assert.match(renderQuestionVisualSvg(visual), /question-visual-structured-exact/, raw.type);
   }
 });
@@ -120,8 +116,8 @@ test("المخططات الدلالية الحساسة علميًا لا تعت�
 test("المشهد السياقي فقط يطلب أصل 2D من نموذج الصور", () => {
   const visual = parseQuestionVisualSpec(contextScene(), "context_scene");
   assert.equal(isAiIllustrationEligible(visual), true);
-  assert.deepEqual(questionVisualAssetRequirement(visual), {
-    level: "required", desired: true, required: true, mode: "replace", assetKind: "scene_2d",
+  assert.deepEqual(questionVisualExternalAsset(visual), {
+    needed: true, mode: "replace", assetKind: "scene_2d",
   });
   assert.match(renderQuestionVisualSvg(visual), /data-visual-mode="2d-requested"/);
   assert.equal(renderQuestionVisualForPaper(visual), "");
@@ -150,10 +146,41 @@ test("يعرض المشهد السياقي 2D المدقق بعد اعتماده
   assert.match(renderQuestionVisualSvg(stripped), /2d-requested/);
 });
 
+test("يتجاهل واثق حقل requirement القديم في المسودات المحفوظة ولا يعيده إلى العقد الحالي", () => {
+  const raw = { ...contextScene(), requirement: "helpful" };
+  const visual = parseQuestionVisualSpec(raw, "context_scene");
+  assert.equal("requirement" in visual, false);
+  assert.equal(questionVisualExternalAsset(visual).needed, true);
+});
+
 test("يهرب عناوين الرسوم الحتمية ولا يسمح بحقن SVG خام", () => {
   const visual = lineVisual();
   visual.title = "<script>alert(1)</script>";
   const html = renderQuestionVisualSvg(parseQuestionVisualSpec(visual, "line_graph"));
   assert.doesNotMatch(html, /<script>/);
   assert.match(html, /&lt;script&gt;/);
+});
+
+test("يرسم واثق مسألة العزم كساق ونقطة ارتكاز وأبعاد وقوى لا كعربة عامة", () => {
+  const visual = parseQuestionVisualSpec({
+    ...emptyQuestionVisualSpec(),
+    type: "force_diagram",
+    visualId: "visual-torque",
+    title: "عزم قوة حول نقطة ارتكاز",
+    altText: "ساق أفقية ترتكز عند P وتؤثر قوة F عند طرفها على بعد d",
+    purpose: "تمثيل موضع القوة والمسافة العمودية عن نقطة الارتكاز",
+    vectors: [{ label: "F", x: 82, y: 45, dx: 0, dy: -1, magnitude: 0, unit: "" }],
+    anchors: [{ kind: "pivot", label: "P", x: 25, y: 45 }],
+    segments: [{ kind: "rod", label: "الساق", x1: 12, y1: 45, x2: 88, y2: 45 }],
+    dimensions: [{ label: "d", value: 0, unit: "", x1: 25, y1: 67, x2: 82, y2: 67 }],
+  }, "force_diagram");
+  const html = renderQuestionVisualSvg(visual);
+  assert.match(html, /qv-mechanics-rod/);
+  assert.match(html, /qv-mechanics-pivot/);
+  assert.match(html, /qv-mechanics-dimension/);
+  assert.match(html, />P</);
+  assert.match(html, />F</);
+  assert.match(html, />d</);
+  assert.doesNotMatch(html, /qv-semantic-body/);
+  assert.doesNotMatch(html, /2d-requested/);
 });

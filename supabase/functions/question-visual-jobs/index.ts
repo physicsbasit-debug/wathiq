@@ -84,7 +84,9 @@ Deno.serve(async (req) => {
       const draftId = requireText(payload.draftId, "معرف المسودة غير صالح.", 120);
       const rawItems = Array.isArray(payload.items) ? payload.items : [];
       if (!rawItems.length || rawItems.length > MAX_ITEMS) throw httpError(`عدد مهام الصور يجب أن يكون بين 1 و${MAX_ITEMS}.`, 400);
-      const inputs = rawItems.map((item) => parseJobInput(item, draftId));
+      const contextItems = rawItems.filter(isContextSceneJobInput);
+      if (!contextItems.length) return json(req, { jobs: [], requestId });
+      const inputs = contextItems.map((item) => parseJobInput(item, draftId));
       const rows = await enqueueJobs(auth.userId, inputs);
       scheduleRows(rows, auth.accessToken, requestId);
       return json(req, { jobs: rows.map(toSnapshot), requestId });
@@ -272,6 +274,16 @@ async function processJob(jobId: string, accessToken: string, requestId: string)
     if (currentError || !current) return;
     row = current as JobRow;
     if (row.status !== "queued" && row.status !== "retry_pending") return;
+    if (textField(row.request_payload.visual.type) !== "context_scene") {
+      await admin.from(TABLE).update({
+        status: "cancelled",
+        error_code: "STRUCTURED_VISUAL_RENDERED_LOCALLY",
+        error_message: "هذا مخطط علمي منظم ويُرسم داخل واثق من بياناته دون إرسال إلى نموذج الصور.",
+        worker_id: null,
+        completed_at: new Date().toISOString(),
+      }).eq("id", row.id);
+      return;
+    }
     if (row.attempt_count >= row.max_attempts) {
       await admin.from(TABLE).update({
         status: "failed",
@@ -414,9 +426,17 @@ async function invokeGenerator(
   }
 }
 
+
+function isContextSceneJobInput(value: unknown): boolean {
+  const record = asRecord(value);
+  const visual = record ? asRecord(record.visual) : null;
+  return textField(visual?.type) === "context_scene";
+}
+
 function parseJobInput(value: unknown, draftId: string): VisualJobInput {
   const record = requireRecord(value, "إحدى مهام الصور غير صالحة.");
   const visual = requireRecord(record.visual, "مواصفة الرسم غير صالحة.");
+  if (textField(visual.type) !== "context_scene") throw httpError("المخططات العلمية المنظمة لا تنشئ مهام صور.", 409);
   const requiredMode = record.requiredMode === "replace" ? "replace" : null;
   if (!requiredMode) throw httpError("نمط الأصل البصري غير صالح.", 400);
   return {

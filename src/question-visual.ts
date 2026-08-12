@@ -1,8 +1,10 @@
 import type {
   CircuitComponent,
+  QuestionVisualAnchor,
+  QuestionVisualDimension,
   QuestionVisualPoint,
+  QuestionVisualSegment,
   QuestionVisualSeries,
-  QuestionVisualRequirement,
   QuestionVisualSpec,
   QuestionVisualType,
   QuestionVisualVector,
@@ -28,12 +30,6 @@ export const QUESTION_VISUAL_TYPES: readonly QuestionVisualType[] = [
   "force_diagram",
   "flow_diagram",
 ];
-
-export const QUESTION_VISUAL_REQUIREMENTS: readonly QuestionVisualRequirement[] = ["none", "helpful", "required"];
-
-export function isQuestionVisualRequirement(value: unknown): value is QuestionVisualRequirement {
-  return typeof value === "string" && (QUESTION_VISUAL_REQUIREMENTS as readonly string[]).includes(value);
-}
 
 export const CIRCUIT_COMPONENTS: readonly CircuitComponent[] = [
   "battery",
@@ -195,10 +191,56 @@ function cleanVectors(value: unknown): QuestionVisualVector[] {
   }).slice(0, 8);
 }
 
+function normalizedCoordinate(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 100 ? value : null;
+}
+
+function cleanAnchors(value: unknown): QuestionVisualAnchor[] {
+  if (!Array.isArray(value)) return [];
+  const allowed = new Set(["pivot", "point", "support", "object"]);
+  return value.flatMap((entry) => {
+    const record = asRecord(entry);
+    if (!record || typeof record.kind !== "string" || !allowed.has(record.kind)) return [];
+    const x = normalizedCoordinate(record.x);
+    const y = normalizedCoordinate(record.y);
+    if (x === null || y === null) return [];
+    return [{ kind: record.kind as QuestionVisualAnchor["kind"], label: cleanText(record.label, 40), x, y }];
+  }).slice(0, 10);
+}
+
+function cleanSegments(value: unknown): QuestionVisualSegment[] {
+  if (!Array.isArray(value)) return [];
+  const allowed = new Set(["rod", "surface", "path"]);
+  return value.flatMap((entry) => {
+    const record = asRecord(entry);
+    if (!record || typeof record.kind !== "string" || !allowed.has(record.kind)) return [];
+    const x1 = normalizedCoordinate(record.x1);
+    const y1 = normalizedCoordinate(record.y1);
+    const x2 = normalizedCoordinate(record.x2);
+    const y2 = normalizedCoordinate(record.y2);
+    if (x1 === null || y1 === null || x2 === null || y2 === null || (x1 === x2 && y1 === y2)) return [];
+    return [{ kind: record.kind as QuestionVisualSegment["kind"], label: cleanText(record.label, 50), x1, y1, x2, y2 }];
+  }).slice(0, 10);
+}
+
+function cleanDimensions(value: unknown): QuestionVisualDimension[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    const record = asRecord(entry);
+    if (!record) return [];
+    const x1 = normalizedCoordinate(record.x1);
+    const y1 = normalizedCoordinate(record.y1);
+    const x2 = normalizedCoordinate(record.x2);
+    const y2 = normalizedCoordinate(record.y2);
+    const valueNumber = typeof record.value === "number" && Number.isFinite(record.value) && record.value >= 0 ? record.value : null;
+    if (x1 === null || y1 === null || x2 === null || y2 === null || valueNumber === null || (x1 === x2 && y1 === y2)) return [];
+    return [{ label: cleanText(record.label, 40), value: valueNumber, unit: cleanText(record.unit, 16), x1, y1, x2, y2 }];
+  }).slice(0, 10);
+}
+
 export function emptyQuestionVisualSpec(): QuestionVisualSpec {
   return {
     type: "none",
-    requirement: "none",
     visualId: "",
     purpose: "",
     title: "",
@@ -222,6 +264,9 @@ export function emptyQuestionVisualSpec(): QuestionVisualSpec {
     tableCells: [],
     hiddenCells: [],
     vectors: [],
+    anchors: [],
+    segments: [],
+    dimensions: [],
   };
 }
 
@@ -231,11 +276,8 @@ export function parseQuestionVisualSpec(value: unknown, expectedType?: QuestionV
   if (expectedType && record.type !== expectedType) throw new Error("نوع المرئي لا يطابق النوع المتوقع.");
 
   const illustration = parseQuestionVisualIllustration(record.illustration);
-  const legacyRequirement: QuestionVisualRequirement = record.type === "none" ? "none" : "required";
-  const requirement = isQuestionVisualRequirement(record.requirement) ? record.requirement : legacyRequirement;
   const spec: QuestionVisualSpec = {
     type: record.type,
-    requirement: record.type === "none" ? "none" : requirement,
     visualId: cleanText(record.visualId, 80),
     purpose: cleanText(record.purpose, 240),
     title: cleanText(record.title),
@@ -259,6 +301,9 @@ export function parseQuestionVisualSpec(value: unknown, expectedType?: QuestionV
     tableCells: cleanStringMatrix(record.tableCells),
     hiddenCells: cleanTextArray(record.hiddenCells, 12, 16),
     vectors: cleanVectors(record.vectors),
+    anchors: cleanAnchors(record.anchors),
+    segments: cleanSegments(record.segments),
+    dimensions: cleanDimensions(record.dimensions),
     ...(illustration ? { illustration } : {}),
   };
   validateQuestionVisualSpec(spec);
@@ -275,11 +320,7 @@ export function diversifyQuestionVisualSpec(spec: QuestionVisualSpec, index: num
 }
 
 export function validateQuestionVisualSpec(spec: QuestionVisualSpec): void {
-  if (spec.type === "none") {
-    if (spec.requirement !== "none") throw new Error("المرئي غير الموجود يجب أن تكون حاجته none.");
-    return;
-  }
-  if (spec.requirement === "none") throw new Error("المرئي الموجود يحتاج تصنيف helpful أو required.");
+  if (spec.type === "none") return;
   if (!spec.title || !spec.altText) throw new Error("المرئي التعليمي يحتاج عنوانًا ووصفًا بديلًا.");
 
   // المشهد السياقي الحر فقط يذهب إلى نموذج الصور. أما المخططات العلمية فترسم من بيانات دلالية صريحة.
@@ -289,6 +330,12 @@ export function validateQuestionVisualSpec(spec: QuestionVisualSpec): void {
     if (!spec.vectors.length || spec.vectors.length > 8) throw new Error("رسم القوى يحتاج متجه قوة واحدًا على الأقل.");
     if (spec.vectors.some((vector) => !vector.label || (!vector.dx && !vector.dy) || vector.magnitude < 0)) {
       throw new Error("متجهات القوى تحتاج تسمية واتجاهًا وقيمة صالحة.");
+    }
+    if (spec.segments.length && spec.segments.some((segment) => !segment.label && segment.kind === "rod")) {
+      throw new Error("الساق أو القضيب في الرسم الميكانيكي يحتاج وصفًا دلاليًا.");
+    }
+    if (spec.anchors.some((anchor) => anchor.kind === "pivot" && !anchor.label)) {
+      throw new Error("نقطة الارتكاز في الرسم الميكانيكي تحتاج تسمية واضحة.");
     }
     return;
   }
@@ -472,19 +519,41 @@ function vectorCaption(vector: QuestionVisualVector): string {
 function renderForceDiagram(spec: QuestionVisualSpec): string {
   const width = 720;
   const height = 420;
-  const cx = 360;
-  const cy = 225;
-  const maxMagnitude = Math.max(1, ...spec.vectors.map((vector) => Math.abs(vector.magnitude)));
+  const plot = { left: 82, top: 72, width: 556, height: 270 };
+  const sx = (x: number) => plot.left + (Math.max(0, Math.min(100, x)) / 100) * plot.width;
+  const sy = (y: number) => plot.top + (Math.max(0, Math.min(100, y)) / 100) * plot.height;
   const markerId = `arrow-${escapeXml(spec.visualId || "force")}`;
+  const dimensionMarkerId = `dimension-${escapeXml(spec.visualId || "force")}`;
+  const maxMagnitude = Math.max(1, ...spec.vectors.map((vector) => Math.abs(vector.magnitude)));
+
+  const segments = spec.segments.map((segment) => {
+    const x1 = sx(segment.x1); const y1 = sy(segment.y1); const x2 = sx(segment.x2); const y2 = sy(segment.y2);
+    const className = segment.kind === "rod" ? "qv-mechanics-rod" : segment.kind === "surface" ? "qv-mechanics-surface" : "qv-mechanics-path";
+    const midX = (x1 + x2) / 2; const midY = (y1 + y2) / 2;
+    return `<g><line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" class="${className}"/>${segment.label ? `<text x="${midX}" y="${midY - 12}" class="qv-semantic-label" text-anchor="middle">${escapeXml(segment.label)}</text>` : ""}</g>`;
+  }).join("");
+
+  const anchors = spec.anchors.map((anchor) => {
+    const x = sx(anchor.x); const y = sy(anchor.y);
+    if (anchor.kind === "pivot") {
+      return `<g class="qv-mechanics-pivot"><path d="M ${x - 18} ${y + 24} L ${x + 18} ${y + 24} L ${x} ${y} Z"/><line x1="${x - 26}" y1="${y + 27}" x2="${x + 26}" y2="${y + 27}"/><text x="${x}" y="${y + 50}" class="qv-semantic-label" text-anchor="middle">${escapeXml(anchor.label)}</text></g>`;
+    }
+    const radius = anchor.kind === "object" ? 13 : 6;
+    return `<g><circle cx="${x}" cy="${y}" r="${radius}" class="qv-mechanics-anchor"/><text x="${x + 12}" y="${y - 10}" class="qv-semantic-label">${escapeXml(anchor.label)}</text></g>`;
+  }).join("");
+
+  const dimensions = spec.dimensions.map((dimension) => {
+    const x1 = sx(dimension.x1); const y1 = sy(dimension.y1); const x2 = sx(dimension.x2); const y2 = sy(dimension.y2);
+    const label = `${dimension.label}${dimension.value > 0 ? `${dimension.label ? " = " : ""}${numberLabel(dimension.value)}${dimension.unit ? ` ${dimension.unit}` : ""}` : ""}`;
+    return `<g class="qv-mechanics-dimension"><line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" marker-start="url(#${dimensionMarkerId})" marker-end="url(#${dimensionMarkerId})"/><line x1="${x1}" y1="${y1 - 7}" x2="${x1}" y2="${y1 + 7}"/><line x1="${x2}" y1="${y2 - 7}" x2="${x2}" y2="${y2 + 7}"/><text x="${(x1 + x2) / 2}" y="${(y1 + y2) / 2 - 10}" class="qv-semantic-value" text-anchor="middle">${escapeXml(label)}</text></g>`;
+  }).join("");
+
   const vectors = spec.vectors.map((vector, index) => {
-    const length = 72 + 92 * Math.min(1, Math.abs(vector.magnitude) / maxMagnitude);
     const norm = Math.hypot(vector.dx, vector.dy) || 1;
-    const ux = vector.dx / norm;
-    const uy = vector.dy / norm;
-    const startX = Number.isFinite(vector.x) && vector.x >= 0 && vector.x <= 100 ? 110 + (vector.x / 100) * 500 : cx;
-    const startY = Number.isFinite(vector.y) && vector.y >= 0 && vector.y <= 100 ? 90 + (vector.y / 100) * 250 : cy;
-    const endX = startX + ux * length;
-    const endY = startY - uy * length;
+    const ux = vector.dx / norm; const uy = vector.dy / norm;
+    const length = vector.magnitude > 0 ? 76 + 86 * Math.min(1, Math.abs(vector.magnitude) / maxMagnitude) : 118;
+    const startX = sx(vector.x); const startY = sy(vector.y);
+    const endX = startX + ux * length; const endY = startY - uy * length;
     const mostlyVertical = Math.abs(uy) > Math.abs(ux) * 1.4;
     const labelX = mostlyVertical ? endX : endX + (ux >= 0 ? 12 : -12);
     const labelY = mostlyVertical ? endY + (uy >= 0 ? -18 : 26) : endY - 10;
@@ -492,8 +561,12 @@ function renderForceDiagram(spec: QuestionVisualSpec): string {
     const value = vector.magnitude > 0 ? `${numberLabel(vector.magnitude)}${vector.unit ? ` ${vector.unit}` : ""}` : "";
     return `<g class="qv-semantic-vector qv-semantic-vector-${index}"><line x1="${startX}" y1="${startY}" x2="${endX}" y2="${endY}" class="qv-semantic-arrow" marker-end="url(#${markerId})"/><text x="${labelX}" y="${labelY}" class="qv-semantic-label" text-anchor="${anchor}">${escapeXml(vector.label)}</text>${value ? `<text x="${labelX}" y="${labelY + 16}" class="qv-semantic-value" text-anchor="${anchor}">${escapeXml(value)}</text>` : ""}</g>`;
   }).join("");
-  const note = spec.annotations[0] ? `<text x="${width / 2}" y="${height - 24}" class="qv-semantic-note" text-anchor="middle">${escapeXml(spec.annotations[0])}</text>` : "";
-  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}"><defs><marker id="${markerId}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" class="qv-semantic-arrowhead"/></marker></defs><text x="${width / 2}" y="30" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text><g class="qv-semantic-body"><rect x="300" y="190" width="120" height="70" rx="12"/><circle cx="325" cy="272" r="13"/><circle cx="395" cy="272" r="13"/></g>${vectors}${note}</svg>`;
+
+  const genericBody = spec.segments.length || spec.anchors.length
+    ? ""
+    : `<g class="qv-semantic-body"><rect x="300" y="190" width="120" height="70" rx="12"/><circle cx="325" cy="272" r="13"/><circle cx="395" cy="272" r="13"/></g>`;
+  const note = spec.annotations[0] ? `<text x="${width / 2}" y="${height - 20}" class="qv-semantic-note" text-anchor="middle">${escapeXml(spec.annotations[0])}</text>` : "";
+  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(spec.altText)}"><defs><marker id="${markerId}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" class="qv-semantic-arrowhead"/></marker><marker id="${dimensionMarkerId}" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M 10 0 L 0 5 L 10 10" class="qv-dimension-arrowhead"/></marker></defs><text x="${width / 2}" y="30" class="qv-title" text-anchor="middle">${escapeXml(spec.title)}</text>${genericBody}${segments}${anchors}${dimensions}${vectors}${note}</svg>`;
 }
 
 function renderFlowDiagram(spec: QuestionVisualSpec): string {
@@ -577,23 +650,25 @@ export function isAiIllustrationEligible(spec: QuestionVisualSpec): boolean {
   return spec.type === "context_scene";
 }
 
-export interface QuestionVisualAssetRequirement {
-  level: QuestionVisualRequirement;
-  desired: boolean;
-  required: boolean;
+export interface QuestionVisualExternalAsset {
+  needed: boolean;
   mode: "replace" | null;
   assetKind: "scene_2d" | null;
 }
 
-export function questionVisualAssetRequirement(spec: QuestionVisualSpec): QuestionVisualAssetRequirement {
-  const eligible = isAiIllustrationEligible(spec);
-  const desired = eligible && spec.requirement !== "none";
+/**
+ * القرار البصري واحد فقط:
+ * - type=none: لا يوجد مرئي.
+ * - الأنواع المنظمة: يرسمها واثق مباشرة من البيانات.
+ * - context_scene: يحتاج أصل صورة 2D خارجيًا ثم مراجعة واعتماد.
+ * لا توجد طبقة ضرورة مستقلة عن نوع المرئي.
+ */
+export function questionVisualExternalAsset(spec: QuestionVisualSpec): QuestionVisualExternalAsset {
+  const needed = isAiIllustrationEligible(spec);
   return {
-    level: desired ? "required" : "none",
-    desired,
-    required: desired,
-    mode: desired ? "replace" : null,
-    assetKind: desired ? "scene_2d" : null,
+    needed,
+    mode: needed ? "replace" : null,
+    assetKind: needed ? "scene_2d" : null,
   };
 }
 

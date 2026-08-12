@@ -49,6 +49,7 @@ test("فحص صحة عامل المفردات يطابق عقد المؤلف و�
       worker: "assessment-generation-worker",
       engineSchemaVersion: 1,
       contractVersion: 4,
+      visualContractVersion: 2,
       authorModel: "gemini-author",
       reviewModel: "gemini-reviewer",
       requestId: "r-health",
@@ -58,6 +59,24 @@ test("فحص صحة عامل المفردات يطابق عقد المؤلف و�
   assert.equal(health.authorModel, "gemini-author");
   assert.equal(health.reviewModel, "gemini-reviewer");
   assert.equal(health.contractVersion, 4);
+  assert.equal(health.visualContractVersion, 2);
+});
+
+test("فحص الصحة يرفض عاملًا قديمًا لا يعرف عقد القرار البصري الواحد", async () => {
+  const service = new AssessmentGenerationWorkerService(
+    { supabaseUrl: "https://example.supabase.co", supabasePublishableKey: "sb_publishable_test" },
+    async () => ({ accessToken: "token" }),
+    async () => new Response(JSON.stringify({
+      ok: true,
+      worker: "assessment-generation-worker",
+      engineSchemaVersion: 1,
+      contractVersion: 4,
+      authorModel: "gemini-author",
+      reviewModel: "gemini-reviewer",
+      requestId: "r-old",
+    }), { status: 200 }),
+  );
+  await assert.rejects(() => service.health(), /عقد المرئيات الحالي/);
 });
 
 test("عامل المفردة يستخدم المسار الدائم ولا يحتاج استجابة اختبار كاملة", async () => {

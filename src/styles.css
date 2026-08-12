@@ -540,6 +540,13 @@ svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-wi
 .qv-depth-line { stroke-dasharray: 5 5; stroke: #8393a6; }
 .qv-fluid-surface { stroke-width: 3; }
 .qv-semantic-vector text { paint-order: stroke; stroke: #fff; stroke-width: 3px; stroke-linejoin: round; }
+.qv-mechanics-rod { stroke: #172b45; stroke-width: 9; stroke-linecap: round; }
+.qv-mechanics-surface { stroke: #5d6d80; stroke-width: 5; }
+.qv-mechanics-path { stroke: #172b45; stroke-width: 3; fill: none; stroke-dasharray: 8 5; }
+.qv-mechanics-pivot path { fill: #eef3f8; stroke: #172b45; stroke-width: 2; }
+.qv-mechanics-pivot line, .qv-mechanics-dimension line { stroke: #172b45; stroke-width: 1.8; fill: none; }
+.qv-mechanics-anchor { fill: #fff; stroke: #172b45; stroke-width: 2; }
+.qv-dimension-arrowhead { fill: none; stroke: #172b45; stroke-width: 1.5; }
 @media (max-width: 720px) {
   .visual-heading { display: grid; }
   .plan-shared-visual.compact { margin-inline: 8px; }

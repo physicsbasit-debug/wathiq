@@ -7,7 +7,7 @@ import type {
   VisualJobStatus,
 } from "./types.js";
 import type { WathiqRuntimeConfig } from "./runtime-config.js";
-import { questionVisualAssetRequirement, stripQuestionVisualIllustration } from "./question-visual.js";
+import { questionVisualExternalAsset, stripQuestionVisualIllustration } from "./question-visual.js";
 import { stageLabel } from "./cambridge-curriculum.js";
 
 interface OwnerSessionLike { accessToken: string }
@@ -40,8 +40,8 @@ export function isVisualJobPending(status: VisualJobStatus): boolean {
 export function visualJobItems(draft: ExamDraft, subject: string): VisualJobInput[] {
   return draft.plan.flatMap((item) => {
     if (!item.visual || item.visual.type === "none") return [];
-    const requirement = questionVisualAssetRequirement(item.visual);
-    if (!requirement.desired || !requirement.mode) return [];
+    const externalAsset = questionVisualExternalAsset(item.visual);
+    if (!externalAsset.needed || !externalAsset.mode) return [];
     const proposal = selectedProposalForVisual(draft, item);
     if (!proposal) return [];
     return [{
@@ -54,14 +54,12 @@ export function visualJobItems(draft: ExamDraft, subject: string): VisualJobInpu
       questionText: `${proposal.stimulus ? `${proposal.stimulus} ` : ""}${proposal.text}`.trim(),
       reviewSupport: proposal.reviewSupport || item.lessonLabel,
       previousAssetPath: item.visual.illustration?.assetPath ?? "",
-      requiredMode: requirement.mode,
+      requiredMode: externalAsset.mode,
       visual: stripQuestionVisualIllustration(item.visual) as unknown as Record<string, unknown>,
     }];
   });
 }
 
-/** @deprecated استخدم visualJobItems؛ الاسم القديم كان يوحي أن كل مرئي إلزامي. */
-export const requiredVisualJobItems = visualJobItems;
 
 function selectedProposalForVisual(draft: ExamDraft, item: PlanItem): PlanItem["proposals"][number] | undefined {
   const selectedId = draft.selectedProposalByPlanItem[item.id];
