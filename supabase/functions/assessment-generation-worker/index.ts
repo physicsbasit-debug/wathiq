@@ -200,15 +200,15 @@ Deno.serve(async (req) => {
         contractVersion: 4,
         visualContractVersion: 3,
         thinItemContractVersion: 1,
-        visualPlannerVersion: 1,
+        visualPlannerVersion: 2,
         pressureControlVersion: 4,
-        providerProtocolVersion: 3,
+        providerProtocolVersion: 4,
         databaseContractVersion: 1,
         authorModel: AUTHOR_MODEL,
         reviewModel: REVIEW_MODEL,
         visualPlannerModel: VISUAL_PLANNER_MODEL,
         databaseContract,
-        philosophy: "cambridge-first-thin-item-typed-visual-planner-v10",
+        philosophy: "cambridge-first-local-validated-visual-planner-v11",
         requestId,
       });
     }
@@ -217,7 +217,7 @@ Deno.serve(async (req) => {
       const models = [...new Set([AUTHOR_MODEL, REVIEW_MODEL, VISUAL_PLANNER_MODEL])];
       for (const model of models) await preflightModel(model, requestId);
       await preflightThinContracts(requestId);
-      return json(req, { ok: true, worker: "assessment-generation-worker", providerProtocolVersion: 3, thinItemContractVersion: 1, visualPlannerVersion: 1, databaseContractVersion: 1, models, requestId });
+      return json(req, { ok: true, worker: "assessment-generation-worker", providerProtocolVersion: 4, thinItemContractVersion: 1, visualPlannerVersion: 2, databaseContractVersion: 1, models, requestId });
     }
     if (action !== "process" && action !== "process-sync") throw httpError("العملية المطلوبة غير مدعومة.", 404);
     const itemId = requireUuid(payload.itemId, "معرف مهمة المفردة غير صالح.");
@@ -782,181 +782,6 @@ function reviewSchema(contract: ItemContract): Record<string, unknown> {
   };
 }
 
-function coordinateSchema(): Record<string, unknown> {
-  return { type: "number", minimum: 0, maximum: 100 };
-}
-
-function vectorSchema(): Record<string, unknown> {
-  return {
-    type: "object",
-    properties: {
-      label: { type: "string" },
-      x: coordinateSchema(), y: coordinateSchema(),
-      dx: { type: "number", minimum: -100, maximum: 100 },
-      dy: { type: "number", minimum: -100, maximum: 100 },
-      magnitude: { type: "number", minimum: 0 },
-      unit: { type: "string" },
-      valueLabel: { type: "string" },
-    },
-    required: ["label", "x", "y", "dx", "dy", "magnitude", "unit", "valueLabel"],
-    additionalProperties: false,
-  };
-}
-
-function pointSeriesSchema(): Record<string, unknown> {
-  return {
-    type: "array",
-    maxItems: 3,
-    items: {
-      type: "object",
-      properties: {
-        label: { type: "string" },
-        points: {
-          type: "array",
-          minItems: 2,
-          maxItems: 10,
-          items: {
-            type: "object",
-            properties: { x: { type: "number" }, y: { type: "number" } },
-            required: ["x", "y"],
-            additionalProperties: false,
-          },
-        },
-      },
-      required: ["label", "points"],
-      additionalProperties: false,
-    },
-  };
-}
-
-function visualPlannerSchema(mode: VisualMode): Record<string, unknown> {
-  if (mode === "data_table") {
-    return {
-      type: "object",
-      properties: {
-        columns: { type: "array", items: { type: "string" }, minItems: 2, maxItems: 6 },
-        rows: { type: "array", items: { type: "array", items: { type: "string" }, minItems: 2, maxItems: 6 }, minItems: 2, maxItems: 8 },
-      },
-      required: ["columns", "rows"],
-      additionalProperties: false,
-    };
-  }
-  if (mode === "line_graph" || mode === "bar_chart") {
-    return {
-      type: "object",
-      properties: {
-        xLabel: { type: "string" }, xUnit: { type: "string" },
-        yLabel: { type: "string" }, yUnit: { type: "string" },
-        series: pointSeriesSchema(),
-      },
-      required: ["xLabel", "xUnit", "yLabel", "yUnit", "series"],
-      additionalProperties: false,
-    };
-  }
-  if (mode === "force_diagram") {
-    return {
-      type: "object",
-      properties: {
-        vectors: { type: "array", minItems: 1, maxItems: 8, items: vectorSchema() },
-        anchors: {
-          type: "array", maxItems: 8,
-          items: {
-            type: "object",
-            properties: {
-              kind: { type: "string", enum: ["pivot", "point", "support", "object"] },
-              label: { type: "string" }, x: coordinateSchema(), y: coordinateSchema(),
-            },
-            required: ["kind", "label", "x", "y"],
-            additionalProperties: false,
-          },
-        },
-        segments: {
-          type: "array", maxItems: 8,
-          items: {
-            type: "object",
-            properties: {
-              kind: { type: "string", enum: ["rod", "surface", "path"] },
-              label: { type: "string" },
-              x1: coordinateSchema(), y1: coordinateSchema(), x2: coordinateSchema(), y2: coordinateSchema(),
-            },
-            required: ["kind", "label", "x1", "y1", "x2", "y2"],
-            additionalProperties: false,
-          },
-        },
-        dimensions: {
-          type: "array", maxItems: 8,
-          items: {
-            type: "object",
-            properties: {
-              label: { type: "string" }, value: { type: "number", minimum: 0 }, unit: { type: "string" },
-              x1: coordinateSchema(), y1: coordinateSchema(), x2: coordinateSchema(), y2: coordinateSchema(),
-            },
-            required: ["label", "value", "unit", "x1", "y1", "x2", "y2"],
-            additionalProperties: false,
-          },
-        },
-        annotations: { type: "array", items: { type: "string" }, maxItems: 8 },
-      },
-      required: ["vectors", "anchors", "segments", "dimensions", "annotations"],
-      additionalProperties: false,
-    };
-  }
-  if (mode === "circuit_diagram") {
-    return {
-      type: "object",
-      properties: {
-        components: {
-          type: "array", minItems: 2, maxItems: 8,
-          items: { type: "string", enum: ["battery", "switch_open", "switch_closed", "lamp", "resistor", "motor", "ammeter", "voltmeter"] },
-        },
-        annotations: { type: "array", items: { type: "string" }, maxItems: 8 },
-      },
-      required: ["components", "annotations"],
-      additionalProperties: false,
-    };
-  }
-  if (mode === "electrostatic_diagram" || mode === "pressure_diagram" || mode === "flow_diagram") {
-    return {
-      type: "object",
-      properties: {
-        labels: { type: "array", items: { type: "string" }, minItems: 2, maxItems: 10 },
-        annotations: { type: "array", items: { type: "string" }, maxItems: 10 },
-      },
-      required: ["labels", "annotations"],
-      additionalProperties: false,
-    };
-  }
-  if (mode === "ray_diagram") {
-    return {
-      type: "object",
-      properties: {
-        vectors: { type: "array", minItems: 1, maxItems: 8, items: vectorSchema() },
-        labels: { type: "array", items: { type: "string" }, maxItems: 10 },
-        annotations: { type: "array", items: { type: "string" }, maxItems: 10 },
-      },
-      required: ["vectors", "labels", "annotations"],
-      additionalProperties: false,
-    };
-  }
-  if (mode === "instrument_scale") {
-    return {
-      type: "object",
-      properties: {
-        values: { type: "array", items: { type: "number" }, minItems: 4, maxItems: 8 },
-        labels: { type: "array", items: { type: "string" }, maxItems: 8 },
-        annotations: { type: "array", items: { type: "string" }, maxItems: 8 },
-      },
-      required: ["values", "labels", "annotations"],
-      additionalProperties: false,
-    };
-  }
-  return {
-    type: "object",
-    properties: {},
-    additionalProperties: false,
-  };
-}
-
 function visualPlannerSystemInstruction(mode: VisualMode): string {
   return [
     "أنت مخطط مرئي علمي متخصص. السؤال قد اعتمد علميًا وتقويميًا قبل وصوله إليك.",
@@ -964,8 +789,20 @@ function visualPlannerSystemInstruction(mode: VisualMode): string {
     "استخرج القيم والوحدات والاتجاهات والعلاقات اللازمة من نص السؤال والمثير والإجابة المعتمدة. لا تخترع قيمة عددية غير موجودة.",
     "اجعل الرسم أداة لحل السؤال أو فهمه، لا صورة زخرفية. لا تكشف الإجابة إذا كان المطلوب استنتاجها من الرسم.",
     "في الإحداثيات استخدم مجال 0..100. للقوة الرمزية مثل F استخدم magnitude=0 وvalueLabel=F. للمسافات العددية ضع القيمة والوحدة كما وردتا.",
-    "أعد JSON فقط وفق المخطط الخاص بهذا النوع، ولا تضف حقولًا لأنواع مرئية أخرى.",
+    "أعد كائن JSON فقط، بلا Markdown ولا شرح خارج JSON. واثق سيتحقق محليًا من الحقول والقيم ولن يعتمد أي خرج ناقص أو زائد وظيفيًا.",
+    visualPlannerJsonContract(mode),
   ].join("\n");
+}
+
+function visualPlannerJsonContract(mode: VisualMode): string {
+  if (mode === "force_diagram") return 'المفاتيح المطلوبة حصراً: {"vectors":[{"label":"F","x":50,"y":50,"dx":0,"dy":-30,"magnitude":0,"unit":"N","valueLabel":"F"}],"anchors":[],"segments":[],"dimensions":[],"annotations":[]}. يمكن تكرار عناصر المصفوفات عند الحاجة.';
+  if (mode === "data_table") return 'المفاتيح المطلوبة حصراً: {"columns":["...","..."],"rows":[["...","..."],["...","..."]]}.';
+  if (mode === "line_graph" || mode === "bar_chart") return 'المفاتيح المطلوبة حصراً: {"xLabel":"...","xUnit":"...","yLabel":"...","yUnit":"...","series":[{"label":"...","points":[{"x":0,"y":0},{"x":1,"y":1}]}]}.';
+  if (mode === "circuit_diagram") return 'المفاتيح المطلوبة حصراً: {"components":["battery","resistor"],"annotations":[]}، والمكونات المسموحة battery,switch_open,switch_closed,lamp,resistor,motor,ammeter,voltmeter.';
+  if (mode === "electrostatic_diagram" || mode === "pressure_diagram" || mode === "flow_diagram") return 'المفاتيح المطلوبة حصراً: {"labels":["...","..."],"annotations":[]}.';
+  if (mode === "ray_diagram") return 'المفاتيح المطلوبة حصراً: {"vectors":[{"label":"ray","x":10,"y":50,"dx":40,"dy":0,"magnitude":0,"unit":"","valueLabel":""}],"labels":[],"annotations":[]}.';
+  if (mode === "instrument_scale") return 'المفاتيح المطلوبة حصراً: {"values":[0,10,1,6],"labels":[],"annotations":[]}، والقيم تمثل الحد الأدنى والأعلى والخطوة والقراءة.';
+  return '{}';
 }
 
 async function callVisualPlanner(
@@ -995,7 +832,7 @@ async function callVisualPlanner(
     VISUAL_PLANNER_MODEL,
     visualPlannerSystemInstruction(intent.mode),
     prompt,
-    visualPlannerSchema(intent.mode),
+    null,
     "medium",
     VISUAL_PLANNER_TIMEOUT_MS,
     requestId,
@@ -1048,21 +885,8 @@ async function preflightThinContracts(requestId: string): Promise<void> {
     "preflight_thin_reviewer",
     1_200,
   );
-  await callJsonModel(
-    VISUAL_PLANNER_MODEL,
-    "هذا فحص توافق لمخطط المرئي المتخصص. أعد متجه قوة واحدًا صالحًا مع arrays فارغة لبقية هندسة الميكانيكا.",
-    {
-      role: "wathiq_typed_visual_contract_probe",
-      mode: "force_diagram",
-      question: "قوة F رأسية إلى أسفل على ساق أفقية حول نقطة ارتكاز P.",
-    },
-    visualPlannerSchema("force_diagram"),
-    "low",
-    PREFLIGHT_TIMEOUT_MS,
-    requestId,
-    "preflight_visual_planner",
-    1_200,
-  );
+  // لا يفحص preflight مخطط المرئي الاختياري عبر JSON Schema.
+  // مخطط المرئي يعمل عند الحاجة فقط بصيغة JSON خفيفة ثم يخضع للتحقق المحلي الصارم.
 }
 
 async function preflightModel(model: string, requestId: string): Promise<void> {
@@ -1091,7 +915,7 @@ async function callJsonModel(
   model: string,
   systemInstruction: string,
   prompt: unknown,
-  schema: Record<string, unknown>,
+  schema: Record<string, unknown> | null,
   thinkingLevel: "high" | "medium" | "low",
   timeoutMs: number,
   requestId: string,
@@ -1107,8 +931,7 @@ async function callJsonModel(
       candidateCount: 1,
       maxOutputTokens,
       thinkingConfig: { thinkingLevel },
-      responseMimeType: "application/json",
-      responseJsonSchema: schema,
+      ...(schema ? { responseMimeType: "application/json", responseJsonSchema: schema } : {}),
     },
   };
 
@@ -1144,9 +967,9 @@ async function callJsonModel(
     }
     if (!output.text) throw workerError("MODEL_INCOMPLETE_CONTENT", "لم تُرجع خدمة الذكاء الاصطناعي محتوى قابلًا للقراءة.", role === "preflight" ? "none" : "content_once", 422);
     let parsed: unknown;
-    try { parsed = JSON.parse(output.text) as unknown; }
-    catch { throw workerError("MODEL_INVALID_JSON", "أعادت خدمة الذكاء الاصطناعي JSON غير صالح رغم طلب الإخراج المنظم.", role === "preflight" ? "none" : "content_once", 422); }
-    console.log(JSON.stringify({ event: "wathiq_model_completed", role, requestId, model, providerCalls: 1, finishReason: finishReason || "STOP", ...output.tokenUsage }));
+    try { parsed = schema ? JSON.parse(output.text) as unknown : parseLooseJsonObject(output.text); }
+    catch { throw workerError("MODEL_INVALID_JSON", role === "visual_planner" ? "أعاد مخطط المرئي JSON غير صالح؛ سيعيد واثق هذه المفردة وحدها وفق عقد التحقق المحلي." : "أعادت خدمة الذكاء الاصطناعي JSON غير صالح رغم طلب الإخراج المنظم.", role === "preflight" ? "none" : "content_once", 422); }
+    console.log(JSON.stringify({ event: "wathiq_model_completed", role, requestId, model, providerCalls: 1, outputContract: schema ? "structured_schema" : "prompt_json_local_validation", finishReason: finishReason || "STOP", ...output.tokenUsage }));
     return { value: parsed, tokenUsage: output.tokenUsage };
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
@@ -1580,6 +1403,34 @@ function mergeUsage(...items: Array<Record<string, number>>): Record<string, num
     outputTokens: (sum.outputTokens ?? 0) + (item.outputTokens ?? 0),
     totalTokens: (sum.totalTokens ?? 0) + (item.totalTokens ?? 0),
   }), { promptTokens: 0, outputTokens: 0, totalTokens: 0 });
+}
+
+function parseLooseJsonObject(value: string): unknown {
+  const cleaned = value.replace(/^\uFEFF/u, "").trim().replace(/^```(?:json)?\s*/iu, "").replace(/\s*```$/u, "").trim();
+  try { return JSON.parse(cleaned) as unknown; }
+  catch {
+    const start = cleaned.indexOf("{");
+    if (start < 0) throw new Error("NO_JSON_OBJECT");
+    let depth = 0;
+    let quoted = false;
+    let escaped = false;
+    for (let index = start; index < cleaned.length; index += 1) {
+      const char = cleaned[index];
+      if (quoted) {
+        if (escaped) escaped = false;
+        else if (char === "\\") escaped = true;
+        else if (char === '"') quoted = false;
+        continue;
+      }
+      if (char === '"') { quoted = true; continue; }
+      if (char === "{") depth += 1;
+      else if (char === "}") {
+        depth -= 1;
+        if (depth === 0) return JSON.parse(cleaned.slice(start, index + 1)) as unknown;
+      }
+    }
+    throw new Error("UNTERMINATED_JSON_OBJECT");
+  }
 }
 
 function geminiError(payload: unknown, fallback: string): string { const error = asRecord(asRecord(payload)?.error); return typeof error?.message === "string" && error.message ? error.message : fallback; }

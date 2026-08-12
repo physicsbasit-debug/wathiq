@@ -1,4 +1,4 @@
-# معمارية واثق 0.3.13
+# معمارية واثق 0.3.14
 
 ## المبدأ
 
@@ -80,7 +80,7 @@ Supabase مسؤول عن الجلسة، المسودات، مهام التولي
 
 - المشهد السياقي الحر فقط (`context_scene`) يمر عبر `science-visual-generation` ونموذج الصور.
 - الرسوم التي تحمل معنى علميًا دقيقًا أو بيانات لا تُفوَّض إلى نموذج الصور: `force_diagram`, `circuit_diagram`, `electrostatic_diagram`, `ray_diagram`, `pressure_diagram`, `flow_diagram`, إضافة إلى الجداول والرسوم البيانية وتدريج الأجهزة.
-- منذ v0.3.13 لا يحمل عقد المؤلف/المراجع البيانات الهندسية التفصيلية. بعد اعتماد النص، يطلب واثق من **Visual Planner متخصص بالنوع** البيانات اللازمة فقط (`vectors/anchors/segments/dimensions` للقوى مثلًا)، ثم يرسمها العميل حتميًا SVG، فتظل القيم والوحدات والاتجاهات مطابقة للسؤال دون تضخيم Structured Output الرئيسي.
+- منذ v0.3.14 لا يحمل عقد المؤلف/المراجع البيانات الهندسية التفصيلية. بعد اعتماد النص، يطلب واثق من **Visual Planner متخصص بالنوع** البيانات اللازمة فقط (`vectors/anchors/segments/dimensions` للقوى مثلًا)، ثم يرسمها العميل حتميًا SVG، فتظل القيم والوحدات والاتجاهات مطابقة للسؤال دون تضخيم Structured Output الرئيسي.
 - في مخطط القوى، إذا وردت قيم بوحدة N في نص الطالب فيجب أن تظهر ضمن متجهات المرئي قبل اعتماد المفردة.
 - لا توجد نسبة صور مفروضة؛ القرار التأليفي يبقى حرًا، لكن نوع المرئي يتحدد بحسب ما إذا كان سياقيًا أو يحمل بيانات علمية حاكمة.
 ## اتساق المرئيات الميكانيكية ونسخ الواجهة (v0.3.7)
@@ -118,7 +118,7 @@ Supabase مسؤول عن الجلسة، المسودات، مهام التولي
 
 أخطاء النقل المؤقتة لا تمر من دالة قادرة على إنهاء المفردة. `defer_assessment_generation_item_v1` مسؤول حصريًا عن 429/503/timeout، بينما `fail_assessment_generation_content_v1` مسؤول عن فشل المحتوى. يفحص Worker عقد قاعدة البيانات قبل health/preflight، ويستخدم Jobs استردادًا versioned للـ stale leases.
 
-## Thin Item Contract + Typed Visual Planner (v0.3.13)
+## Thin Item Contract + Typed Visual Planner (v0.3.14)
 
 المشكلة التي يعالجها هذا الإصدار هي تضخم Structured Output الرئيسي: كان عقد التأليف يجمع في استجابة واحدة نص السؤال وكل حقول جميع أنواع المرئيات، ثم يعيد المراجع العقد الضخم نفسه داخل `finalItem`. الإصدار الحالي يفصل المسؤوليات:
 
@@ -141,5 +141,12 @@ Deterministic renderer
 - مخطط `circuit_diagram` لا يعرف هندسة القوى؛ يحصل فقط على المكونات والتعليقات.
 - الرسوم البيانية والجداول تحصل على مخططها الأصغر الخاص بها.
 - `illustration_2d` يبقى مشهدًا سياقيًا في مسار الصور الحالي ولا يُجبر على هندسة Structured Output.
-- health/preflight يعلنان `visualContractVersion=3`, `thinItemContractVersion=1`, `visualPlannerVersion=1`, `providerProtocolVersion=3`، ويمنع العميل بدء الدورة إذا كان Worker المنشور أقدم.
-- لا تغيير في Runtime Contract لقاعدة البيانات في v0.3.13؛ قاعدة v0.3.12 تبقى العقد المعتمد.
+- health/preflight يعلنان `visualContractVersion=3`, `thinItemContractVersion=1`, `visualPlannerVersion=2`, `providerProtocolVersion=4`، ويمنع العميل بدء الدورة إذا كان Worker المنشور أقدم.
+- لا تغيير في Runtime Contract لقاعدة البيانات في v0.3.14؛ قاعدة v0.3.12 تبقى العقد المعتمد.
+
+## Local-Validated Visual Planner (v0.3.14)
+
+- سجل التشغيل أثبت أن `preflight_visual_planner` كان وحده يعيد HTTP 400 بينما نجح الاتصال والعقدان النحيفان.
+- لذلك لا يرسل Visual Planner مخطط JSON Schema هندسيًا إلى Gemini. يطلب JSON خفيفًا فقط (`responseMimeType=application/json`) ويصف الشكل المتوقع في التعليمات.
+- واثق يعامل الخرج كبيانات غير موثوقة: JSON.parse → normalizeVisual → validateContent → buildVisualSpec. لا يصل أي مرئي ناقص أو غير متسق إلى النتيجة الجاهزة.
+- preflight العام لا يشغّل Visual Planner؛ المسار الاختياري لا يحق له حجب دورة اختبار كاملة.

@@ -56,13 +56,13 @@ export class AssessmentGenerationWorkerService {
       || typeof record.engineSchemaVersion !== "number" || typeof record.contractVersion !== "number"
       || record.visualContractVersion !== 3
       || record.thinItemContractVersion !== 1
-      || record.visualPlannerVersion !== 1
+      || record.visualPlannerVersion !== 2
       || record.pressureControlVersion !== 4
-      || record.providerProtocolVersion !== 3
+      || record.providerProtocolVersion !== 4
       || record.databaseContractVersion !== 1
       || typeof record.authorModel !== "string" || typeof record.reviewModel !== "string" || typeof record.visualPlannerModel !== "string"
       || typeof record.requestId !== "string") {
-      throw new Error("عامل توليد المفردات المنشور لا يطابق عقد التأليف النحيف ومخطط المرئيات المتخصص الحالي. أعد نشر وظيفة عامل التوليد ثم أعد المحاولة.");
+      throw new Error("عامل توليد المفردات المنشور لا يطابق عقد التأليف النحيف ومخطط المرئيات ذي التحقق المحلي الحالي. أعد نشر وظيفة عامل التوليد ثم أعد المحاولة.");
     }
     return record as unknown as AssessmentGenerationWorkerHealth;
   }
@@ -70,8 +70,8 @@ export class AssessmentGenerationWorkerService {
 
   async preflight(): Promise<void> {
     const record = asRecord(await this.post({ action: "preflight" }));
-    if (!record || record.ok !== true || record.worker !== "assessment-generation-worker" || record.providerProtocolVersion !== 3 || record.thinItemContractVersion !== 1 || record.visualPlannerVersion !== 1 || record.databaseContractVersion !== 1) {
-      throw new Error("فشل الفحص المسبق لعقد Gemini النحيف أو مخطط المرئيات قبل إنشاء دورة الاختبار.");
+    if (!record || record.ok !== true || record.worker !== "assessment-generation-worker" || record.providerProtocolVersion !== 4 || record.thinItemContractVersion !== 1 || record.visualPlannerVersion !== 2 || record.databaseContractVersion !== 1) {
+      throw new Error("فشل الفحص المسبق لعقد Gemini النحيف قبل إنشاء دورة الاختبار.");
     }
   }
 

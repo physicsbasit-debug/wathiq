@@ -51,9 +51,9 @@ test("فحص صحة عامل المفردات يطابق عقد المؤلف و�
       contractVersion: 4,
       visualContractVersion: 3,
       thinItemContractVersion: 1,
-      visualPlannerVersion: 1,
+      visualPlannerVersion: 2,
       pressureControlVersion: 4,
-      providerProtocolVersion: 3,
+      providerProtocolVersion: 4,
       databaseContractVersion: 1,
       authorModel: "gemini-author",
       reviewModel: "gemini-reviewer",
@@ -67,9 +67,9 @@ test("فحص صحة عامل المفردات يطابق عقد المؤلف و�
   assert.equal(health.contractVersion, 4);
   assert.equal(health.visualContractVersion, 3);
   assert.equal(health.thinItemContractVersion, 1);
-  assert.equal(health.visualPlannerVersion, 1);
+  assert.equal(health.visualPlannerVersion, 2);
   assert.equal(health.pressureControlVersion, 4);
-  assert.equal(health.providerProtocolVersion, 3);
+  assert.equal(health.providerProtocolVersion, 4);
   assert.equal(health.databaseContractVersion, 1);
 });
 
@@ -87,7 +87,7 @@ test("فحص الصحة يرفض عاملًا قديمًا لا يعرف عقد 
       requestId: "r-old",
     }), { status: 200 }),
   );
-  await assert.rejects(() => service.health(), /عقد التأليف النحيف ومخطط المرئيات المتخصص الحالي/);
+  await assert.rejects(() => service.health(), /عقد التأليف النحيف ومخطط المرئيات ذي التحقق المحلي الحالي/);
 });
 
 test("عامل المفردة يستخدم المسار الدائم ولا يحتاج استجابة اختبار كاملة", async () => {
@@ -243,7 +243,7 @@ test("v0.3.12 يفحص عقد قاعدة البيانات وGemini مسبقًا 
     async () => ({ accessToken: "token" }),
     async (_url, init) => {
       calls.push(JSON.parse(init.body));
-      return new Response(JSON.stringify({ ok: true, worker: "assessment-generation-worker", providerProtocolVersion: 3, thinItemContractVersion: 1, visualPlannerVersion: 1, databaseContractVersion: 1, requestId: "p" }), { status: 200 });
+      return new Response(JSON.stringify({ ok: true, worker: "assessment-generation-worker", providerProtocolVersion: 4, thinItemContractVersion: 1, visualPlannerVersion: 2, databaseContractVersion: 1, requestId: "p" }), { status: 200 });
     },
   );
   await service.preflight();
@@ -262,13 +262,13 @@ test("عامل v0.3.12 لا يصنف HTTP 400 من Gemini على أنه JSON م�
   assert.match(worker, /"medium", REVIEW_MODEL_TIMEOUT_MS/);
 });
 
-test("مخطط المرئي v0.3.12 يقيد الإحداثيات ويدعم القوة الرمزية F", async () => {
+test("مخطط المرئي v0.3.14 يقيد الإحداثيات محليًا ويدعم القوة الرمزية F", async () => {
   const { readFile } = await import("node:fs/promises");
   const worker = await readFile(new URL("../supabase/functions/assessment-generation-worker/index.ts", import.meta.url), "utf8");
-  assert.match(worker, /valueLabel:\s*\{ type: "string" \}/);
-  assert.match(worker, /minimum: 0, maximum: 100/);
-  assert.match(worker, /required: \["mode", "brief"\]/);
+  assert.match(worker, /validCoordinate = .*value >= 0 && value <= 100/);
   assert.match(worker, /magnitude=0 وvalueLabel=F/);
+  assert.match(worker, /vector\.magnitude < 0/);
+  assert.match(worker, /رسم القوى يحتاج متجهات مسماة واتجاهات وقيمًا صالحة/);
 });
 
 
@@ -311,15 +311,16 @@ test("v0.3.13 يفصل عقد السؤال النحيف عن بيانات الر
   assert.doesNotMatch(worker, /function visualSchema\(/);
 });
 
-test("v0.3.13 يستخدم مخطط مرئي متخصص حسب النوع بعد اعتماد السؤال", async () => {
+test("v0.3.14 يبقي مخطط المرئي متخصصًا حسب النوع مع تحقق محلي", async () => {
   const { readFile } = await import("node:fs/promises");
   const worker = await readFile(new URL("../supabase/functions/assessment-generation-worker/index.ts", import.meta.url), "utf8");
-  assert.match(worker, /function visualPlannerSchema\(mode: VisualMode\)/);
+  assert.doesNotMatch(worker, /function visualPlannerSchema\(/);
+  assert.match(worker, /function visualPlannerJsonContract\(mode: VisualMode\)/);
   assert.match(worker, /mode === "force_diagram"[\s\S]*vectors[\s\S]*anchors[\s\S]*segments[\s\S]*dimensions/);
   assert.match(worker, /mode === "circuit_diagram"[\s\S]*components/);
   assert.match(worker, /mode === "line_graph" \|\| mode === "bar_chart"[\s\S]*series/);
   assert.match(worker, /VISUAL_PLANNER_MODEL/);
-  assert.match(worker, /visualPlannerVersion:\s*1/);
+  assert.match(worker, /visualPlannerVersion:\s*2/);
 });
 
 test("v0.3.13 لا يطلب Visual Planner عند عدم وجود مرئي أو عند المشهد السياقي الحر", async () => {
@@ -345,12 +346,47 @@ test("v0.3.13 يخطط المرئي بعد المراجعة العلمية لا 
   assert.ok(reviewer >= 0 && approved > reviewer && planner > approved, "يجب أن يأتي تخطيط المرئي بعد المراجعة والاعتماد");
 });
 
-test("v0.3.13 يختبر عقد التأليف والمراجعة النحيفين في preflight", async () => {
+test("v0.3.14 يحصر preflight في العقود العامة ولا يجعل المرئي الاختياري بوابة للدورة", async () => {
   const { readFile } = await import("node:fs/promises");
   const worker = await readFile(new URL("../supabase/functions/assessment-generation-worker/index.ts", import.meta.url), "utf8");
   assert.match(worker, /await preflightThinContracts\(requestId\)/);
   assert.match(worker, /wathiq_thin_author_contract_probe/);
   assert.match(worker, /wathiq_thin_review_contract_probe/);
-  assert.match(worker, /providerProtocolVersion:\s*3/);
+  assert.match(worker, /providerProtocolVersion:\s*4/);
   assert.match(worker, /thinItemContractVersion:\s*1/);
+});
+
+
+test("v0.3.14 لا يرسل JSON Schema المعقد إلى Visual Planner", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const worker = await readFile(new URL("../supabase/functions/assessment-generation-worker/index.ts", import.meta.url), "utf8");
+  const start = worker.indexOf("async function callVisualPlanner(");
+  const end = worker.indexOf("function emptyVisualProposal", start);
+  assert.ok(start >= 0 && end > start);
+  const body = worker.slice(start, end);
+  assert.match(body, /visualPlannerSystemInstruction\(intent\.mode\)[\s\S]*prompt,[\s\S]*null,[\s\S]*"visual_planner"/);
+  assert.doesNotMatch(body, /visualPlannerSchema\(intent\.mode\)/);
+  assert.match(worker, /\.\.\.\(schema \? \{ responseMimeType: "application\/json", responseJsonSchema: schema \} : \{\}\)/);
+  assert.match(worker, /outputContract: schema \? "structured_schema" : "prompt_json_local_validation"/);
+  assert.match(worker, /parseLooseJsonObject\(output\.text\)/);
+});
+
+test("v0.3.14 لا يشغّل preflight_visual_planner ولا يمنع إنشاء الاختبار بسبب مخطط مرئي اختياري", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const worker = await readFile(new URL("../supabase/functions/assessment-generation-worker/index.ts", import.meta.url), "utf8");
+  const start = worker.indexOf("async function preflightThinContracts(");
+  const end = worker.indexOf("async function preflightModel", start);
+  assert.ok(start >= 0 && end > start);
+  const body = worker.slice(start, end);
+  assert.match(body, /wathiq_thin_author_contract_probe/);
+  assert.match(body, /wathiq_thin_review_contract_probe/);
+  assert.doesNotMatch(body, /preflight_visual_planner|wathiq_typed_visual_contract_probe/);
+});
+
+test("v0.3.14 يصف عقد JSON المحلي لكل نوع مرئي قبل التحقق الحتمي", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const worker = await readFile(new URL("../supabase/functions/assessment-generation-worker/index.ts", import.meta.url), "utf8");
+  assert.match(worker, /function visualPlannerJsonContract\(mode: VisualMode\)/);
+  assert.match(worker, /mode === "force_diagram"[\s\S]*vectors[\s\S]*anchors[\s\S]*segments[\s\S]*dimensions/);
+  assert.match(worker, /validateContent\(content, contract\)/);
 });

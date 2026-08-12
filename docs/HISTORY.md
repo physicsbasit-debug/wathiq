@@ -1,5 +1,13 @@
 # التاريخ المختصر
 
+## 0.3.14 — Local-Validated Visual Planner
+
+- أثبتت سجلات التشغيل أن فشل 400 كان محصورًا في `preflight_visual_planner` بعد نجاح الاتصال وعقدي المؤلف والمراجع.
+- أزيل JSON Schema الهندسي المعقد من طلب Visual Planner إلى Gemini؛ يستخدم JSON mode خفيفًا ثم تحققًا محليًا صارمًا داخل واثق.
+- أزيل Visual Planner من preflight العام لأنه مسار اختياري لا يجوز أن يمنع دورة اختبار لا تحتاج إلى رسم.
+- ارتفع `visualPlannerVersion` إلى 2 و`providerProtocolVersion` إلى 4.
+- لا SQL جديد ولا تغيير في Runtime Contract لقاعدة البيانات.
+
 ## 0.3.13 — Thin Item Contract + Typed Visual Planner
 - فصل عقد التأليف والمراجعة عن بيانات المرئيات الهندسية التفصيلية بعد ظهور `MODEL_REQUEST_INVALID` مع Structured Output الرئيسي الكبير.
 - أصبح المؤلف والمراجع يعيدان `visualIntent` فقط (`mode` + `brief`) مع نص المفردة ونموذج التصحيح.
