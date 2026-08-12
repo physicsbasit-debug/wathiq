@@ -29,7 +29,7 @@ const ITEM_STATUSES = new Set<AssessmentGenerationItemStatus>([
 ]);
 const ERROR_CODES = new Set<AssessmentEngineErrorCode>([
   "INVALID_BLUEPRINT", "INVALID_ITEM_CONTRACT", "STALE_PLAN", "AUTHORIZATION_FAILED",
-  "MODEL_TIMEOUT", "MODEL_RATE_LIMITED", "MODEL_UNAVAILABLE",
+  "MODEL_TIMEOUT", "MODEL_RATE_LIMITED", "MODEL_QUOTA_EXHAUSTED", "MODEL_UNAVAILABLE",
   "MODEL_INVALID_JSON", "MODEL_INCOMPLETE_CONTENT", "MODEL_SCIENTIFIC_MISMATCH", "MODEL_ASSESSMENT_MISMATCH",
   "GLOBAL_DUPLICATION", "CANCELLED_BY_USER", "SUPERSEDED_BY_NEW_RUN", "INTERNAL_ERROR",
 ]);
@@ -153,6 +153,8 @@ function parseItem(value: unknown): AssessmentGenerationItemSnapshot | null {
     || typeof record.status !== "string" || !ITEM_STATUSES.has(record.status as AssessmentGenerationItemStatus)
     || !isInteger(record.attemptCount, 0, 10)
     || !isInteger(record.maxAttempts, 1, 5)
+    || !isInteger(record.transportRetryCount, 0, 100)
+    || typeof record.retryAfterAt !== "string"
     || typeof record.errorCode !== "string"
     || typeof record.errorMessage !== "string"
     || typeof record.startedAt !== "string"
@@ -171,6 +173,8 @@ function parseItem(value: unknown): AssessmentGenerationItemSnapshot | null {
     status: record.status as AssessmentGenerationItemStatus,
     attemptCount: record.attemptCount,
     maxAttempts: record.maxAttempts,
+    transportRetryCount: record.transportRetryCount,
+    retryAfterAt: record.retryAfterAt,
     errorCode: ERROR_CODES.has(record.errorCode as AssessmentEngineErrorCode)
       ? record.errorCode as AssessmentEngineErrorCode
       : "",

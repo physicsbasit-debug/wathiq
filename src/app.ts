@@ -85,7 +85,7 @@ const assessmentGenerationWorkerService = ownerSessionService
   ? new AssessmentGenerationWorkerService(runtimeConfig, () => ownerSessionService.getActiveSession())
   : null;
 let assessmentGenerationOrchestrator = assessmentGenerationJobService && assessmentGenerationWorkerService
-  ? new ProgressiveAssessmentGenerationOrchestrator(assessmentGenerationJobService, assessmentGenerationWorkerService, { concurrency: 2 })
+  ? new ProgressiveAssessmentGenerationOrchestrator(assessmentGenerationJobService, assessmentGenerationWorkerService, { concurrency: 1 })
   : null;
 const visualJobService = ownerSessionService
   ? new VisualJobService(runtimeConfig, () => ownerSessionService.getActiveSession())
@@ -518,13 +518,20 @@ function generationItemStatusClass(status: AssessmentGenerationItemSnapshot["sta
 }
 
 function generationItemUserMessage(task: AssessmentGenerationItemSnapshot): string {
-  const transient = task.errorCode === "MODEL_RATE_LIMITED" || task.errorCode === "MODEL_UNAVAILABLE" || task.errorCode === "MODEL_TIMEOUT";
+  const transient = task.errorCode === "MODEL_RATE_LIMITED" || task.errorCode === "MODEL_QUOTA_EXHAUSTED" || task.errorCode === "MODEL_UNAVAILABLE" || task.errorCode === "MODEL_TIMEOUT";
   if (!transient) return task.errorMessage;
   if (task.status === "retry_pending") {
-    return "خدمة التوليد تحت ضغط مؤقت. أوقف واثق إطلاق مفردات جديدة، وسيعيد هذه المفردة بعد فترة تهدئة متدرجة دون اندفاع متكرر.";
+    const retryAt = Date.parse(task.retryAfterAt);
+    const remainingSeconds = Number.isFinite(retryAt) ? Math.max(0, Math.ceil((retryAt - Date.now()) / 1000)) : 0;
+    const waitLabel = remainingSeconds >= 60
+      ? `نحو ${Math.ceil(remainingSeconds / 60)} دقيقة`
+      : remainingSeconds > 0 ? `نحو ${remainingSeconds} ثانية` : "قريبًا";
+    return task.errorCode === "MODEL_QUOTA_EXHAUSTED"
+      ? `حصة Gemini الحالية مستنفدة. أوقف واثق الطابور وسيستأنف تلقائيًا ${waitLabel} وفق مهلة المزود، دون احتساب ذلك محاولة فاشلة للسؤال.`
+      : `خدمة التوليد تحت ضغط مؤقت. سيستأنف واثق تلقائيًا ${waitLabel} دون احتساب التأجيل محاولة فاشلة للسؤال.`;
   }
   if (task.status === "failed") {
-    return "استمرت مشكلة الضغط بعد المحاولات المتدرجة. المفردات المكتملة محفوظة، ويمكن بدء دورة محاولات جديدة لهذه المفردة وحدها يدويًا.";
+    return "تعذرت المفردة بسبب خطأ محتوى أو خطأ غير قابل لإعادة المحاولة تلقائيًا. المفردات المكتملة محفوظة ويمكن إعادة هذه المفردة وحدها.";
   }
   return task.errorMessage || "خدمة توليد الأسئلة مشغولة مؤقتًا.";
 }
@@ -613,14 +620,18 @@ function renderPlanVisual(item: PlanItem, compact = false): string {
 function renderGenerationPlaceholder(item: PlanItem): string {
   const task = generationItemSnapshot(item.id);
   const status = task?.status ?? "pending";
-  const attempts = task ? `${task.attemptCount} من ${task.maxAttempts}` : "0 من 2";
+  const attempts = task
+    ? task.status === "retry_pending" && ["MODEL_RATE_LIMITED", "MODEL_QUOTA_EXHAUSTED", "MODEL_UNAVAILABLE", "MODEL_TIMEOUT"].includes(task.errorCode)
+      ? `محتوى ${task.attemptCount} من ${task.maxAttempts} · تأجيل خدمة ${task.transportRetryCount}`
+      : `${task.attemptCount} من ${task.maxAttempts}`
+    : "0 من 3";
   const errorMessage = task ? generationItemUserMessage(task) : "";
   const error = errorMessage ? `<p class="generation-item-error">${escapeHtml(errorMessage)}</p>` : "";
   const retry = task?.status === "failed" && state.draft.status !== "معتمد"
     ? `<button class="secondary-btn compact" data-generation-retry="${escapeHtml(task.id)}" ${state.questionGenerationBusy ? "disabled" : ""}>${icon("spark")} إعادة هذه المفردة فقط</button>`
     : "";
   return `<div class="generation-item-placeholder ${generationItemStatusClass(status)}">
-    <div class="generation-item-state"><span class="generation-item-pulse" aria-hidden="true"></span><div><strong>${escapeHtml(generationItemStatusLabel(status))}</strong><small>المحاولة ${attempts}</small></div></div>
+    <div class="generation-item-state"><span class="generation-item-pulse" aria-hidden="true"></span><div><strong>${escapeHtml(generationItemStatusLabel(status))}</strong><small>${task?.status === "retry_pending" && ["MODEL_RATE_LIMITED", "MODEL_QUOTA_EXHAUSTED", "MODEL_UNAVAILABLE", "MODEL_TIMEOUT"].includes(task.errorCode) ? attempts : `المحاولة ${attempts}`}</small></div></div>
     ${error}
     ${retry}
   </div>`;

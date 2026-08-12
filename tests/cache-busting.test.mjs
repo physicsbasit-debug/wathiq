@@ -3,7 +3,7 @@ import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 
-const version = "0.3.9";
+const version = "0.3.10";
 
 test("البناء يمنع خلط وحدات JavaScript بين إصدارات GitHub Pages", async () => {
   const html = await readFile("dist/index.html", "utf8");

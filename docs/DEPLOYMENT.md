@@ -1,4 +1,4 @@
-# نشر واثق 0.3.9
+# نشر واثق 0.3.10
 
 ## متغيرات GitHub Pages
 
@@ -14,7 +14,7 @@ WATHIQ_APP_URL
 GEMINI_API_KEY
 ```
 
-اختياريًا لتبديل النماذج تقنيًا:
+اختياريًا:
 
 ```text
 GEMINI_AUTHOR_MODEL
@@ -22,44 +22,35 @@ GEMINI_REVIEW_MODEL
 GEMINI_IMAGE_MODEL
 ```
 
-## Edge Functions الحالية
+## ترتيب تحديث 0.3.10
+
+إذا كانت البيئة الحالية على 0.3.9:
+
+1. ارفع حزمة ملفات 0.3.10 إلى GitHub وانتظر نجاح Actions وPages.
+2. في Supabase SQL Editor شغّل:
 
 ```text
-science-visual-generation
-question-visual-jobs
-assessment-generation-jobs
-assessment-generation-worker
+supabase/migrations/20260812_assessment_generation_quota_aware_retry.sql
 ```
 
-في تحديث **0.3.9** يلزم إعادة نشر `assessment-generation-worker` فقط بعد تطبيق SQL الخاص بالضغط. لا يلزم إعادة نشر بقية الوظائف إذا كانت البيئة على 0.3.8 بالفعل.
-
-## قاعدة البيانات — تحديث 0.3.9
-
-طبّق أولًا في SQL Editor:
-
-```text
-supabase/migrations/20260812_assessment_generation_pressure_control.sql
-```
-
-هذا التحديث:
-
-- يوسع محاولات أخطاء النقل المتدرجة إلى محاولتين تاليتين بدل محاولة واحدة.
-- يغير فئة الضغط الداخلية إلى `transport_backoff`.
-- يجعل إعادة المفردة يدويًا أو استكمال دورة فاشلة تبدأ ميزانية محاولات جديدة بدل بقاء المهمة عند 3/3 بلا إمكانية حقيقية للاستئناف.
-
-بعد نجاح SQL أعد نشر:
+3. أعد نشر:
 
 ```text
 supabase/functions/assessment-generation-worker/index.ts
+supabase/functions/assessment-generation-jobs/index.ts
 ```
 
-ثم انتظر نجاح GitHub Pages واعمل تحديثًا قويًا للصفحة.
+4. لا يلزم إعادة نشر `question-visual-jobs` أو `science-visual-generation` إذا كانتا على النسخ المعتمدة من سلسلة 0.3.8/0.3.9.
+5. اعمل تحديثًا قويًا للصفحة ثم افتح المسودة نفسها؛ مهام النقل المؤجلة لا ينبغي أن تتحول إلى 3/3 بسبب 429/503/timeout.
 
-للبيئة الجديدة من الصفر استخدم:
+إذا كانت البيئة أقدم من 0.3.9، طبّق أولًا migration الضغط السابق ثم migration 0.3.10 بالترتيب الزمني، أو استخدم `supabase/schema-current.sql` لبيئة جديدة من الصفر.
 
-```text
-supabase/schema-current.sql
-```
+## ما يضيفه SQL الحالي
+
+- `retry_after_at`: الموعد الذي يسمح بعده بإعادة حجز المفردة.
+- `author_checkpoint`: نقطة استئناف تحفظ خرج المؤلف قبل المراجع.
+- أخطاء النقل تعيد `attempt_count` إلى ما كان عليه قبل الحجز ولا تستهلك محاولة محتوى.
+- `transport_retry_count` يصبح عداد تأجيلات تشغيلية لا بوابة تسقط المفردة بعد تأجيلين.
 
 ## الفحص قبل النشر
 

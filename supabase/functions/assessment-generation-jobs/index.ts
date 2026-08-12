@@ -42,6 +42,8 @@ interface ItemRow {
   status: ItemStatus;
   attempt_count: number;
   max_attempts: number;
+  transport_retry_count: number;
+  retry_after_at: string | null;
   error_code: string | null;
   error_message: string | null;
   stage_timings: Record<string, unknown> | null;
@@ -297,7 +299,7 @@ async function loadRunSnapshot(ownerId: string, runId: string, draftId?: string)
   const run = runData as RunRow;
 
   const { data: itemsData, error: itemsError } = await admin.from(ITEMS_TABLE)
-    .select("id,run_id,plan_item_id,contract_hash,status,attempt_count,max_attempts,error_code,error_message,stage_timings,result,started_at,completed_at,updated_at")
+    .select("id,run_id,plan_item_id,contract_hash,status,attempt_count,max_attempts,transport_retry_count,retry_after_at,error_code,error_message,stage_timings,result,started_at,completed_at,updated_at")
     .eq("run_id", run.id)
     .eq("owner_id", ownerId)
     .order("item_order", { ascending: true });
@@ -325,6 +327,8 @@ function toRunSnapshot(run: RunRow, items: ItemRow[]): Record<string, unknown> {
       status: item.status,
       attemptCount: item.attempt_count,
       maxAttempts: item.max_attempts,
+      transportRetryCount: item.transport_retry_count,
+      retryAfterAt: item.retry_after_at ?? "",
       errorCode: item.error_code ?? "",
       errorMessage: item.error_message ?? "",
       stageTimings: normalizeStageTimings(item.stage_timings),

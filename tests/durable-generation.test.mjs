@@ -8,7 +8,7 @@ const runId = "123e4567-e89b-42d3-a456-426614174000";
 const itemId = "123e4567-e89b-42d3-a456-426614174001";
 const baseItem = (status = "queued") => ({
   id: itemId, runId, planItemId: "plan-1", contractHash: "c".repeat(64), status,
-  attemptCount: status === "ready" ? 1 : 0, maxAttempts: 3, errorCode: "", errorMessage: "",
+  attemptCount: status === "ready" ? 1 : 0, maxAttempts: 3, transportRetryCount: 0, retryAfterAt: "", errorCode: "", errorMessage: "",
   stageTimings: { groundingMs: 0, modelMs: 0, normalizationMs: 0, validationMs: 0, totalMs: 0 },
   ...(status === "ready" ? { result: {
     planItemId: "plan-1", contractHash: "c".repeat(64),
@@ -50,7 +50,7 @@ test("فحص صحة عامل المفردات يطابق عقد المؤلف و�
       engineSchemaVersion: 1,
       contractVersion: 4,
       visualContractVersion: 2,
-      pressureControlVersion: 1,
+      pressureControlVersion: 2,
       authorModel: "gemini-author",
       reviewModel: "gemini-reviewer",
       requestId: "r-health",
@@ -61,7 +61,7 @@ test("فحص صحة عامل المفردات يطابق عقد المؤلف و�
   assert.equal(health.reviewModel, "gemini-reviewer");
   assert.equal(health.contractVersion, 4);
   assert.equal(health.visualContractVersion, 2);
-  assert.equal(health.pressureControlVersion, 1);
+  assert.equal(health.pressureControlVersion, 2);
 });
 
 test("فحص الصحة يرفض عاملًا قديمًا لا يعرف عقد القرار البصري الواحد", async () => {
@@ -78,7 +78,7 @@ test("فحص الصحة يرفض عاملًا قديمًا لا يعرف عقد 
       requestId: "r-old",
     }), { status: 200 }),
   );
-  await assert.rejects(() => service.health(), /عقد المرئيات والتحكم في الضغط الحالي/);
+  await assert.rejects(() => service.health(), /عقد المرئيات وإدارة الحصة الحالية/);
 });
 
 test("عامل المفردة يستخدم المسار الدائم ولا يحتاج استجابة اختبار كاملة", async () => {
@@ -137,7 +137,9 @@ test("منسق التوليد يوقف الطابور أثناء ضغط 429 ثم
   let now = Date.parse("2026-08-12T00:00:20Z");
   const pressureItem = {
     ...baseItem("retry_pending"),
-    attemptCount: 1,
+    attemptCount: 0,
+    transportRetryCount: 1,
+    retryAfterAt: "2026-08-12T00:00:45Z",
     errorCode: "MODEL_RATE_LIMITED",
     errorMessage: "ضغط مؤقت",
     updatedAt: "2026-08-12T00:00:00Z",
@@ -183,7 +185,7 @@ test("منسق التوليد يوقف الطابور أثناء ضغط 429 ثم
   await orchestrator.start({}, []);
   assert.equal(dispatches.length, 1, "بعد رصد الضغط يجب خفض التوازي إلى مفردة واحدة");
   assert.equal(dispatches[0].id, itemId, "تعاد المفردة المؤجلة قبل إطلاق مفردة جديدة");
-  assert.ok(dispatches[0].at >= Date.parse("2026-08-12T00:00:45Z"), "لا يجوز إعادة الإرسال قبل انتهاء مهلة 429");
+  assert.ok(dispatches[0].at >= Date.parse("2026-08-12T00:00:45Z"), "لا يجوز إعادة الإرسال قبل retryAfterAt القادم من المزود");
 });
 
 test("عامل Gemini لا ينفذ إعادة نقل داخلية عند الضغط؛ كل مطالبة قاعدة بيانات تقابل نداء مزود واحد", async () => {
@@ -196,6 +198,30 @@ test("عامل Gemini لا ينفذ إعادة نقل داخلية عند الض
   assert.doesNotMatch(body, /MODEL_TRANSIENT_RETRY_DELAYS_MS/);
   assert.doesNotMatch(body, /for \(let attempt/);
   assert.match(body, /providerCalls:\s*1/);
-  assert.match(body, /MODEL_RATE_LIMITED/);
+  assert.match(body, /classifyProviderPressure/);
+  assert.match(body, /MODEL_QUOTA_EXHAUSTED/);
   assert.match(body, /transport_backoff/);
+});
+
+
+test("تأجيل النقل لا يستهلك محاولة السؤال ويحترم موعد المزود", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const migration = await readFile(new URL("../supabase/migrations/20260812_assessment_generation_quota_aware_retry.sql", import.meta.url), "utf8");
+  assert.match(migration, /attempt_count\s*=\s*case[\s\S]*transport_backoff[\s\S]*greatest\(attempt_count - 1, 0\)/i);
+  assert.match(migration, /retry_after_at[\s\S]*make_interval\(secs => v_retry_after\)/i);
+  assert.match(migration, /transport_retry_count between 0 and 100/i);
+  assert.doesNotMatch(migration, /transport_retry_count\s*<\s*2/i);
+});
+
+test("العامل يحفظ خرج المؤلف قبل المراجع ويعيد استخدامه بعد ضغط المراجعة", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const worker = await readFile(new URL("../supabase/functions/assessment-generation-worker/index.ts", import.meta.url), "utf8");
+  const processStart = worker.indexOf("async function processItem(");
+  const processEnd = worker.indexOf("async function assertItemOwnedByUser(", processStart);
+  const body = worker.slice(processStart, processEnd);
+  assert.match(body, /parseAuthorCheckpoint\(claimed\.author_checkpoint, contract\)/);
+  assert.match(body, /saveAuthorCheckpoint\(claimed, workerId, authoredContent, author\.tokenUsage\)/);
+  assert.match(worker, /checkpoint_assessment_generation_author/);
+  assert.match(worker, /MODEL_QUOTA_EXHAUSTED/);
+  assert.match(worker, /providerRetryInfoSeconds/);
 });

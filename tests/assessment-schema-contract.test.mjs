@@ -22,15 +22,17 @@ test("مخطط Supabase الدائم يقبل Blueprint v4 ويحافظ على �
   assert.doesNotMatch(migration, /update\s+public\.assessment_generation_runs\s+set\s+blueprint_version\s*=\s*4/i);
 });
 
-test("سياسة الضغط تمنح محاولات نقل متدرجة وتسمح بإعادة يدوية بعد استنفاد الدورة", async () => {
-  const pressureMigrationPath = new URL("../supabase/migrations/20260812_assessment_generation_pressure_control.sql", import.meta.url);
+test("سياسة الضغط تفصل تأجيل خدمة Gemini عن محاولات محتوى السؤال", async () => {
+  const quotaMigrationPath = new URL("../supabase/migrations/20260812_assessment_generation_quota_aware_retry.sql", import.meta.url);
   const schema = await readFile(schemaPath, "utf8");
-  const migration = await readFile(pressureMigrationPath, "utf8");
+  const migration = await readFile(quotaMigrationPath, "utf8");
 
   for (const sql of [schema, migration]) {
-    assert.match(sql, /transport_retry_count\s+between\s+0\s+and\s+2/i);
-    assert.match(sql, /p_retry_class\s+in\s*\('transport_once',\s*'transport_backoff'\).*transport_retry_count\s*<\s*2/is);
-    assert.match(sql, /create or replace function public\.retry_assessment_generation_item[\s\S]*attempt_count\s*=\s*0[\s\S]*transport_retry_count\s*=\s*0[\s\S]*content_retry_count\s*=\s*0/i);
-    assert.match(sql, /create or replace function public\.resume_assessment_generation_run[\s\S]*status\s*=\s*'retry_pending'[\s\S]*attempt_count\s*=\s*0/i);
+    assert.match(sql, /transport_retry_count\s+between\s+0\s+and\s+100/i);
+    assert.match(sql, /retry_after_at\s+timestamptz/i);
+    assert.match(sql, /author_checkpoint\s+jsonb/i);
+    assert.match(sql, /transport_backoff[\s\S]*greatest\(attempt_count - 1, 0\)/i);
+    assert.match(sql, /checkpoint_assessment_generation_author/i);
+    assert.match(sql, /create or replace function public\.retry_assessment_generation_item[\s\S]*retry_after_at\s*=\s*null[\s\S]*author_checkpoint\s*=\s*null/i);
   }
 });

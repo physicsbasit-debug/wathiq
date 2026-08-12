@@ -50,10 +50,10 @@ export class AssessmentGenerationWorkerService {
     if (!record || record.ok !== true || record.worker !== "assessment-generation-worker"
       || typeof record.engineSchemaVersion !== "number" || typeof record.contractVersion !== "number"
       || record.visualContractVersion !== 2
-      || record.pressureControlVersion !== 1
+      || record.pressureControlVersion !== 2
       || typeof record.authorModel !== "string" || typeof record.reviewModel !== "string"
       || typeof record.requestId !== "string") {
-      throw new Error("عامل توليد المفردات المنشور لا يطابق عقد المرئيات والتحكم في الضغط الحالي. أعد نشر وظيفة عامل التوليد ثم أعد المحاولة.");
+      throw new Error("عامل توليد المفردات المنشور لا يطابق عقد المرئيات وإدارة الحصة الحالية. أعد نشر وظيفة عامل التوليد ثم أعد المحاولة.");
     }
     return record as unknown as AssessmentGenerationWorkerHealth;
   }

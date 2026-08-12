@@ -48,6 +48,7 @@ interface ClaimedItemRow {
   chunk_index: number;
   source_content_hash: string;
   item_contract: Record<string, unknown>;
+  author_checkpoint: Record<string, unknown> | null;
   lease_token: string;
 }
 
@@ -178,10 +179,10 @@ Deno.serve(async (req) => {
         engineSchemaVersion: 1,
         contractVersion: 4,
         visualContractVersion: 2,
-        pressureControlVersion: 1,
+        pressureControlVersion: 2,
         authorModel: AUTHOR_MODEL,
         reviewModel: REVIEW_MODEL,
-        philosophy: "cambridge-first-single-visual-decision-v6",
+        philosophy: "cambridge-first-quota-aware-checkpointed-v7",
         requestId,
       });
     }
@@ -223,11 +224,19 @@ async function processItem(itemId: string, ownerId: string, requestId: string): 
 
     await heartbeat(claimed, workerId, "generating");
     const modelStartedAt = Date.now();
-    const author = await callAuthor(contract, context, examContext, requestId);
+    let author: ModelCallResult;
+    const checkpoint = parseAuthorCheckpoint(claimed.author_checkpoint, contract);
+    if (checkpoint) {
+      author = checkpoint;
+      console.log(JSON.stringify({ event: "wathiq_author_checkpoint_reused", requestId, itemId: claimed.id }));
+    } else {
+      author = await callAuthor(contract, context, examContext, requestId);
+    }
 
     await heartbeat(claimed, workerId, "normalizing");
     const normalizationStartedAt = Date.now();
     const authoredContent = normalizeModelContent(author.value, contract);
+    if (!checkpoint) await saveAuthorCheckpoint(claimed, workerId, authoredContent, author.tokenUsage);
     normalizationMs = Date.now() - normalizationStartedAt;
 
     await heartbeat(claimed, workerId, "validating");
@@ -306,11 +315,46 @@ async function processItem(itemId: string, ownerId: string, requestId: string): 
       p_error_code: mapped.code,
       p_error_message: mapped.message,
       p_retry_class: mapped.retryClass,
+      p_retry_after_seconds: mapped.retryAfterSeconds,
     });
     if (failed.error) throw databaseError("تعذر تسجيل فشل مفردة التوليد", failed.error);
     const status = failed.data === "retry_pending" ? "retry_pending" : failed.data === "stale" ? "stale" : "failed";
     return { itemId, status, errorCode: mapped.code, errorMessage: mapped.message };
   }
+}
+
+function parseAuthorCheckpoint(value: Record<string, unknown> | null, contract: ItemContract): ModelCallResult | null {
+  if (!value) return null;
+  const checkpointContractHash = typeof value.contractHash === "string" ? value.contractHash : "";
+  const content = asOptionalRecord(value.content);
+  const tokenUsage = asOptionalRecord(value.tokenUsage);
+  if (checkpointContractHash !== contract.contractHash || !content || !tokenUsage) return null;
+  try {
+    const normalized = normalizeModelContent(content, contract);
+    return { value: normalized, tokenUsage: {
+      promptTokens: finiteNumber(tokenUsage.promptTokens),
+      outputTokens: finiteNumber(tokenUsage.outputTokens),
+      totalTokens: finiteNumber(tokenUsage.totalTokens),
+    } };
+  } catch {
+    return null;
+  }
+}
+
+async function saveAuthorCheckpoint(
+  claimed: ClaimedItemRow,
+  workerId: string,
+  content: ModelContent,
+  tokenUsage: Record<string, number>,
+): Promise<void> {
+  const rpc = await admin.rpc("checkpoint_assessment_generation_author", {
+    p_item_id: claimed.id,
+    p_worker_id: workerId,
+    p_lease_token: claimed.lease_token,
+    p_checkpoint: { contractHash: claimed.contract_hash, content, tokenUsage },
+  });
+  if (rpc.error) throw databaseError("تعذر حفظ نقطة استئناف المؤلف", rpc.error);
+  if (rpc.data !== true) throw workerError("STALE_PLAN", "فقد عامل التوليد الحجز قبل حفظ نقطة استئناف المؤلف.", "none", 409);
 }
 
 async function assertItemOwnedByUser(itemId: string, ownerId: string): Promise<void> {
@@ -762,15 +806,19 @@ async function callJsonModel(
     if (!response.ok) {
       const providerMessage = geminiError(payload, `Gemini HTTP ${response.status}`);
       if (MODEL_TRANSIENT_HTTP_STATUSES.has(response.status)) {
+        const pressure = classifyProviderPressure(payload, response.status, response.headers.get("retry-after"));
         console.warn(JSON.stringify({
           event: "wathiq_model_pressure_signal", role, requestId, model, status: response.status,
-          providerMessage: providerMessage.slice(0, 220),
+          code: pressure.code, retryAfterSeconds: pressure.retryAfterSeconds, providerMessage: providerMessage.slice(0, 220),
         }));
         throw workerError(
-          response.status === 429 ? "MODEL_RATE_LIMITED" : "MODEL_UNAVAILABLE",
-          "خدمة الذكاء الاصطناعي تحت ضغط مؤقت. أوقف واثق الاندفاع وسيعيد المحاولة بعد فترة تهدئة متدرجة.",
+          pressure.code,
+          pressure.code === "MODEL_QUOTA_EXHAUSTED"
+            ? "حصة Gemini الحالية مستنفدة مؤقتًا. سيحترم واثق موعد إعادة المحاولة الذي تحدده الخدمة، ولن يحتسب هذا كتجربة فاشلة للسؤال."
+            : "خدمة الذكاء الاصطناعي تحت ضغط مؤقت. سيؤجل واثق الطلب وفق مهلة المزود دون استهلاك محاولة من السؤال.",
           "transport_backoff",
-          503,
+          response.status === 429 ? 429 : 503,
+          pressure.retryAfterSeconds,
         );
       }
       throw workerError("MODEL_INVALID_JSON", `تعذر الحصول على استجابة صالحة من ${role === "author" ? "مؤلف" : "مراجع"} المفردة.`, "content_once", 422);
@@ -789,6 +837,7 @@ async function callJsonModel(
         "تأخرت خدمة الذكاء الاصطناعي أكثر من المدة المسموحة. أوقف واثق إطلاق مفردات جديدة مؤقتًا وسيعيد المحاولة بعد فترة تهدئة.",
         "transport_backoff",
         504,
+        60,
       );
     }
     if (error instanceof TypeError) {
@@ -797,6 +846,7 @@ async function callJsonModel(
         "تعذر الاتصال بخدمة الذكاء الاصطناعي مؤقتًا. أوقف واثق الاندفاع وسيعيد المحاولة بعد فترة تهدئة.",
         "transport_backoff",
         503,
+        45,
       );
     }
     throw error;
@@ -1128,6 +1178,7 @@ function parseClaimedItem(value: unknown): ClaimedItemRow {
     chunk_index: requireInteger(row.chunk_index, "رقم المقطع غير صالح.", 0, 1_000_000),
     source_content_hash: requireHash(row.source_content_hash, "بصمة المقطع غير صالحة."),
     item_contract: requireRecord(row.item_contract, "عقد المهمة غير صالح."),
+    author_checkpoint: asOptionalRecord(row.author_checkpoint),
     lease_token: requireUuid(row.lease_token, "رمز حجز المهمة غير صالح."),
   };
 }
@@ -1152,13 +1203,60 @@ function mergeUsage(...items: Array<Record<string, number>>): Record<string, num
 }
 
 function geminiError(payload: unknown, fallback: string): string { const error = asRecord(asRecord(payload)?.error); return typeof error?.message === "string" && error.message ? error.message : fallback; }
-function delay(milliseconds: number): Promise<void> { return new Promise((resolve) => setTimeout(resolve, milliseconds)); }
-function mapWorkerError(error: unknown): { code: string; message: string; retryClass: RetryClass; status: number } {
-  if (error instanceof TypeError) return { code: "MODEL_UNAVAILABLE", message: "تعذر الاتصال بخدمة الذكاء الاصطناعي.", retryClass: "transport_backoff", status: 503 };
-  const record = asRecord(error);
-  return { code: typeof record?.code === "string" ? record.code : "INTERNAL_ERROR", message: errorMessage(error), retryClass: record?.retryClass === "transport_backoff" || record?.retryClass === "content_once" ? record.retryClass : "none", status: errorStatus(error) };
+function parseDurationSeconds(value: unknown): number | null {
+  if (typeof value !== "string") return null;
+  const match = value.trim().match(/^([0-9]+(?:\.[0-9]+)?)s$/u);
+  if (!match) return null;
+  const seconds = Math.ceil(Number(match[1]));
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : null;
 }
-function workerError(code: string, message: string, retryClass: RetryClass, status: number): Error & { code: string; retryClass: RetryClass; status: number } { const error = new Error(message) as Error & { code: string; retryClass: RetryClass; status: number }; error.code = code; error.retryClass = retryClass; error.status = status; return error; }
+function providerRetryInfoSeconds(payload: unknown): number | null {
+  const error = asRecord(asRecord(payload)?.error);
+  const details = Array.isArray(error?.details) ? error.details : [];
+  for (const detailValue of details) {
+    const detail = asRecord(detailValue);
+    const direct = parseDurationSeconds(detail?.retryDelay);
+    if (direct) return direct;
+    const metadata = asOptionalRecord(detail?.metadata);
+    const fromMetadata = parseDurationSeconds(metadata?.quotaResetDelay);
+    if (fromMetadata) return fromMetadata;
+  }
+  const message = typeof error?.message === "string" ? error.message : "";
+  const messageMatch = message.match(/retry\s+in\s+([0-9]+(?:\.[0-9]+)?)s/iu);
+  return messageMatch ? Math.max(1, Math.ceil(Number(messageMatch[1]))) : null;
+}
+function classifyProviderPressure(payload: unknown, status: number, retryAfterHeader: string | null): { code: string; retryAfterSeconds: number } {
+  const error = asRecord(asRecord(payload)?.error);
+  const serialized = JSON.stringify(payload ?? {}).toLowerCase();
+  const headerSeconds = retryAfterHeader && /^\d+(?:\.\d+)?$/u.test(retryAfterHeader.trim()) ? Math.ceil(Number(retryAfterHeader)) : null;
+  const providerSeconds = providerRetryInfoSeconds(payload);
+  const dailyQuota = /quota_exceeded|quota exhausted|quota_exhausted|perday|per_day|requestsperday|tokensperday|per day/u.test(serialized);
+  if (status === 429 && dailyQuota) return { code: "MODEL_QUOTA_EXHAUSTED", retryAfterSeconds: Math.min(86_400, Math.max(300, providerSeconds ?? headerSeconds ?? 3_600)) };
+  if (status === 429) return { code: "MODEL_RATE_LIMITED", retryAfterSeconds: Math.min(3_600, Math.max(15, providerSeconds ?? headerSeconds ?? 60)) };
+  const retryableServer = typeof error?.status === "string" ? error.status : "";
+  return { code: "MODEL_UNAVAILABLE", retryAfterSeconds: Math.min(900, Math.max(20, providerSeconds ?? headerSeconds ?? (retryableServer === "UNAVAILABLE" ? 45 : 30))) };
+}
+function mapWorkerError(error: unknown): { code: string; message: string; retryClass: RetryClass; status: number; retryAfterSeconds: number | null } {
+  if (error instanceof TypeError) return { code: "MODEL_UNAVAILABLE", message: "تعذر الاتصال بخدمة الذكاء الاصطناعي.", retryClass: "transport_backoff", status: 503, retryAfterSeconds: 45 };
+  const record = asRecord(error);
+  return {
+    code: typeof record?.code === "string" ? record.code : "INTERNAL_ERROR",
+    message: errorMessage(error),
+    retryClass: record?.retryClass === "transport_backoff" || record?.retryClass === "content_once" ? record.retryClass : "none",
+    status: errorStatus(error),
+    retryAfterSeconds: typeof record?.retryAfterSeconds === "number" && Number.isFinite(record.retryAfterSeconds) ? Math.max(5, Math.floor(record.retryAfterSeconds)) : null,
+  };
+}
+function workerError(
+  code: string,
+  message: string,
+  retryClass: RetryClass,
+  status: number,
+  retryAfterSeconds: number | null = null,
+): Error & { code: string; retryClass: RetryClass; status: number; retryAfterSeconds: number | null } {
+  const error = new Error(message) as Error & { code: string; retryClass: RetryClass; status: number; retryAfterSeconds: number | null };
+  error.code = code; error.retryClass = retryClass; error.status = status; error.retryAfterSeconds = retryAfterSeconds; return error;
+}
 function stableStringify(value: unknown): string { return JSON.stringify(normalizeForStableJson(value, new WeakSet<object>())); }
 function normalizeForStableJson(value: unknown, seen: WeakSet<object>): unknown { if (value === null || typeof value === "string" || typeof value === "boolean") return value; if (typeof value === "number") return Number.isFinite(value) ? value : null; if (typeof value === "bigint") return value.toString(); if (typeof value === "undefined" || typeof value === "function" || typeof value === "symbol") return null; if (Array.isArray(value)) return value.map((entry) => normalizeForStableJson(entry, seen)); if (typeof value === "object") { if (seen.has(value)) throw httpError("لا يمكن حساب بصمة لكائن دائري.", 400); seen.add(value); const record = value as Record<string, unknown>; const normalized: Record<string, unknown> = {}; for (const key of Object.keys(record).sort()) { const entry = record[key]; if (typeof entry === "undefined" || typeof entry === "function" || typeof entry === "symbol") continue; normalized[key] = normalizeForStableJson(entry, seen); } seen.delete(value); return normalized; } return null; }
 async function sha256Hex(value: unknown): Promise<string> { return sha256Text(stableStringify(value)); }

@@ -10,6 +10,7 @@ const RETRY_CLASS_BY_CODE: Readonly<Record<AssessmentEngineErrorCode, Assessment
   AUTHORIZATION_FAILED: "manual_authentication",
   MODEL_TIMEOUT: "transport_backoff",
   MODEL_RATE_LIMITED: "transport_backoff",
+  MODEL_QUOTA_EXHAUSTED: "transport_backoff",
   MODEL_UNAVAILABLE: "transport_backoff",
   MODEL_INVALID_JSON: "content_once",
   MODEL_INCOMPLETE_CONTENT: "content_once",

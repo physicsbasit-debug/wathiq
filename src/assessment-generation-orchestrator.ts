@@ -21,12 +21,13 @@ export interface ProgressiveGenerationOrchestratorOptions {
 
 const ACTIVE_ITEM_STATUSES = new Set(["grounding", "generating", "normalizing", "validating"]);
 const DISPATCHABLE_ITEM_STATUSES = new Set(["queued", "retry_pending"]);
-const TRANSIENT_PRESSURE_CODES = new Set(["MODEL_RATE_LIMITED", "MODEL_UNAVAILABLE", "MODEL_TIMEOUT"]);
+const TRANSIENT_PRESSURE_CODES = new Set(["MODEL_RATE_LIMITED", "MODEL_QUOTA_EXHAUSTED", "MODEL_UNAVAILABLE", "MODEL_TIMEOUT"]);
 const MAX_PRESSURE_BACKOFF_MS = 180_000;
 
-function transientBackoffMs(errorCode: string, attemptCount: number): number {
-  const exponent = Math.max(0, Math.min(2, attemptCount - 1));
+function transientBackoffMs(errorCode: string, transportRetryCount: number): number {
+  const exponent = Math.max(0, Math.min(3, transportRetryCount - 1));
   const factor = 2 ** exponent;
+  if (errorCode === "MODEL_QUOTA_EXHAUSTED") return Math.min(3_600_000, 300_000 * factor);
   if (errorCode === "MODEL_RATE_LIMITED") return Math.min(MAX_PRESSURE_BACKOFF_MS, 45_000 * factor);
   if (errorCode === "MODEL_TIMEOUT") return Math.min(MAX_PRESSURE_BACKOFF_MS, 30_000 * factor);
   if (errorCode === "MODEL_UNAVAILABLE") return Math.min(MAX_PRESSURE_BACKOFF_MS, 20_000 * factor);
@@ -174,15 +175,18 @@ export class ProgressiveAssessmentGenerationOrchestrator {
       this.pressureMode = true;
       const updatedAt = Date.parse(item.updatedAt);
       if (!Number.isFinite(updatedAt)) continue;
-      pressureUntil = Math.max(pressureUntil, updatedAt + transientBackoffMs(item.errorCode, item.attemptCount));
+      const retryAt = Date.parse(item.retryAfterAt);
+      pressureUntil = Math.max(pressureUntil, Number.isFinite(retryAt) ? retryAt : updatedAt + transientBackoffMs(item.errorCode, item.transportRetryCount));
     }
     return pressureUntil > now ? pressureUntil : 0;
   }
 
   private itemRetryReady(item: AssessmentGenerationRunSnapshot["items"][number], now: number): boolean {
     if (item.status !== "retry_pending" || !TRANSIENT_PRESSURE_CODES.has(item.errorCode)) return true;
+    const retryAt = Date.parse(item.retryAfterAt);
+    if (Number.isFinite(retryAt)) return now >= retryAt;
     const updatedAt = Date.parse(item.updatedAt);
     if (!Number.isFinite(updatedAt)) return false;
-    return now >= updatedAt + transientBackoffMs(item.errorCode, item.attemptCount);
+    return now >= updatedAt + transientBackoffMs(item.errorCode, item.transportRetryCount);
   }
 }

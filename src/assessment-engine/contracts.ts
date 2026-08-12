@@ -20,7 +20,7 @@ export type AssessmentGenerationItemStatus =
 
 export type AssessmentEngineErrorCode =
   | "INVALID_BLUEPRINT" | "INVALID_ITEM_CONTRACT" | "STALE_PLAN" | "AUTHORIZATION_FAILED"
-  | "MODEL_TIMEOUT" | "MODEL_RATE_LIMITED" | "MODEL_UNAVAILABLE"
+  | "MODEL_TIMEOUT" | "MODEL_RATE_LIMITED" | "MODEL_QUOTA_EXHAUSTED" | "MODEL_UNAVAILABLE"
   | "MODEL_INVALID_JSON" | "MODEL_INCOMPLETE_CONTENT" | "MODEL_SCIENTIFIC_MISMATCH" | "MODEL_ASSESSMENT_MISMATCH"
   | "GLOBAL_DUPLICATION" | "CANCELLED_BY_USER" | "SUPERSEDED_BY_NEW_RUN" | "INTERNAL_ERROR";
 
@@ -139,7 +139,7 @@ export interface AssessmentGenerationStageTimings { groundingMs: number; modelMs
 
 export interface AssessmentGenerationItemSnapshot {
   id: string; runId: string; planItemId: string; contractHash: string; status: AssessmentGenerationItemStatus;
-  attemptCount: number; maxAttempts: number; errorCode: AssessmentEngineErrorCode | ""; errorMessage: string;
+  attemptCount: number; maxAttempts: number; transportRetryCount: number; retryAfterAt: string; errorCode: AssessmentEngineErrorCode | ""; errorMessage: string;
   stageTimings: AssessmentGenerationStageTimings; result?: AssessmentGeneratedItemResult;
   startedAt: string; completedAt: string; updatedAt: string;
 }

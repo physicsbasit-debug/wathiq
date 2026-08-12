@@ -126,8 +126,10 @@ create table if not exists public.assessment_generation_items (
     check (status in ('queued', 'grounding', 'generating', 'normalizing', 'validating', 'ready', 'retry_pending', 'failed', 'cancelled', 'superseded')),
   attempt_count integer not null default 0 check (attempt_count between 0 and 10),
   max_attempts integer not null default 3 check (max_attempts between 1 and 5),
-  transport_retry_count integer not null default 0 check (transport_retry_count between 0 and 2),
+  transport_retry_count integer not null default 0 check (transport_retry_count between 0 and 100),
   content_retry_count integer not null default 0 check (content_retry_count between 0 and 1),
+  retry_after_at timestamptz,
+  author_checkpoint jsonb check (author_checkpoint is null or jsonb_typeof(author_checkpoint) = 'object'),
   worker_id text,
   lease_token uuid,
   lease_expires_at timestamptz,
@@ -468,6 +470,7 @@ begin
   join public.assessment_generation_runs run on run.id = item.run_id
   where item.id = p_item_id
     and item.status in ('queued', 'retry_pending')
+    and (item.retry_after_at is null or item.retry_after_at <= now())
     and item.attempt_count < item.max_attempts
     and run.status not in ('completed', 'cancelled', 'superseded')
   for update of item skip locked;
@@ -484,7 +487,8 @@ begin
       started_at = coalesce(started_at, now()),
       completed_at = null,
       error_code = null,
-      error_message = null
+      error_message = null,
+      retry_after_at = null
   where id = p_item_id
   returning * into v_row;
 
@@ -576,6 +580,8 @@ begin
       request_id = nullif(btrim(p_request_id), ''),
       error_code = null,
       error_message = null,
+      retry_after_at = null,
+      author_checkpoint = null,
       worker_id = null,
       lease_token = null,
       lease_expires_at = null,
@@ -605,7 +611,8 @@ create or replace function public.fail_assessment_generation_item(
   p_lease_token uuid,
   p_error_code text,
   p_error_message text,
-  p_retry_class text default 'none'
+  p_retry_class text default 'none',
+  p_retry_after_seconds integer default null
 )
 returns text
 language plpgsql
@@ -615,6 +622,7 @@ as $$
 declare
   v_row public.assessment_generation_items%rowtype;
   v_status text;
+  v_retry_after integer;
 begin
   if p_retry_class not in ('none', 'transport_once', 'transport_backoff', 'content_once') then
     raise exception using errcode = '22023', message = 'INVALID_RETRY_CLASS';
@@ -630,17 +638,27 @@ begin
   for update;
   if not found then return 'stale'; end if;
 
-  v_status := case
-    when v_row.attempt_count >= v_row.max_attempts then 'failed'
-    when p_retry_class in ('transport_once', 'transport_backoff') and v_row.transport_retry_count < 2 then 'retry_pending'
-    when p_retry_class = 'content_once' and v_row.content_retry_count < 1 then 'retry_pending'
-    else 'failed'
-  end;
+  if p_retry_class in ('transport_once', 'transport_backoff') then
+    v_status := 'retry_pending';
+    v_retry_after := greatest(5, least(coalesce(p_retry_after_seconds, 60), 86400));
+  elsif p_retry_class = 'content_once' and v_row.attempt_count < v_row.max_attempts and v_row.content_retry_count < 1 then
+    v_status := 'retry_pending';
+    v_retry_after := null;
+  else
+    v_status := 'failed';
+    v_retry_after := null;
+  end if;
 
   update public.assessment_generation_items
   set status = v_status,
-      transport_retry_count = transport_retry_count + case when v_status = 'retry_pending' and p_retry_class in ('transport_once', 'transport_backoff') then 1 else 0 end,
+      attempt_count = case
+        when p_retry_class in ('transport_once', 'transport_backoff') then greatest(attempt_count - 1, 0)
+        else attempt_count
+      end,
+      transport_retry_count = least(100, transport_retry_count + case when p_retry_class in ('transport_once', 'transport_backoff') then 1 else 0 end),
       content_retry_count = content_retry_count + case when v_status = 'retry_pending' and p_retry_class = 'content_once' then 1 else 0 end,
+      retry_after_at = case when v_status = 'retry_pending' and p_retry_class in ('transport_once', 'transport_backoff') then now() + make_interval(secs => v_retry_after) else null end,
+      author_checkpoint = case when p_retry_class = 'content_once' or v_status = 'failed' then null else author_checkpoint end,
       error_code = left(coalesce(p_error_code, 'INTERNAL_ERROR'), 120),
       error_message = left(coalesce(p_error_message, 'تعذر توليد المفردة.'), 800),
       worker_id = null,
@@ -654,42 +672,30 @@ begin
 end;
 $$;
 
-create or replace function public.recover_stale_assessment_generation_items(
-  p_owner_id uuid,
-  p_draft_id text default null
+create or replace function public.checkpoint_assessment_generation_author(
+  p_item_id uuid,
+  p_worker_id text,
+  p_lease_token uuid,
+  p_checkpoint jsonb
 )
-returns integer
+returns boolean
 language plpgsql
 security definer
 set search_path = public, pg_temp
 as $$
-declare
-  v_count integer;
 begin
-  with recovered as (
-    update public.assessment_generation_items item
-    set status = case when attempt_count < max_attempts then 'retry_pending' else 'failed' end,
-        error_code = case when attempt_count < max_attempts then 'STALE_WORKER_RECOVERED' else 'MAX_ATTEMPTS_REACHED' end,
-        error_message = case
-          when attempt_count < max_attempts then 'انقطع عامل التوليد؛ أعاد واثق المفردة تلقائيًا إلى الطابور.'
-          else 'انقطع عامل التوليد بعد استنفاد عدد المحاولات.'
-        end,
-        worker_id = null,
-        lease_token = null,
-        lease_expires_at = null,
-        heartbeat_at = now(),
-        completed_at = case when attempt_count < max_attempts then null else now() end
-    from public.assessment_generation_runs run
-    where item.run_id = run.id
-      and item.owner_id = p_owner_id
-      and (p_draft_id is null or item.draft_id = p_draft_id)
-      and item.status in ('grounding', 'generating', 'normalizing', 'validating')
-      and item.lease_expires_at <= now()
-      and run.status not in ('completed', 'cancelled', 'superseded')
-    returning item.run_id
-  )
-  select count(*) into v_count from recovered;
-  return v_count;
+  if p_checkpoint is null or jsonb_typeof(p_checkpoint) <> 'object' then
+    raise exception using errcode = '22023', message = 'INVALID_AUTHOR_CHECKPOINT';
+  end if;
+  update public.assessment_generation_items
+  set author_checkpoint = p_checkpoint,
+      heartbeat_at = now()
+  where id = p_item_id
+    and worker_id = p_worker_id
+    and lease_token = p_lease_token
+    and lease_expires_at > now()
+    and status in ('generating', 'normalizing', 'validating');
+  return found;
 end;
 $$;
 
@@ -710,6 +716,8 @@ begin
       attempt_count = 0,
       transport_retry_count = 0,
       content_retry_count = 0,
+      retry_after_at = null,
+      author_checkpoint = null,
       error_code = null,
       error_message = null,
       stage_timings = '{"groundingMs":0,"modelMs":0,"normalizationMs":0,"validationMs":0,"totalMs":0}'::jsonb,
@@ -792,6 +800,8 @@ begin
       attempt_count = 0,
       transport_retry_count = 0,
       content_retry_count = 0,
+      retry_after_at = null,
+      author_checkpoint = null,
       error_code = null,
       error_message = null,
       stage_timings = '{"groundingMs":0,"modelMs":0,"normalizationMs":0,"validationMs":0,"totalMs":0}'::jsonb,
@@ -828,7 +838,8 @@ revoke all on function public.enqueue_assessment_generation_run(uuid, jsonb, jso
 revoke all on function public.claim_assessment_generation_item(uuid, text, integer) from public, anon, authenticated;
 revoke all on function public.heartbeat_assessment_generation_item(uuid, text, uuid, text, integer) from public, anon, authenticated;
 revoke all on function public.complete_assessment_generation_item(uuid, text, uuid, integer, text, jsonb, jsonb, jsonb, jsonb, text) from public, anon, authenticated;
-revoke all on function public.fail_assessment_generation_item(uuid, text, uuid, text, text, text) from public, anon, authenticated;
+revoke all on function public.fail_assessment_generation_item(uuid, text, uuid, text, text, text, integer) from public, anon, authenticated;
+revoke all on function public.checkpoint_assessment_generation_author(uuid, text, uuid, jsonb) from public, anon, authenticated;
 revoke all on function public.recover_stale_assessment_generation_items(uuid, text) from public, anon, authenticated;
 revoke all on function public.retry_assessment_generation_item(uuid, uuid) from public, anon, authenticated;
 revoke all on function public.cancel_assessment_generation_run(uuid, uuid) from public, anon, authenticated;
@@ -839,7 +850,8 @@ grant execute on function public.enqueue_assessment_generation_run(uuid, jsonb, 
 grant execute on function public.claim_assessment_generation_item(uuid, text, integer) to service_role;
 grant execute on function public.heartbeat_assessment_generation_item(uuid, text, uuid, text, integer) to service_role;
 grant execute on function public.complete_assessment_generation_item(uuid, text, uuid, integer, text, jsonb, jsonb, jsonb, jsonb, text) to service_role;
-grant execute on function public.fail_assessment_generation_item(uuid, text, uuid, text, text, text) to service_role;
+grant execute on function public.fail_assessment_generation_item(uuid, text, uuid, text, text, text, integer) to service_role;
+grant execute on function public.checkpoint_assessment_generation_author(uuid, text, uuid, jsonb) to service_role;
 grant execute on function public.recover_stale_assessment_generation_items(uuid, text) to service_role;
 grant execute on function public.retry_assessment_generation_item(uuid, uuid) to service_role;
 grant execute on function public.cancel_assessment_generation_run(uuid, uuid) to service_role;
