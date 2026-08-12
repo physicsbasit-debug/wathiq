@@ -78,7 +78,7 @@ test("يحمي انتقالات حالة التوليد", () => {
 });
 
 test("يصنف إعادة المحاولة حسب نوع الخطأ الحالي", () => {
-  assert.equal(retryClassForErrorCode("MODEL_TIMEOUT"), "transport_once");
+  assert.equal(retryClassForErrorCode("MODEL_TIMEOUT"), "transport_backoff");
   assert.equal(retryClassForErrorCode("MODEL_INVALID_JSON"), "content_once");
   assert.equal(retryClassForErrorCode("AUTHORIZATION_FAILED"), "manual_authentication");
 });

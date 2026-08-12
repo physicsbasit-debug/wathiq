@@ -12,7 +12,6 @@ const appOrigin = new URL(WATHIQ_APP_URL).origin;
 const MAX_BODY_BYTES = 32_000;
 const LEASE_SECONDS = 240;
 const MODEL_TIMEOUT_MS = 65_000;
-const MODEL_TRANSIENT_RETRY_DELAYS_MS = [2_000, 6_000] as const;
 const MODEL_TRANSIENT_HTTP_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const HEX_64 = /^[0-9a-f]{64}$/u;
@@ -28,7 +27,7 @@ const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
-type RetryClass = "none" | "transport_once" | "content_once";
+type RetryClass = "none" | "transport_backoff" | "content_once";
 type QuestionType = "اختيار من متعدد" | "إجابة قصيرة" | "إجابة طويلة";
 type VisualMode = "none" | "illustration_2d" | "data_table" | "line_graph" | "bar_chart"
   | "force_diagram" | "circuit_diagram" | "electrostatic_diagram" | "ray_diagram"
@@ -179,6 +178,7 @@ Deno.serve(async (req) => {
         engineSchemaVersion: 1,
         contractVersion: 4,
         visualContractVersion: 2,
+        pressureControlVersion: 1,
         authorModel: AUTHOR_MODEL,
         reviewModel: REVIEW_MODEL,
         philosophy: "cambridge-first-single-visual-decision-v6",
@@ -744,52 +744,65 @@ async function callJsonModel(
     },
   };
 
-  for (let attempt = 0; attempt <= MODEL_TRANSIENT_RETRY_DELAYS_MS.length; attempt += 1) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), MODEL_TIMEOUT_MS);
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: { "x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      });
-      const rawPayload = await response.text();
-      let payload: unknown = null;
-      if (rawPayload) {
-        try { payload = JSON.parse(rawPayload) as unknown; }
-        catch { payload = { error: { message: rawPayload.slice(0, 500) } }; }
-      }
-      if (!response.ok) {
-        const providerMessage = geminiError(payload, `Gemini HTTP ${response.status}`);
-        if (MODEL_TRANSIENT_HTTP_STATUSES.has(response.status)) {
-          const retryDelay = MODEL_TRANSIENT_RETRY_DELAYS_MS[attempt];
-          console.warn(JSON.stringify({ event: "wathiq_model_transient", role, requestId, model, status: response.status, attempt: attempt + 1, providerMessage: providerMessage.slice(0, 220), retryDelayMs: retryDelay ?? 0 }));
-          if (retryDelay !== undefined) {
-            await delay(retryDelay + Math.floor(Math.random() * 700));
-            continue;
-          }
-          throw workerError(response.status === 429 ? "MODEL_RATE_LIMITED" : "MODEL_UNAVAILABLE", "خدمة الذكاء الاصطناعي مشغولة مؤقتًا. احتفظ واثق بما اكتمل ويمكن إعادة المفردة لاحقًا.", "transport_once", 503);
-        }
-        throw workerError("MODEL_INVALID_JSON", `تعذر الحصول على استجابة صالحة من ${role === "author" ? "مؤلف" : "مراجع"} المفردة.`, "content_once", 422);
-      }
-      const output = findOutputText(payload);
-      if (!output.text) throw workerError("MODEL_INCOMPLETE_CONTENT", "لم تُرجع خدمة الذكاء الاصطناعي محتوى قابلًا للقراءة.", "content_once", 422);
-      let parsed: unknown;
-      try { parsed = JSON.parse(output.text) as unknown; }
-      catch { throw workerError("MODEL_INVALID_JSON", "أعادت خدمة الذكاء الاصطناعي JSON غير صالح.", "content_once", 422); }
-      console.log(JSON.stringify({ event: "wathiq_model_completed", role, requestId, model, attempts: attempt + 1, ...output.tokenUsage }));
-      return { value: parsed, tokenUsage: output.tokenUsage };
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") {
-        throw workerError("MODEL_TIMEOUT", "تأخرت خدمة الذكاء الاصطناعي أكثر من المدة المسموحة. احتفظ واثق بالمفردات المكتملة.", "transport_once", 504);
-      }
-      throw error;
-    } finally {
-      clearTimeout(timeout);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), MODEL_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    const rawPayload = await response.text();
+    let payload: unknown = null;
+    if (rawPayload) {
+      try { payload = JSON.parse(rawPayload) as unknown; }
+      catch { payload = { error: { message: rawPayload.slice(0, 500) } }; }
     }
+    if (!response.ok) {
+      const providerMessage = geminiError(payload, `Gemini HTTP ${response.status}`);
+      if (MODEL_TRANSIENT_HTTP_STATUSES.has(response.status)) {
+        console.warn(JSON.stringify({
+          event: "wathiq_model_pressure_signal", role, requestId, model, status: response.status,
+          providerMessage: providerMessage.slice(0, 220),
+        }));
+        throw workerError(
+          response.status === 429 ? "MODEL_RATE_LIMITED" : "MODEL_UNAVAILABLE",
+          "خدمة الذكاء الاصطناعي تحت ضغط مؤقت. أوقف واثق الاندفاع وسيعيد المحاولة بعد فترة تهدئة متدرجة.",
+          "transport_backoff",
+          503,
+        );
+      }
+      throw workerError("MODEL_INVALID_JSON", `تعذر الحصول على استجابة صالحة من ${role === "author" ? "مؤلف" : "مراجع"} المفردة.`, "content_once", 422);
+    }
+    const output = findOutputText(payload);
+    if (!output.text) throw workerError("MODEL_INCOMPLETE_CONTENT", "لم تُرجع خدمة الذكاء الاصطناعي محتوى قابلًا للقراءة.", "content_once", 422);
+    let parsed: unknown;
+    try { parsed = JSON.parse(output.text) as unknown; }
+    catch { throw workerError("MODEL_INVALID_JSON", "أعادت خدمة الذكاء الاصطناعي JSON غير صالح.", "content_once", 422); }
+    console.log(JSON.stringify({ event: "wathiq_model_completed", role, requestId, model, providerCalls: 1, ...output.tokenUsage }));
+    return { value: parsed, tokenUsage: output.tokenUsage };
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw workerError(
+        "MODEL_TIMEOUT",
+        "تأخرت خدمة الذكاء الاصطناعي أكثر من المدة المسموحة. أوقف واثق إطلاق مفردات جديدة مؤقتًا وسيعيد المحاولة بعد فترة تهدئة.",
+        "transport_backoff",
+        504,
+      );
+    }
+    if (error instanceof TypeError) {
+      throw workerError(
+        "MODEL_UNAVAILABLE",
+        "تعذر الاتصال بخدمة الذكاء الاصطناعي مؤقتًا. أوقف واثق الاندفاع وسيعيد المحاولة بعد فترة تهدئة.",
+        "transport_backoff",
+        503,
+      );
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
   }
-  throw workerError("MODEL_UNAVAILABLE", "خدمة الذكاء الاصطناعي غير متاحة مؤقتًا.", "transport_once", 503);
 }
 
 function normalizeReviewResult(value: unknown, contract: ItemContract): ReviewResult {
@@ -1141,9 +1154,9 @@ function mergeUsage(...items: Array<Record<string, number>>): Record<string, num
 function geminiError(payload: unknown, fallback: string): string { const error = asRecord(asRecord(payload)?.error); return typeof error?.message === "string" && error.message ? error.message : fallback; }
 function delay(milliseconds: number): Promise<void> { return new Promise((resolve) => setTimeout(resolve, milliseconds)); }
 function mapWorkerError(error: unknown): { code: string; message: string; retryClass: RetryClass; status: number } {
-  if (error instanceof TypeError) return { code: "MODEL_UNAVAILABLE", message: "تعذر الاتصال بخدمة الذكاء الاصطناعي.", retryClass: "transport_once", status: 503 };
+  if (error instanceof TypeError) return { code: "MODEL_UNAVAILABLE", message: "تعذر الاتصال بخدمة الذكاء الاصطناعي.", retryClass: "transport_backoff", status: 503 };
   const record = asRecord(error);
-  return { code: typeof record?.code === "string" ? record.code : "INTERNAL_ERROR", message: errorMessage(error), retryClass: record?.retryClass === "transport_once" || record?.retryClass === "content_once" ? record.retryClass : "none", status: errorStatus(error) };
+  return { code: typeof record?.code === "string" ? record.code : "INTERNAL_ERROR", message: errorMessage(error), retryClass: record?.retryClass === "transport_backoff" || record?.retryClass === "content_once" ? record.retryClass : "none", status: errorStatus(error) };
 }
 function workerError(code: string, message: string, retryClass: RetryClass, status: number): Error & { code: string; retryClass: RetryClass; status: number } { const error = new Error(message) as Error & { code: string; retryClass: RetryClass; status: number }; error.code = code; error.retryClass = retryClass; error.status = status; return error; }
 function stableStringify(value: unknown): string { return JSON.stringify(normalizeForStableJson(value, new WeakSet<object>())); }

@@ -24,7 +24,7 @@ export type AssessmentEngineErrorCode =
   | "MODEL_INVALID_JSON" | "MODEL_INCOMPLETE_CONTENT" | "MODEL_SCIENTIFIC_MISMATCH" | "MODEL_ASSESSMENT_MISMATCH"
   | "GLOBAL_DUPLICATION" | "CANCELLED_BY_USER" | "SUPERSEDED_BY_NEW_RUN" | "INTERNAL_ERROR";
 
-export type AssessmentEngineRetryClass = "none" | "transport_once" | "content_once" | "manual_authentication";
+export type AssessmentEngineRetryClass = "none" | "transport_backoff" | "content_once" | "manual_authentication";
 export type AssessmentSourceMode = "global_curriculum";
 
 export interface AssessmentSourceSnapshot {

@@ -16,18 +16,32 @@ export interface ProgressiveGenerationOrchestratorOptions {
   pollIntervalMs?: number;
   dispatchCooldownMs?: number;
   sleep?: (milliseconds: number) => Promise<void>;
+  now?: () => number;
 }
 
 const ACTIVE_ITEM_STATUSES = new Set(["grounding", "generating", "normalizing", "validating"]);
 const DISPATCHABLE_ITEM_STATUSES = new Set(["queued", "retry_pending"]);
+const TRANSIENT_PRESSURE_CODES = new Set(["MODEL_RATE_LIMITED", "MODEL_UNAVAILABLE", "MODEL_TIMEOUT"]);
+const MAX_PRESSURE_BACKOFF_MS = 180_000;
+
+function transientBackoffMs(errorCode: string, attemptCount: number): number {
+  const exponent = Math.max(0, Math.min(2, attemptCount - 1));
+  const factor = 2 ** exponent;
+  if (errorCode === "MODEL_RATE_LIMITED") return Math.min(MAX_PRESSURE_BACKOFF_MS, 45_000 * factor);
+  if (errorCode === "MODEL_TIMEOUT") return Math.min(MAX_PRESSURE_BACKOFF_MS, 30_000 * factor);
+  if (errorCode === "MODEL_UNAVAILABLE") return Math.min(MAX_PRESSURE_BACKOFF_MS, 20_000 * factor);
+  return 0;
+}
 
 export class ProgressiveAssessmentGenerationOrchestrator {
   private readonly concurrency: number;
   private readonly pollIntervalMs: number;
   private readonly dispatchCooldownMs: number;
   private readonly sleep: (milliseconds: number) => Promise<void>;
+  private readonly now: () => number;
   private readonly dispatchedAt = new Map<string, number>();
   private stopped = false;
+  private pressureMode = false;
 
   constructor(
     private readonly jobs: AssessmentGenerationJobService,
@@ -38,6 +52,7 @@ export class ProgressiveAssessmentGenerationOrchestrator {
     this.pollIntervalMs = Math.max(250, Math.floor(options.pollIntervalMs ?? 1_500));
     this.dispatchCooldownMs = Math.max(1_000, Math.floor(options.dispatchCooldownMs ?? 12_000));
     this.sleep = options.sleep ?? ((milliseconds) => new Promise((resolve) => globalThis.setTimeout(resolve, milliseconds)));
+    this.now = options.now ?? (() => Date.now());
   }
 
   stop(): void {
@@ -50,6 +65,7 @@ export class ProgressiveAssessmentGenerationOrchestrator {
     hooks: ProgressiveGenerationHooks = {},
   ): Promise<AssessmentGenerationRunSnapshot> {
     this.stopped = false;
+    this.pressureMode = false;
     this.dispatchedAt.clear();
     const response = await this.jobs.enqueue(blueprint, contracts);
     if (!response.run) throw new Error("لم تُنشأ دورة توليد صالحة.");
@@ -65,6 +81,7 @@ export class ProgressiveAssessmentGenerationOrchestrator {
     this.dispatchedAt.clear();
     const listed = await this.jobs.list(draftId, runId);
     if (!listed.run) return null;
+    this.observePressure(listed.run, this.now());
     let snapshot = listed.run;
     if (snapshot.status === "partial" || snapshot.status === "failed") {
       const resumed = await this.jobs.resumeRun(snapshot.id);
@@ -103,7 +120,7 @@ export class ProgressiveAssessmentGenerationOrchestrator {
   }
 
   private releaseObservedDispatches(snapshot: AssessmentGenerationRunSnapshot): void {
-    const now = Date.now();
+    const now = this.now();
     for (const item of snapshot.items) {
       if (!DISPATCHABLE_ITEM_STATUSES.has(item.status) || now - (this.dispatchedAt.get(item.id) ?? 0) >= this.dispatchCooldownMs) {
         this.dispatchedAt.delete(item.id);
@@ -122,14 +139,21 @@ export class ProgressiveAssessmentGenerationOrchestrator {
     snapshot: AssessmentGenerationRunSnapshot,
     hooks: ProgressiveGenerationHooks,
   ): Promise<void> {
+    const now = this.now();
+    const pressureUntil = this.observePressure(snapshot, now);
+    if (now < pressureUntil) return;
+
     const activeCount = snapshot.items.filter((item) => ACTIVE_ITEM_STATUSES.has(item.status)).length;
-    const slots = Math.max(0, this.concurrency - activeCount);
+    const effectiveConcurrency = this.pressureMode ? 1 : this.concurrency;
+    const slots = Math.max(0, effectiveConcurrency - activeCount);
     if (!slots) return;
-    const now = Date.now();
+
     const candidates = snapshot.items
       .filter((item) => DISPATCHABLE_ITEM_STATUSES.has(item.status))
+      .filter((item) => this.itemRetryReady(item, now))
       .filter((item) => now - (this.dispatchedAt.get(item.id) ?? 0) >= this.dispatchCooldownMs)
       .slice(0, slots);
+
     await Promise.all(candidates.map(async (item) => {
       this.dispatchedAt.set(item.id, now);
       try {
@@ -140,5 +164,25 @@ export class ProgressiveAssessmentGenerationOrchestrator {
         hooks.onWorkerError?.(item.id, error);
       }
     }));
+  }
+
+  private observePressure(snapshot: AssessmentGenerationRunSnapshot, now: number): number {
+    let pressureUntil = 0;
+    for (const item of snapshot.items) {
+      if (!TRANSIENT_PRESSURE_CODES.has(item.errorCode)) continue;
+      if (item.status !== "retry_pending" && item.status !== "failed") continue;
+      this.pressureMode = true;
+      const updatedAt = Date.parse(item.updatedAt);
+      if (!Number.isFinite(updatedAt)) continue;
+      pressureUntil = Math.max(pressureUntil, updatedAt + transientBackoffMs(item.errorCode, item.attemptCount));
+    }
+    return pressureUntil > now ? pressureUntil : 0;
+  }
+
+  private itemRetryReady(item: AssessmentGenerationRunSnapshot["items"][number], now: number): boolean {
+    if (item.status !== "retry_pending" || !TRANSIENT_PRESSURE_CODES.has(item.errorCode)) return true;
+    const updatedAt = Date.parse(item.updatedAt);
+    if (!Number.isFinite(updatedAt)) return false;
+    return now >= updatedAt + transientBackoffMs(item.errorCode, item.attemptCount);
   }
 }

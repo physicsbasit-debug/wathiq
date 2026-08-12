@@ -50,6 +50,7 @@ test("فحص صحة عامل المفردات يطابق عقد المؤلف و�
       engineSchemaVersion: 1,
       contractVersion: 4,
       visualContractVersion: 2,
+      pressureControlVersion: 1,
       authorModel: "gemini-author",
       reviewModel: "gemini-reviewer",
       requestId: "r-health",
@@ -60,6 +61,7 @@ test("فحص صحة عامل المفردات يطابق عقد المؤلف و�
   assert.equal(health.reviewModel, "gemini-reviewer");
   assert.equal(health.contractVersion, 4);
   assert.equal(health.visualContractVersion, 2);
+  assert.equal(health.pressureControlVersion, 1);
 });
 
 test("فحص الصحة يرفض عاملًا قديمًا لا يعرف عقد القرار البصري الواحد", async () => {
@@ -76,7 +78,7 @@ test("فحص الصحة يرفض عاملًا قديمًا لا يعرف عقد 
       requestId: "r-old",
     }), { status: 200 }),
   );
-  await assert.rejects(() => service.health(), /عقد المرئيات الحالي/);
+  await assert.rejects(() => service.health(), /عقد المرئيات والتحكم في الضغط الحالي/);
 });
 
 test("عامل المفردة يستخدم المسار الدائم ولا يحتاج استجابة اختبار كاملة", async () => {
@@ -128,4 +130,72 @@ test("عامل المفردة يلتزم بآلة حالات Supabase: generatin
   assert.match(schema, /v_current = 'grounding' and p_stage = 'generating'/);
   assert.match(schema, /v_current = 'generating' and p_stage = 'normalizing'/);
   assert.match(schema, /v_current = 'normalizing' and p_stage = 'validating'/);
+});
+
+test("منسق التوليد يوقف الطابور أثناء ضغط 429 ثم يستأنف تدريجيًا بمفردة واحدة", async () => {
+  const secondItemId = "123e4567-e89b-42d3-a456-426614174002";
+  let now = Date.parse("2026-08-12T00:00:20Z");
+  const pressureItem = {
+    ...baseItem("retry_pending"),
+    attemptCount: 1,
+    errorCode: "MODEL_RATE_LIMITED",
+    errorMessage: "ضغط مؤقت",
+    updatedAt: "2026-08-12T00:00:00Z",
+  };
+  const queuedItem = {
+    ...baseItem("queued"),
+    id: secondItemId,
+    planItemId: "plan-2",
+    contractHash: "d".repeat(64),
+  };
+  const pressureRun = {
+    ...run("running", "queued"),
+    totalItems: 2,
+    items: [pressureItem, queuedItem],
+  };
+  const readyRun = {
+    ...pressureRun,
+    status: "completed",
+    completedItems: 2,
+    items: [
+      { ...baseItem("ready"), updatedAt: "2026-08-12T00:01:05Z" },
+      { ...baseItem("ready"), id: secondItemId, planItemId: "plan-2", contractHash: "d".repeat(64), updatedAt: "2026-08-12T00:01:05Z" },
+    ],
+  };
+  const dispatches = [];
+  const jobs = {
+    enqueue: async () => ({ run: pressureRun, created: true, requestId: "r" }),
+    list: async () => ({ run: dispatches.length ? readyRun : pressureRun, created: false, requestId: "r" }),
+  };
+  const worker = {
+    processItem: async (id) => {
+      dispatches.push({ id, at: now });
+      return { accepted: true, itemId: id, requestId: "r" };
+    },
+  };
+  const orchestrator = new ProgressiveAssessmentGenerationOrchestrator(jobs, worker, {
+    concurrency: 2,
+    pollIntervalMs: 250,
+    dispatchCooldownMs: 1_000,
+    now: () => now,
+    sleep: async () => { now += 15_000; },
+  });
+  await orchestrator.start({}, []);
+  assert.equal(dispatches.length, 1, "بعد رصد الضغط يجب خفض التوازي إلى مفردة واحدة");
+  assert.equal(dispatches[0].id, itemId, "تعاد المفردة المؤجلة قبل إطلاق مفردة جديدة");
+  assert.ok(dispatches[0].at >= Date.parse("2026-08-12T00:00:45Z"), "لا يجوز إعادة الإرسال قبل انتهاء مهلة 429");
+});
+
+test("عامل Gemini لا ينفذ إعادة نقل داخلية عند الضغط؛ كل مطالبة قاعدة بيانات تقابل نداء مزود واحد", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const worker = await readFile(new URL("../supabase/functions/assessment-generation-worker/index.ts", import.meta.url), "utf8");
+  const start = worker.indexOf("async function callJsonModel(");
+  const end = worker.indexOf("function normalizeReviewResult", start);
+  assert.ok(start >= 0 && end > start);
+  const body = worker.slice(start, end);
+  assert.doesNotMatch(body, /MODEL_TRANSIENT_RETRY_DELAYS_MS/);
+  assert.doesNotMatch(body, /for \(let attempt/);
+  assert.match(body, /providerCalls:\s*1/);
+  assert.match(body, /MODEL_RATE_LIMITED/);
+  assert.match(body, /transport_backoff/);
 });

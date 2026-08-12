@@ -126,7 +126,7 @@ create table if not exists public.assessment_generation_items (
     check (status in ('queued', 'grounding', 'generating', 'normalizing', 'validating', 'ready', 'retry_pending', 'failed', 'cancelled', 'superseded')),
   attempt_count integer not null default 0 check (attempt_count between 0 and 10),
   max_attempts integer not null default 3 check (max_attempts between 1 and 5),
-  transport_retry_count integer not null default 0 check (transport_retry_count between 0 and 1),
+  transport_retry_count integer not null default 0 check (transport_retry_count between 0 and 2),
   content_retry_count integer not null default 0 check (content_retry_count between 0 and 1),
   worker_id text,
   lease_token uuid,
@@ -616,7 +616,7 @@ declare
   v_row public.assessment_generation_items%rowtype;
   v_status text;
 begin
-  if p_retry_class not in ('none', 'transport_once', 'content_once') then
+  if p_retry_class not in ('none', 'transport_once', 'transport_backoff', 'content_once') then
     raise exception using errcode = '22023', message = 'INVALID_RETRY_CLASS';
   end if;
 
@@ -632,14 +632,14 @@ begin
 
   v_status := case
     when v_row.attempt_count >= v_row.max_attempts then 'failed'
-    when p_retry_class = 'transport_once' and v_row.transport_retry_count < 1 then 'retry_pending'
+    when p_retry_class in ('transport_once', 'transport_backoff') and v_row.transport_retry_count < 2 then 'retry_pending'
     when p_retry_class = 'content_once' and v_row.content_retry_count < 1 then 'retry_pending'
     else 'failed'
   end;
 
   update public.assessment_generation_items
   set status = v_status,
-      transport_retry_count = transport_retry_count + case when v_status = 'retry_pending' and p_retry_class = 'transport_once' then 1 else 0 end,
+      transport_retry_count = transport_retry_count + case when v_status = 'retry_pending' and p_retry_class in ('transport_once', 'transport_backoff') then 1 else 0 end,
       content_retry_count = content_retry_count + case when v_status = 'retry_pending' and p_retry_class = 'content_once' then 1 else 0 end,
       error_code = left(coalesce(p_error_code, 'INTERNAL_ERROR'), 120),
       error_message = left(coalesce(p_error_message, 'تعذر توليد المفردة.'), 800),
@@ -707,16 +707,23 @@ declare
 begin
   update public.assessment_generation_items
   set status = 'retry_pending',
+      attempt_count = 0,
+      transport_retry_count = 0,
+      content_retry_count = 0,
       error_code = null,
       error_message = null,
+      stage_timings = '{"groundingMs":0,"modelMs":0,"normalizationMs":0,"validationMs":0,"totalMs":0}'::jsonb,
+      token_usage = '{}'::jsonb,
+      request_id = null,
       completed_at = null,
+      started_at = null,
       worker_id = null,
       lease_token = null,
-      lease_expires_at = null
+      lease_expires_at = null,
+      heartbeat_at = null
   where id = p_item_id
     and owner_id = p_owner_id
     and status = 'failed'
-    and attempt_count < max_attempts
   returning run_id into v_run_id;
 
   if v_run_id is null then
@@ -782,12 +789,22 @@ begin
 
   update public.assessment_generation_items
   set status = 'retry_pending',
+      attempt_count = 0,
+      transport_retry_count = 0,
+      content_retry_count = 0,
       error_code = null,
       error_message = null,
-      completed_at = null
+      stage_timings = '{"groundingMs":0,"modelMs":0,"normalizationMs":0,"validationMs":0,"totalMs":0}'::jsonb,
+      token_usage = '{}'::jsonb,
+      request_id = null,
+      completed_at = null,
+      started_at = null,
+      worker_id = null,
+      lease_token = null,
+      lease_expires_at = null,
+      heartbeat_at = null
   where run_id = p_run_id
-    and status = 'failed'
-    and attempt_count < max_attempts;
+    and status = 'failed';
 
   perform public.refresh_assessment_generation_run(p_run_id);
   return true;

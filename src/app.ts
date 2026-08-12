@@ -521,10 +521,10 @@ function generationItemUserMessage(task: AssessmentGenerationItemSnapshot): stri
   const transient = task.errorCode === "MODEL_RATE_LIMITED" || task.errorCode === "MODEL_UNAVAILABLE" || task.errorCode === "MODEL_TIMEOUT";
   if (!transient) return task.errorMessage;
   if (task.status === "retry_pending") {
-    return "خدمة توليد الأسئلة مشغولة مؤقتًا. احتفظ واثق بالمفردات المكتملة وسيعيد محاولة هذه المفردة تلقائيًا.";
+    return "خدمة التوليد تحت ضغط مؤقت. أوقف واثق إطلاق مفردات جديدة، وسيعيد هذه المفردة بعد فترة تهدئة متدرجة دون اندفاع متكرر.";
   }
   if (task.status === "failed") {
-    return "تعذر إكمال هذه المفردة بسبب ضغط مؤقت في خدمة التوليد. المفردات المكتملة محفوظة ويمكن إعادة هذه المفردة وحدها لاحقًا.";
+    return "استمرت مشكلة الضغط بعد المحاولات المتدرجة. المفردات المكتملة محفوظة، ويمكن بدء دورة محاولات جديدة لهذه المفردة وحدها يدويًا.";
   }
   return task.errorMessage || "خدمة توليد الأسئلة مشغولة مؤقتًا.";
 }
@@ -1352,6 +1352,12 @@ function progressiveRunMessage(snapshot: AssessmentGenerationRunSnapshot): strin
   }
   if (snapshot.status === "cancelled") return `أُلغي التوليد بعد حفظ ${snapshot.completedItems} مفردات مكتملة.`;
   if (snapshot.status === "superseded") return "أوقفت دورة قديمة لأن خطة أحدث أصبحت هي المعتمدة.";
+  const pressurePaused = snapshot.items.some((item) =>
+    (item.status === "retry_pending" || item.status === "failed")
+    && ["MODEL_RATE_LIMITED", "MODEL_UNAVAILABLE", "MODEL_TIMEOUT"].includes(item.errorCode));
+  if (pressurePaused && queued > 0) {
+    return `اكتمل ${snapshot.completedItems} من ${snapshot.totalItems}. رصد واثق ضغطًا مؤقتًا فأوقف إطلاق مفردات جديدة ويستأنف الطابور تدريجيًا بعد التهدئة.`;
+  }
   if (snapshot.failedItems > 0 && active === 0 && queued === 0) {
     return `اكتملت ${snapshot.completedItems} من ${snapshot.totalItems} وتعذرت ${snapshot.failedItems} مفردات. أعد المفردات الفاشلة وحدها.`;
   }
