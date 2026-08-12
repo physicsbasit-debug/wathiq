@@ -1,9 +1,9 @@
 {
   "name": "wathiq",
-  "version": "0.3.14",
+  "version": "0.3.15",
   "private": true,
   "type": "module",
-  "description": "واثق: مولد اختبارات علوم كامبريدج عربي بتأليف عميق ومراجعة مستقلة، مع Visual Planner يعمل في JSON خفيف ويتحقق منه واثق محليًا بدل إرسال مخططات JSON Schema معقدة إلى Gemini.",
+  "description": "واثق: مولد اختبارات علوم كامبريدج عربي بتأليف عميق ومراجعة مستقلة، يبدأ دورة التوليد مباشرة بعد فحص العقد المحلي ويستخدم أول مفردة حقيقية كبوابة للمزود بدل preflight خارجي حاجب.",
   "scripts": {
     "build": "node scripts/build.mjs",
     "dev": "node scripts/serve.mjs",

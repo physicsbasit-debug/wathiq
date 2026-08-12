@@ -150,7 +150,10 @@ export class ProgressiveAssessmentGenerationOrchestrator {
     if (now < pressureUntil) return;
 
     const activeCount = snapshot.items.filter((item) => ACTIVE_ITEM_STATUSES.has(item.status)).length;
-    const effectiveConcurrency = this.pressureMode ? 1 : this.concurrency;
+    // أول مفردة حقيقية هي بوابة المزود: لا نطلق دفعة متوازية قبل أن يثبت مسار Author→Reviewer→Validation نفسه مرة واحدة.
+    // بعد أول ready نعود للتوازي الطبيعي، وعند ضغط المزود نبقى على مفردة واحدة.
+    const hasReadyItem = snapshot.items.some((item) => item.status === "ready");
+    const effectiveConcurrency = this.pressureMode || !hasReadyItem ? 1 : this.concurrency;
     const slots = Math.max(0, effectiveConcurrency - activeCount);
     if (!slots) return;
 

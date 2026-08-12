@@ -1,4 +1,4 @@
-# معمارية واثق 0.3.14
+# معمارية واثق 0.3.15
 
 ## المبدأ
 
@@ -111,12 +111,12 @@ Supabase مسؤول عن الجلسة، المسودات، مهام التولي
 يحفظ `retry_after_at` في قاعدة البيانات، ولا تسمح دالة claim بحجز المفردة قبل الموعد. أخطاء النقل تعكس زيادة `attempt_count` التي حصلت عند claim، لذلك لا تُستهلك ميزانية السؤال بسبب انقطاع المزود.
 
 ### Provider protocol v1
-تسبق الدورة preflight حقيقية إلى Gemini. أخطاء HTTP غير المؤقتة تصنف على مستوى المزود وتوقف الإرسال، بينما 429/5xx فقط تدخل transport_backoff. يوجد توقيع RPC واحد فقط للفشل لمنع غموض PostgREST.
+لا تسبق الدورة أي نداء Gemini تجريبي. `health` يفحص توافق Worker وعقد قاعدة البيانات فقط، ثم تُنشأ/تستأنف الدورة الدائمة مباشرة. أول مفردة حقيقية هي بوابة المزود: يبدأ الإرسال بتوازي 1، وبعد أول `ready` يسمح المنسق بالتوازي الطبيعي. أخطاء HTTP غير المؤقتة توقف بقية الإرسال بعد أول مفردة، بينما 429/5xx/timeout تدخل `transport_backoff` داخل المهمة نفسها.
 
 
 ## Runtime Contract v0.3.12
 
-أخطاء النقل المؤقتة لا تمر من دالة قادرة على إنهاء المفردة. `defer_assessment_generation_item_v1` مسؤول حصريًا عن 429/503/timeout، بينما `fail_assessment_generation_content_v1` مسؤول عن فشل المحتوى. يفحص Worker عقد قاعدة البيانات قبل health/preflight، ويستخدم Jobs استردادًا versioned للـ stale leases.
+أخطاء النقل المؤقتة لا تمر من دالة قادرة على إنهاء المفردة. `defer_assessment_generation_item_v1` مسؤول حصريًا عن 429/503/timeout، بينما `fail_assessment_generation_content_v1` مسؤول عن فشل المحتوى. يفحص Worker عقد قاعدة البيانات في `health` وعند معالجة المفردة، ويستخدم Jobs استردادًا versioned للـ stale leases.
 
 ## Thin Item Contract + Typed Visual Planner (v0.3.14)
 
@@ -141,8 +141,17 @@ Deterministic renderer
 - مخطط `circuit_diagram` لا يعرف هندسة القوى؛ يحصل فقط على المكونات والتعليقات.
 - الرسوم البيانية والجداول تحصل على مخططها الأصغر الخاص بها.
 - `illustration_2d` يبقى مشهدًا سياقيًا في مسار الصور الحالي ولا يُجبر على هندسة Structured Output.
-- health/preflight يعلنان `visualContractVersion=3`, `thinItemContractVersion=1`, `visualPlannerVersion=2`, `providerProtocolVersion=4`، ويمنع العميل بدء الدورة إذا كان Worker المنشور أقدم.
+- health يعلن `visualContractVersion=3`, `thinItemContractVersion=1`, `visualPlannerVersion=2`, `providerProtocolVersion=5`، ويمنع العميل بدء الدورة إذا كان Worker المنشور أقدم.
 - لا تغيير في Runtime Contract لقاعدة البيانات في v0.3.14؛ قاعدة v0.3.12 تبقى العقد المعتمد.
+
+## Durable First-Item Provider Gate (v0.3.15)
+
+- لا يستدعي مسار البدء أو الاستئناف `preflight` للمزود.
+- `health` محلي بالنسبة للمزود: يفحص هوية العامل وعقد قاعدة البيانات ولا يستهلك طلب Gemini.
+- المنسق يطلق أول مفردة وحدها حتى يثبت مسار Author → Reviewer → Validation على طلب حقيقي محفوظ.
+- بعد أول `ready` يمكن للتوازي العودة إلى القيمة التشغيلية الطبيعية، وعند ضغط المزود يبقى التوازي 1.
+- timeout/429/503 تحدث بعد claim لمفردة دائمة، ولذلك تدخل `defer_assessment_generation_item_v1` بدل أن تمنع إنشاء الدورة.
+- `preflight` الموجود في Edge بقي تشخيصيًا/توافقيًا فقط ولا يتصل بـGemini، ولا تستدعيه الواجهة الحالية.
 
 ## Local-Validated Visual Planner (v0.3.14)
 

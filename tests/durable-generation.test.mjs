@@ -53,7 +53,7 @@ test("فحص صحة عامل المفردات يطابق عقد المؤلف و�
       thinItemContractVersion: 1,
       visualPlannerVersion: 2,
       pressureControlVersion: 4,
-      providerProtocolVersion: 4,
+      providerProtocolVersion: 5,
       databaseContractVersion: 1,
       authorModel: "gemini-author",
       reviewModel: "gemini-reviewer",
@@ -69,7 +69,7 @@ test("فحص صحة عامل المفردات يطابق عقد المؤلف و�
   assert.equal(health.thinItemContractVersion, 1);
   assert.equal(health.visualPlannerVersion, 2);
   assert.equal(health.pressureControlVersion, 4);
-  assert.equal(health.providerProtocolVersion, 4);
+  assert.equal(health.providerProtocolVersion, 5);
   assert.equal(health.databaseContractVersion, 1);
 });
 
@@ -236,19 +236,6 @@ test("العامل يحفظ خرج المؤلف قبل المراجع ويعيد
 });
 
 
-test("v0.3.12 يفحص عقد قاعدة البيانات وGemini مسبقًا قبل إنشاء دورة كاملة", async () => {
-  const calls = [];
-  const service = new AssessmentGenerationWorkerService(
-    { supabaseUrl: "https://example.supabase.co", supabasePublishableKey: "sb_publishable_test" },
-    async () => ({ accessToken: "token" }),
-    async (_url, init) => {
-      calls.push(JSON.parse(init.body));
-      return new Response(JSON.stringify({ ok: true, worker: "assessment-generation-worker", providerProtocolVersion: 4, thinItemContractVersion: 1, visualPlannerVersion: 2, databaseContractVersion: 1, requestId: "p" }), { status: 200 });
-    },
-  );
-  await service.preflight();
-  assert.equal(calls[0].action, "preflight");
-});
 
 test("عامل v0.3.12 لا يصنف HTTP 400 من Gemini على أنه JSON محتوى", async () => {
   const { readFile } = await import("node:fs/promises");
@@ -346,15 +333,6 @@ test("v0.3.13 يخطط المرئي بعد المراجعة العلمية لا 
   assert.ok(reviewer >= 0 && approved > reviewer && planner > approved, "يجب أن يأتي تخطيط المرئي بعد المراجعة والاعتماد");
 });
 
-test("v0.3.14 يحصر preflight في العقود العامة ولا يجعل المرئي الاختياري بوابة للدورة", async () => {
-  const { readFile } = await import("node:fs/promises");
-  const worker = await readFile(new URL("../supabase/functions/assessment-generation-worker/index.ts", import.meta.url), "utf8");
-  assert.match(worker, /await preflightThinContracts\(requestId\)/);
-  assert.match(worker, /wathiq_thin_author_contract_probe/);
-  assert.match(worker, /wathiq_thin_review_contract_probe/);
-  assert.match(worker, /providerProtocolVersion:\s*4/);
-  assert.match(worker, /thinItemContractVersion:\s*1/);
-});
 
 
 test("v0.3.14 لا يرسل JSON Schema المعقد إلى Visual Planner", async () => {
@@ -371,16 +349,64 @@ test("v0.3.14 لا يرسل JSON Schema المعقد إلى Visual Planner", asy
   assert.match(worker, /parseLooseJsonObject\(output\.text\)/);
 });
 
-test("v0.3.14 لا يشغّل preflight_visual_planner ولا يمنع إنشاء الاختبار بسبب مخطط مرئي اختياري", async () => {
+
+
+
+test("v0.3.15 لا يجعل أي نداء Gemini تمهيدي بوابة لبدء دورة التوليد", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const app = await readFile(new URL("../src/app.ts", import.meta.url), "utf8");
+  const client = await readFile(new URL("../src/assessment-generation-worker.ts", import.meta.url), "utf8");
+  const worker = await readFile(new URL("../supabase/functions/assessment-generation-worker/index.ts", import.meta.url), "utf8");
+  const start = app.indexOf("async function generateQuestionsForPlan(");
+  const end = app.indexOf("async function retryGenerationItem(", start);
+  const generationPath = app.slice(start, end);
+  assert.match(generationPath, /assessmentGenerationWorkerService\.health\(\)/);
+  assert.doesNotMatch(generationPath, /\.preflight\(\)/);
+  assert.doesNotMatch(client, /async preflight\(/);
+  assert.doesNotMatch(worker, /async function preflightModel\(|async function preflightThinContracts\(/);
+  assert.match(worker, /providerProbe:\s*"durable-first-item"/);
+  assert.match(worker, /providerProtocolVersion:\s*5/);
+});
+
+test("v0.3.15 يستخدم أول مفردة حقيقية كبوابة للمزود ثم يوسع التوازي بعد أول ready", async () => {
+  const item2 = "123e4567-e89b-42d3-a456-426614174002";
+  const mkItem = (id, order, status = "queued") => ({
+    ...baseItem(status), id, planItemId: `plan-${order}`, contractHash: String(order).repeat(64).slice(0,64),
+  });
+  const queuedRun = {
+    ...run("running", "queued"), totalItems: 2, completedItems: 0,
+    items: [mkItem(itemId, 1), mkItem(item2, 2)],
+  };
+  const oneReadyRun = {
+    ...queuedRun, completedItems: 1,
+    items: [mkItem(itemId, 1, "ready"), mkItem(item2, 2, "queued")],
+  };
+  const doneRun = {
+    ...queuedRun, status: "completed", completedItems: 2,
+    items: [mkItem(itemId, 1, "ready"), mkItem(item2, 2, "ready")],
+  };
+  let listCount = 0;
+  const dispatched = [];
+  const jobs = {
+    enqueue: async () => ({ run: queuedRun, created: true, requestId: "r" }),
+    list: async () => ({ run: ++listCount === 1 ? oneReadyRun : doneRun, created: false, requestId: "r" }),
+  };
+  const worker = { processItem: async (id) => { dispatched.push(id); return { accepted: true, itemId: id, requestId: "r" }; } };
+  const orchestrator = new ProgressiveAssessmentGenerationOrchestrator(jobs, worker, {
+    concurrency: 2, pollIntervalMs: 250, dispatchCooldownMs: 1_000, sleep: async () => {},
+  });
+  await orchestrator.start({}, []);
+  assert.deepEqual(dispatched, [itemId, item2], "يجب اختبار المزود بالمفردة الأولى فقط قبل السماح بتوسيع التوازي");
+});
+
+test("v0.3.15 يحافظ على أخطاء النقل داخل دورة المفردة بدل منع enqueue", async () => {
   const { readFile } = await import("node:fs/promises");
   const worker = await readFile(new URL("../supabase/functions/assessment-generation-worker/index.ts", import.meta.url), "utf8");
-  const start = worker.indexOf("async function preflightThinContracts(");
-  const end = worker.indexOf("async function preflightModel", start);
-  assert.ok(start >= 0 && end > start);
-  const body = worker.slice(start, end);
-  assert.match(body, /wathiq_thin_author_contract_probe/);
-  assert.match(body, /wathiq_thin_review_contract_probe/);
-  assert.doesNotMatch(body, /preflight_visual_planner|wathiq_typed_visual_contract_probe/);
+  const app = await readFile(new URL("../src/app.ts", import.meta.url), "utf8");
+  assert.match(worker, /MODEL_TIMEOUT[\s\S]*transport_backoff/);
+  assert.match(worker, /defer_assessment_generation_item_v1/);
+  assert.match(app, /assessmentGenerationOrchestrator\.start\(/);
+  assert.doesNotMatch(app.slice(app.indexOf("async function generateQuestionsForPlan("), app.indexOf("async function retryGenerationItem(")), /يفحص واثق اتصال Gemini/);
 });
 
 test("v0.3.14 يصف عقد JSON المحلي لكل نوع مرئي قبل التحقق الحتمي", async () => {

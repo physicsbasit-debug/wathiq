@@ -1,5 +1,16 @@
 # التاريخ المختصر
 
+## 0.3.15 — Durable First-Item Provider Gate
+
+- فحص End-to-End أثبت أن الملفات الأربع المنشورة في Supabase مطابقة حرفيًا لنسخة المستودع 0.3.14، وأن الانقطاع الحالي يقع قبل `enqueue` بسبب Provider preflight إلزامي.
+- أزيلت نداءات Gemini التجريبية من مسار بدء/استئناف الاختبار؛ `health` يفحص Worker وعقد قاعدة البيانات فقط.
+- أول مفردة حقيقية أصبحت بوابة المزود: يبدأ المنسق بتوازي 1، وبعد أول `ready` يعود للتوازي الطبيعي؛ 429/503/timeout تدخل retry الدائم بدل حجب الدورة.
+- بقي endpoint `preflight` تشخيصيًا/توافقيًا فقط دون أي اتصال بـGemini، ولم تعد الواجهة تستدعيه.
+- ارتفع `providerProtocolVersion` إلى 5.
+- نُظف `schema-current.sql` من تعريف مكرر مطابق لـ`enqueue_assessment_generation_run` دون Migration أو تغيير في قاعدة البيانات المنشورة.
+- لا SQL جديد ولا تغيير في وظائف الصور أو `assessment-generation-jobs`.
+
+
 ## 0.3.14 — Local-Validated Visual Planner
 
 - أثبتت سجلات التشغيل أن فشل 400 كان محصورًا في `preflight_visual_planner` بعد نجاح الاتصال وعقدي المؤلف والمراجع.

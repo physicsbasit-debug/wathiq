@@ -15,7 +15,6 @@ const LEASE_SECONDS = 240;
 const AUTHOR_MODEL_TIMEOUT_MS = 50_000;
 const REVIEW_MODEL_TIMEOUT_MS = 45_000;
 const VISUAL_PLANNER_TIMEOUT_MS = 35_000;
-const PREFLIGHT_TIMEOUT_MS = 20_000;
 const MODEL_TRANSIENT_HTTP_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const HEX_64 = /^[0-9a-f]{64}$/u;
@@ -202,22 +201,32 @@ Deno.serve(async (req) => {
         thinItemContractVersion: 1,
         visualPlannerVersion: 2,
         pressureControlVersion: 4,
-        providerProtocolVersion: 4,
+        providerProtocolVersion: 5,
         databaseContractVersion: 1,
         authorModel: AUTHOR_MODEL,
         reviewModel: REVIEW_MODEL,
         visualPlannerModel: VISUAL_PLANNER_MODEL,
         databaseContract,
-        philosophy: "cambridge-first-local-validated-visual-planner-v11",
+        philosophy: "cambridge-first-durable-first-item-provider-gate-v12",
         requestId,
       });
     }
     if (action === "preflight") {
-      await assertDatabaseRuntimeContract();
-      const models = [...new Set([AUTHOR_MODEL, REVIEW_MODEL, VISUAL_PLANNER_MODEL])];
-      for (const model of models) await preflightModel(model, requestId);
-      await preflightThinContracts(requestId);
-      return json(req, { ok: true, worker: "assessment-generation-worker", providerProtocolVersion: 4, thinItemContractVersion: 1, visualPlannerVersion: 2, databaseContractVersion: 1, models, requestId });
+      // للتشخيص والتوافق فقط: لا يتصل هذا المسار بمزود Gemini ولا يسبق تشغيل الاختبار في الواجهة الحالية.
+      // التشغيل الحقيقي يثبت المزود بأول مفردة دائمة، بحيث تذهب أخطاء النقل إلى retry_pending بدل حجب الدورة كاملة.
+      const databaseContract = await assertDatabaseRuntimeContract();
+      return json(req, {
+        ok: true,
+        worker: "assessment-generation-worker",
+        providerProtocolVersion: 5,
+        thinItemContractVersion: 1,
+        visualPlannerVersion: 2,
+        databaseContractVersion: 1,
+        providerProbe: "durable-first-item",
+        databaseContract,
+        models: [...new Set([AUTHOR_MODEL, REVIEW_MODEL, VISUAL_PLANNER_MODEL])],
+        requestId,
+      });
     }
     if (action !== "process" && action !== "process-sync") throw httpError("العملية المطلوبة غير مدعومة.", 404);
     const itemId = requireUuid(payload.itemId, "معرف مهمة المفردة غير صالح.");
@@ -857,60 +866,6 @@ function emptyVisualProposal(mode: VisualMode, brief: string): VisualProposal {
   };
 }
 
-async function preflightThinContracts(requestId: string): Promise<void> {
-  const probeContract = {
-    questionType: "اختيار من متعدد",
-    marks: 1,
-  } as ItemContract;
-  const authorProbe = await callJsonModel(
-    AUTHOR_MODEL,
-    "هذا فحص توافق لعقد واثق النحيف. أعد سؤال اختيار من متعدد تجريبيًا قصيرًا: أربعة بدائل، إجابة مطابقة لأحدها، نقطة تصحيح واحدة، visualIntent.mode=none وbrief فارغ.",
-    { role: "wathiq_thin_author_contract_probe" },
-    authorSchema(probeContract),
-    "low",
-    PREFLIGHT_TIMEOUT_MS,
-    requestId,
-    "preflight_thin_author",
-    900,
-  );
-  const authored = normalizeAuthoredItemContent(authorProbe.value, probeContract);
-  await callJsonModel(
-    REVIEW_MODEL,
-    "هذا فحص توافق لعقد المراجع النحيف. أعد approved=true وissues=[] وsupportingContextIds=[\"CAMBRIDGE-GLOBAL\"] وstimulusDisposition=\"keep\" وأعد finalItem وفق المخطط.",
-    { role: "wathiq_thin_review_contract_probe", authoredItem: authored },
-    reviewSchema(probeContract),
-    "low",
-    PREFLIGHT_TIMEOUT_MS,
-    requestId,
-    "preflight_thin_reviewer",
-    1_200,
-  );
-  // لا يفحص preflight مخطط المرئي الاختياري عبر JSON Schema.
-  // مخطط المرئي يعمل عند الحاجة فقط بصيغة JSON خفيفة ثم يخضع للتحقق المحلي الصارم.
-}
-
-async function preflightModel(model: string, requestId: string): Promise<void> {
-  const schema = {
-    type: "object",
-    properties: { ok: { type: "boolean" } },
-    required: ["ok"],
-    additionalProperties: false,
-  };
-  const result = await callJsonModel(
-    model,
-    "أعد JSON فقط وفق المخطط. هذه عملية فحص اتصال وبنية وليست مهمة تأليف.",
-    { role: "wathiq_provider_preflight", instruction: "أعد ok=true فقط." },
-    schema,
-    "low",
-    PREFLIGHT_TIMEOUT_MS,
-    requestId,
-    "preflight",
-    512,
-  );
-  const record = requireRecord(result.value, "استجابة فحص Gemini غير صالحة.");
-  if (record.ok !== true) throw workerError("MODEL_REQUEST_INVALID", "اتصل واثق بـ Gemini لكن الفحص البنيوي لم يكتمل كما يجب.", "none", 502);
-}
-
 async function callJsonModel(
   model: string,
   systemInstruction: string,
@@ -960,15 +915,15 @@ async function callJsonModel(
       }
       throw workerError(
         "MODEL_OUTPUT_BLOCKED",
-        `أوقف Gemini إخراج ${role === "reviewer" ? "المراجع" : role === "author" ? "المؤلف" : "الفحص المسبق"} قبل اكتماله (${finishReason}).`,
-        role === "preflight" ? "none" : "content_once",
+        `أوقف Gemini إخراج ${role === "reviewer" ? "المراجع" : role === "author" ? "المؤلف" : "مخطط المرئي"} قبل اكتماله (${finishReason}).`,
+        "content_once",
         422,
       );
     }
-    if (!output.text) throw workerError("MODEL_INCOMPLETE_CONTENT", "لم تُرجع خدمة الذكاء الاصطناعي محتوى قابلًا للقراءة.", role === "preflight" ? "none" : "content_once", 422);
+    if (!output.text) throw workerError("MODEL_INCOMPLETE_CONTENT", "لم تُرجع خدمة الذكاء الاصطناعي محتوى قابلًا للقراءة.", "content_once", 422);
     let parsed: unknown;
     try { parsed = schema ? JSON.parse(output.text) as unknown : parseLooseJsonObject(output.text); }
-    catch { throw workerError("MODEL_INVALID_JSON", role === "visual_planner" ? "أعاد مخطط المرئي JSON غير صالح؛ سيعيد واثق هذه المفردة وحدها وفق عقد التحقق المحلي." : "أعادت خدمة الذكاء الاصطناعي JSON غير صالح رغم طلب الإخراج المنظم.", role === "preflight" ? "none" : "content_once", 422); }
+    catch { throw workerError("MODEL_INVALID_JSON", role === "visual_planner" ? "أعاد مخطط المرئي JSON غير صالح؛ سيعيد واثق هذه المفردة وحدها وفق عقد التحقق المحلي." : "أعادت خدمة الذكاء الاصطناعي JSON غير صالح رغم طلب الإخراج المنظم.", "content_once", 422); }
     console.log(JSON.stringify({ event: "wathiq_model_completed", role, requestId, model, providerCalls: 1, outputContract: schema ? "structured_schema" : "prompt_json_local_validation", finishReason: finishReason || "STOP", ...output.tokenUsage }));
     return { value: parsed, tokenUsage: output.tokenUsage };
   } catch (error) {

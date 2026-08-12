@@ -1480,9 +1480,8 @@ async function generateQuestionsForPlan(_plan: PlanItem[]): Promise<boolean> {
     if (workerHealth.engineSchemaVersion !== 1 || workerHealth.contractVersion !== 4) {
       throw new Error("عامل توليد المفردات المنشور لا يطابق عقد كامبريدج الحالي. أعد نشر وظيفة عامل التوليد ثم أعد المحاولة.");
     }
-    state.questionGenerationMessage = "يفحص واثق اتصال Gemini والنموذج والعقد البنيوي قبل إطلاق الأسئلة…";
+    state.questionGenerationMessage = "تم التحقق من عقد التشغيل. ينشئ واثق الدورة الآن ويبدأ بأول مفردة حقيقية قبل توسيع التنفيذ…";
     render();
-    await assessmentGenerationWorkerService.preflight();
     const payload = await buildCurrentProgressivePayload();
     let finalSnapshot: AssessmentGenerationRunSnapshot | null = null;
     if (state.draft.generationRunId) {

@@ -58,7 +58,7 @@ export class AssessmentGenerationWorkerService {
       || record.thinItemContractVersion !== 1
       || record.visualPlannerVersion !== 2
       || record.pressureControlVersion !== 4
-      || record.providerProtocolVersion !== 4
+      || record.providerProtocolVersion !== 5
       || record.databaseContractVersion !== 1
       || typeof record.authorModel !== "string" || typeof record.reviewModel !== "string" || typeof record.visualPlannerModel !== "string"
       || typeof record.requestId !== "string") {
@@ -67,13 +67,6 @@ export class AssessmentGenerationWorkerService {
     return record as unknown as AssessmentGenerationWorkerHealth;
   }
 
-
-  async preflight(): Promise<void> {
-    const record = asRecord(await this.post({ action: "preflight" }));
-    if (!record || record.ok !== true || record.worker !== "assessment-generation-worker" || record.providerProtocolVersion !== 4 || record.thinItemContractVersion !== 1 || record.visualPlannerVersion !== 2 || record.databaseContractVersion !== 1) {
-      throw new Error("فشل الفحص المسبق لعقد Gemini النحيف قبل إنشاء دورة الاختبار.");
-    }
-  }
 
   async processItem(itemId: string): Promise<AssessmentGenerationWorkerResponse> {
     return parseWorkerResponse(await this.post({ action: "process", itemId }), itemId);

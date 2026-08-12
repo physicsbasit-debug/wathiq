@@ -13,7 +13,7 @@ test("مخطط Supabase الدائم يقبل Blueprint v4 ويحافظ على �
   assert.doesNotMatch(schema, /blueprint_version\s+integer\s+not null\s+default 1\s+check \(blueprint_version = 1\)/i);
 
   const v4Fallbacks = schema.match(/coalesce\(\(p_blueprint ->> 'blueprintVersion'\)::integer, 4\)/g) ?? [];
-  assert.equal(v4Fallbacks.length, 2);
+  assert.equal(v4Fallbacks.length, 1);
   assert.doesNotMatch(schema, /coalesce\(\(p_blueprint ->> 'blueprintVersion'\)::integer, 1\)/);
 
   assert.match(migration, /drop constraint if exists assessment_generation_runs_blueprint_version_check/i);
