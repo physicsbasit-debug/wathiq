@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>واثق | إنشاء اختبار قصير</title>
+    <title>واثق | اختبار كامبريدج - عُمان</title>
     <style>
       body {
         background-color: #e9ecef;
@@ -13,7 +13,7 @@
       }
       #exam-container {
         background-color: #ffffff;
-        max-width: 210mm; /* عرض مقارب لورقة A4 */
+        max-width: 210mm;
         min-height: 297mm;
         margin: 0 auto;
         padding: 40px 50px;
@@ -42,18 +42,17 @@
       }
       .answer-lines hr {
         border: none;
-        border-bottom: 1px dotted #999;
-        margin-top: 30px;
+        border-bottom: 2px dotted #777;
+        margin-top: 35px;
+        margin-bottom: 0;
       }
     </style>
   </head>
   <body>
-    <div id="exam-container">
-      <!-- سيتم رسم الاختبار هنا بواسطة الجافاسكربت أسفله -->
-    </div>
-    
+    <div id="exam-container"></div>
+
     <script>
-      // 1. البيانات التجريبية بأسلوب كامبريدج
+      // 1. البيانات التجريبية بأسلوب كامبريدج وعُمان
       const mockCambridgeOmanExam = [
         {
           scenarioId: "scn-001",
@@ -78,7 +77,7 @@
         }
       ];
 
-      // 2. محرك رسم الاختبار (بدون الحاجة لملفات خارجية)
+      // 2. محرك رسم الاختبار
       function renderExam(scenarios) {
         const container = document.getElementById('exam-container');
         container.innerHTML = '';
@@ -93,7 +92,7 @@
           contextEl.innerHTML = '<strong>السؤال ' + (index + 1) + ':</strong> ' + scenario.contextText;
           scenarioEl.appendChild(contextEl);
 
-          // رسم الصورة بدقة المتجهات SVG
+          // رسم الصورة
           if (scenario.visualRequirement) {
             const visualEl = document.createElement('div');
             visualEl.className = 'scientific-visual-container';
@@ -101,18 +100,30 @@
             scenarioEl.appendChild(visualEl);
           }
 
-          // رسم الفروع
           const subQuestionsContainer = document.createElement('div');
           subQuestionsContainer.className = 'sub-questions-container';
           
+          // رسم الفروع
           scenario.subQuestions.forEach((sq) => {
             const wrapper = document.createElement('div');
             wrapper.className = 'sub-question';
             
+            // نص السؤال (بدون الدرجة هنا)
             const qText = document.createElement('p');
-            // الستايل يضع الدرجة على اليسار تماماً كما في كامبريدج
-            qText.innerHTML = '<strong dir="ltr">(' + sq.label + ')</strong> ' + sq.commandVerb + ' ' + sq.content + ' <span style="float:left; font-weight:bold; direction:ltr;">[' + sq.marks + ']</span>';
+            qText.innerHTML = '<strong dir="ltr">(' + sq.label + ')</strong> <span dir="ltr">' + sq.commandVerb + '</span> ' + sq.content;
             wrapper.appendChild(qText);
+
+            // حاوية مرنة تجمع بين مساحة الإجابة والدرجة
+            const answerContainer = document.createElement('div');
+            answerContainer.style.display = 'flex';
+            answerContainer.style.alignItems = 'flex-end'; // محاذاة للأسفل
+            answerContainer.style.width = '100%';
+            answerContainer.style.marginTop = '10px';
+
+            // مساحة الإجابة
+            const answerSpace = document.createElement('div');
+            answerSpace.className = 'answer-lines';
+            answerSpace.style.flexGrow = '1'; 
 
             if (sq.itemType === 'MULTIPLE_CHOICE' && sq.options) {
               const optionsList = document.createElement('ul');
@@ -121,21 +132,31 @@
               sq.options.forEach((opt, idx) => {
                 const li = document.createElement('li');
                 li.style.marginBottom = '8px';
-                const letter = String.fromCharCode(65 + idx); // A, B, C, D
+                const letter = String.fromCharCode(65 + idx);
                 li.innerHTML = '<label style="cursor:pointer;"><input type="radio" name="q_' + sq.id + '" value="' + opt + '"> <strong dir="ltr">' + letter + '</strong>. ' + opt + '</label>';
                 optionsList.appendChild(li);
               });
-              wrapper.appendChild(optionsList);
+              answerSpace.appendChild(optionsList);
             } else {
-              const answerSpace = document.createElement('div');
-              answerSpace.className = 'answer-lines';
               const linesCount = sq.marks * 2; 
               for (let i = 0; i < linesCount; i++) {
                 const line = document.createElement('hr');
                 answerSpace.appendChild(line);
               }
-              wrapper.appendChild(answerSpace);
             }
+
+            // الدرجة (توضع على اليسار)
+            const markSpan = document.createElement('span');
+            markSpan.innerHTML = '[' + sq.marks + ']';
+            markSpan.style.marginLeft = '20px';
+            markSpan.style.marginRight = '20px';
+            markSpan.style.fontWeight = 'bold';
+            markSpan.style.direction = 'ltr';
+
+            answerContainer.appendChild(answerSpace);
+            answerContainer.appendChild(markSpan);
+            
+            wrapper.appendChild(answerContainer);
             subQuestionsContainer.appendChild(wrapper);
           });
           
