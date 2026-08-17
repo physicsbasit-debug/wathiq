@@ -3,39 +3,151 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta
-      name="description"
-      content="واثق: نموذج تفاعلي مبسط لإنشاء الاختبارات القصيرة في مواد العلوم"
-    />
     <title>واثق | إنشاء اختبار قصير</title>
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%231d3f72'/%3E%3Cpath d='M18 35l9 9 20-25' fill='none' stroke='%23d8b35a' stroke-width='7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
-    
-    <!-- تم إضافة تنسيق بسيط هنا لتبدو الشاشة كورقة امتحان كامبريدج الحقيقية -->
     <style>
       body {
-        background-color: #e9ecef; /* لون خلفية رمادي فاتح خارج الورقة */
+        background-color: #e9ecef;
         font-family: 'Arial', sans-serif;
         padding: 40px 20px;
         margin: 0;
       }
       #exam-container {
-        background-color: #ffffff; /* لون الورقة أبيض */
+        background-color: #ffffff;
         max-width: 210mm; /* عرض مقارب لورقة A4 */
-        min-height: 297mm; /* طول مقارب لورقة A4 */
+        min-height: 297mm;
         margin: 0 auto;
         padding: 40px 50px;
-        box-shadow: 0 10px 20px rgba(0,0,0,0.1); /* ظل الورقة */
+        box-shadow: 0 10px 20px rgba(0,0,0,0.1);
         border: 1px solid #ccc;
         border-radius: 4px;
         line-height: 1.6;
       }
+      .exam-scenario {
+        border-bottom: 2px solid #000;
+        padding-bottom: 30px;
+        margin-bottom: 30px;
+      }
+      .scenario-context {
+        font-size: 1.1em;
+      }
+      .scientific-visual-container {
+        text-align: center;
+        margin: 20px 0;
+      }
+      .sub-questions-container {
+        padding-right: 20px;
+      }
+      .sub-question {
+        margin-bottom: 25px;
+      }
+      .answer-lines hr {
+        border: none;
+        border-bottom: 1px dotted #999;
+        margin-top: 30px;
+      }
     </style>
   </head>
   <body>
-    <!-- تم تغيير الـ ID هنا ليتطابق مع محرك العرض الخاص بنا -->
-    <div id="exam-container"></div>
+    <div id="exam-container">
+      <!-- سيتم رسم الاختبار هنا بواسطة الجافاسكربت أسفله -->
+    </div>
     
-    <script src="./runtime-config.js"></script>
-    <script type="module" src="./assets/app.js"></script>
+    <script>
+      // 1. البيانات التجريبية بأسلوب كامبريدج
+      const mockCambridgeOmanExam = [
+        {
+          scenarioId: "scn-001",
+          contextText: "قام طالب بتركيب الدائرة الكهربائية الموضحة في الشكل أدناه لقياس شدة التيار المار في المقاومة.",
+          visualRequirement: {
+            format: "SVG",
+            renderCode: `<svg width="300" height="200" viewBox="0 0 300 200" xmlns="http://www.w3.org/2000/svg">
+              <rect x="50" y="50" width="200" height="100" fill="none" stroke="black" stroke-width="2"/>
+              <circle cx="50" cy="100" r="15" fill="white" stroke="black" stroke-width="2"/>
+              <text x="44" y="105" font-family="Arial" font-size="16">A</text>
+              <path d="M 130 50 L 140 30 L 150 70 L 160 30 L 170 50" fill="none" stroke="black" stroke-width="2"/>
+              <line x1="120" y1="150" x2="120" y2="130" stroke="black" stroke-width="2"/>
+              <line x1="140" y1="160" x2="140" y2="120" stroke="black" stroke-width="4"/>
+              <text x="125" y="180" font-family="Arial" font-size="14">12V</text>
+            </svg>`
+          },
+          subQuestions: [
+            { id: "q1a", label: "a", itemType: "SHORT_ANSWER", commandVerb: "State", content: "اسم الجهاز المشار إليه بالرمز A في الدائرة الكهربائية.", marks: 1 },
+            { id: "q1b", label: "b", itemType: "MULTIPLE_CHOICE", commandVerb: "Calculate", content: "إذا كانت قيمة المقاومة 6 أوم، ما هي قراءة الجهاز A؟", marks: 1, options: ["0.5 A", "2.0 A", "72 A", "18 A"] },
+            { id: "q1c", label: "c", itemType: "LONG_ANSWER", commandVerb: "Suggest", content: "تغييراً يمكن إجراؤه على الدائرة لتقليل قراءة الجهاز A إلى النصف، مع التفسير.", marks: 3 }
+          ]
+        }
+      ];
+
+      // 2. محرك رسم الاختبار (بدون الحاجة لملفات خارجية)
+      function renderExam(scenarios) {
+        const container = document.getElementById('exam-container');
+        container.innerHTML = '';
+        
+        scenarios.forEach((scenario, index) => {
+          const scenarioEl = document.createElement('div');
+          scenarioEl.className = 'exam-scenario';
+          
+          // رسم السياق
+          const contextEl = document.createElement('p');
+          contextEl.className = 'scenario-context';
+          contextEl.innerHTML = '<strong>السؤال ' + (index + 1) + ':</strong> ' + scenario.contextText;
+          scenarioEl.appendChild(contextEl);
+
+          // رسم الصورة بدقة المتجهات SVG
+          if (scenario.visualRequirement) {
+            const visualEl = document.createElement('div');
+            visualEl.className = 'scientific-visual-container';
+            visualEl.innerHTML = scenario.visualRequirement.renderCode;
+            scenarioEl.appendChild(visualEl);
+          }
+
+          // رسم الفروع
+          const subQuestionsContainer = document.createElement('div');
+          subQuestionsContainer.className = 'sub-questions-container';
+          
+          scenario.subQuestions.forEach((sq) => {
+            const wrapper = document.createElement('div');
+            wrapper.className = 'sub-question';
+            
+            const qText = document.createElement('p');
+            // الستايل يضع الدرجة على اليسار تماماً كما في كامبريدج
+            qText.innerHTML = '<strong dir="ltr">(' + sq.label + ')</strong> ' + sq.commandVerb + ' ' + sq.content + ' <span style="float:left; font-weight:bold; direction:ltr;">[' + sq.marks + ']</span>';
+            wrapper.appendChild(qText);
+
+            if (sq.itemType === 'MULTIPLE_CHOICE' && sq.options) {
+              const optionsList = document.createElement('ul');
+              optionsList.style.listStyleType = 'none';
+              optionsList.style.padding = '0';
+              sq.options.forEach((opt, idx) => {
+                const li = document.createElement('li');
+                li.style.marginBottom = '8px';
+                const letter = String.fromCharCode(65 + idx); // A, B, C, D
+                li.innerHTML = '<label style="cursor:pointer;"><input type="radio" name="q_' + sq.id + '" value="' + opt + '"> <strong dir="ltr">' + letter + '</strong>. ' + opt + '</label>';
+                optionsList.appendChild(li);
+              });
+              wrapper.appendChild(optionsList);
+            } else {
+              const answerSpace = document.createElement('div');
+              answerSpace.className = 'answer-lines';
+              const linesCount = sq.marks * 2; 
+              for (let i = 0; i < linesCount; i++) {
+                const line = document.createElement('hr');
+                answerSpace.appendChild(line);
+              }
+              wrapper.appendChild(answerSpace);
+            }
+            subQuestionsContainer.appendChild(wrapper);
+          });
+          
+          scenarioEl.appendChild(subQuestionsContainer);
+          container.appendChild(scenarioEl);
+        });
+      }
+
+      // تشغيل الكود فوراً
+      document.addEventListener('DOMContentLoaded', () => {
+        renderExam(mockCambridgeOmanExam);
+      });
+    </script>
   </body>
 </html>
