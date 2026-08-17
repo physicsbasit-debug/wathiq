@@ -9,9 +9,32 @@
     />
     <title>واثق | إنشاء اختبار قصير</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%231d3f72'/%3E%3Cpath d='M18 35l9 9 20-25' fill='none' stroke='%23d8b35a' stroke-width='7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+    
+    <!-- تم إضافة تنسيق بسيط هنا لتبدو الشاشة كورقة امتحان كامبريدج الحقيقية -->
+    <style>
+      body {
+        background-color: #e9ecef; /* لون خلفية رمادي فاتح خارج الورقة */
+        font-family: 'Arial', sans-serif;
+        padding: 40px 20px;
+        margin: 0;
+      }
+      #exam-container {
+        background-color: #ffffff; /* لون الورقة أبيض */
+        max-width: 210mm; /* عرض مقارب لورقة A4 */
+        min-height: 297mm; /* طول مقارب لورقة A4 */
+        margin: 0 auto;
+        padding: 40px 50px;
+        box-shadow: 0 10px 20px rgba(0,0,0,0.1); /* ظل الورقة */
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        line-height: 1.6;
+      }
+    </style>
   </head>
   <body>
-    <div id="app"></div>
+    <!-- تم تغيير الـ ID هنا ليتطابق مع محرك العرض الخاص بنا -->
+    <div id="exam-container"></div>
+    
     <script src="./runtime-config.js"></script>
     <script type="module" src="./assets/app.js"></script>
   </body>
