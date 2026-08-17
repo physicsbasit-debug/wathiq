@@ -1,33 +1,116 @@
-export function escapeHtml(value: string | number): string {
-  return String(value)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
+// src/ui.ts
 
-export function formatArabicDate(isoDate: string): string {
-  if (!isoDate) return "غير محدد";
-  const date = new Date(`${isoDate}T12:00:00`);
-  return new Intl.DateTimeFormat("ar-OM", {
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-  }).format(date);
-}
+import { AssessmentScenario, SubQuestion, ScientificVisual } from './assessment-engine/contracts';
 
-export function icon(name: "home" | "plus" | "files" | "book" | "admin" | "check" | "arrow" | "save" | "spark"): string {
-  const paths = {
-    home: '<path d="M3 11.5 12 4l9 7.5v8a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
-    plus: '<path d="M12 5v14M5 12h14"/>',
-    files: '<path d="M7 3h7l4 4v14H7z"/><path d="M14 3v5h5M4 7H3v14h11"/>',
-    book: '<path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11v16H6.5A2.5 2.5 0 0 0 4 21.5z"/><path d="M20 5.5A2.5 2.5 0 0 0 17.5 3H13v16h4.5A2.5 2.5 0 0 1 20 21.5z"/>',
-    admin: '<path d="M12 3 4.5 6v5c0 5 3.3 8.3 7.5 10 4.2-1.7 7.5-5 7.5-10V6z"/><path d="m9 12 2 2 4-4"/>',
-    check: '<path d="m5 12 4 4L19 6"/>',
-    arrow: '<path d="m9 18 6-6-6-6"/>',
-    save: '<path d="M5 4h12l2 2v14H5z"/><path d="M8 4v6h8V4M8 20v-6h8v6"/>',
-    spark: '<path d="m12 3 1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5z"/><path d="m19 15 .8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
-  } as const;
-  return `<svg viewBox="0 0 24 24" aria-hidden="true">${paths[name]}</svg>`;
+export class ExamRenderer {
+  private container: HTMLElement;
+
+  constructor(containerId: string) {
+    const el = document.getElementById(containerId);
+    if (!el) throw new Error(`Container ${containerId} not found in index.html`);
+    this.container = el;
+  }
+
+  // 1. الدالة الرئيسية لرسم الاختبار الكامل
+  public renderExam(scenarios: AssessmentScenario[]) {
+    this.container.innerHTML = ''; // تنظيف شاشة العرض
+    
+    scenarios.forEach((scenario, index) => {
+      const scenarioEl = document.createElement('div');
+      scenarioEl.className = 'exam-scenario cambridge-style-box';
+      scenarioEl.style.borderBottom = '2px solid #000';
+      scenarioEl.style.paddingBottom = '30px';
+      scenarioEl.style.marginBottom = '30px';
+      
+      // أ. رسم السياق (القصة العلمية المعطاة)
+      const contextEl = document.createElement('p');
+      contextEl.className = 'scenario-context';
+      contextEl.style.fontSize = '1.1em';
+      contextEl.innerHTML = `<strong>Question ${index + 1}:</strong> ${scenario.contextText}`;
+      scenarioEl.appendChild(contextEl);
+
+      // ب. رسم الرسوميات العلمية بدقة فائقة (Vector Graphics)
+      if (scenario.visualRequirement) {
+        const visualEl = this.renderVisual(scenario.visualRequirement);
+        scenarioEl.appendChild(visualEl);
+      }
+
+      // ج. رسم الفروع (a, b, c) التابعة للسيناريو
+      const subQuestionsContainer = document.createElement('div');
+      subQuestionsContainer.className = 'sub-questions-container';
+      subQuestionsContainer.style.paddingLeft = '20px'; // إزاحة للداخل لتبدو كفروع
+      
+      scenario.subQuestions.forEach((sq) => {
+        const sqEl = this.renderSubQuestion(sq);
+        subQuestionsContainer.appendChild(sqEl);
+      });
+      
+      scenarioEl.appendChild(subQuestionsContainer);
+      this.container.appendChild(scenarioEl);
+    });
+  }
+
+  // 2. دالة السحر: تحويل الكود إلى رسمة علمية
+  private renderVisual(visual: ScientificVisual): HTMLElement {
+    const visualContainer = document.createElement('div');
+    visualContainer.className = 'scientific-visual-container';
+    visualContainer.style.textAlign = 'center';
+    visualContainer.style.margin = '20px 0';
+
+    if (visual.format === 'SVG') {
+      // حقن كود SVG مباشرة ليتم رسمه بدقة المتجهات (لا يفقد جودته أبداً)
+      visualContainer.innerHTML = visual.renderCode;
+    } else if (visual.format === 'MERMAID') {
+      // إضافة كلاس لكي تتعرف عليه مكتبة Mermaid.js التي سنستخدمها
+      visualContainer.className += ' mermaid';
+      visualContainer.innerHTML = visual.renderCode;
+    }
+
+    return visualContainer;
+  }
+
+  // 3. دالة رسم السؤال الفرعي حسب القواعد العمانية وكامبريدج
+  private renderSubQuestion(sq: SubQuestion): HTMLElement {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'sub-question';
+    wrapper.style.marginBottom = '25px';
+
+    // نص السؤال الفرعي (مع وضع الدرجة بين قوسين مربعين على الطرف، ستايل كامبريدج)
+    const qText = document.createElement('p');
+    qText.innerHTML = `<strong>(${sq.label})</strong> ${sq.commandVerb} ${sq.content} <span style="float:inline-end; font-weight:bold;">[${sq.marks}]</span>`;
+    wrapper.appendChild(qText);
+
+    // إذا كان سؤال اختيار من متعدد (MCQ) - حسب الوثيقة العمانية 4 خيارات
+    if (sq.itemType === 'MULTIPLE_CHOICE' && sq.options) {
+      const optionsList = document.createElement('ul');
+      optionsList.style.listStyleType = 'none';
+      optionsList.style.padding = '0';
+      
+      sq.options.forEach((opt, idx) => {
+        const li = document.createElement('li');
+        li.style.marginBottom = '8px';
+        const letter = String.fromCharCode(65 + idx); // توليد A, B, C, D
+        li.innerHTML = `<label style="cursor:pointer;"><input type="radio" name="q_${sq.id}" value="${opt}"> <strong>${letter}</strong>. ${opt}</label>`;
+        optionsList.appendChild(li);
+      });
+      wrapper.appendChild(optionsList);
+    } else {
+      // إذا كان سؤالاً مقالياً: رسم خطوط فارغة للإجابة تناسب الدرجة المخصصة
+      const answerSpace = document.createElement('div');
+      answerSpace.className = 'answer-lines';
+      
+      // تخصيص خطين فارغين لكل درجة واحدة (حسب مساحة الإجابة المتوقعة)
+      const linesCount = sq.marks * 2; 
+      for (let i = 0; i < linesCount; i++) {
+        const line = document.createElement('hr');
+        line.style.border = 'none';
+        line.style.borderBottom = '1px dotted #999';
+        line.style.marginTop = '30px';
+        answerSpace.appendChild(line);
+      }
+      wrapper.appendChild(answerSpace);
+    }
+
+    return wrapper;
+  }
 }
