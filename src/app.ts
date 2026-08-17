@@ -3,8 +3,7 @@
 import { ExamRenderer } from './ui';
 import { AssessmentScenario } from './assessment-engine/contracts';
 
-// 1. إنشاء بيانات امتحان تجريبي (Mock Data) لنختبر جودة العرض والرسوميات
-// هذا بالضبط ما سيعود لك من الذكاء الاصطناعي (Supabase) لاحقاً
+// 1. إنشاء بيانات امتحان تجريبي (Mock Data)
 const mockCambridgeOmanExam: AssessmentScenario[] = [
   {
     scenarioId: "scn-001",
@@ -14,7 +13,6 @@ const mockCambridgeOmanExam: AssessmentScenario[] = [
     visualRequirement: {
       type: "CIRCUIT",
       format: "SVG",
-      // كود SVG دقيق لتوليد رسمة دائرة كهربائية بجودة كامبريدج
       renderCode: `<svg width="300" height="200" viewBox="0 0 300 200" xmlns="http://www.w3.org/2000/svg">
         <rect x="50" y="50" width="200" height="100" fill="none" stroke="black" stroke-width="2"/>
         <circle cx="50" cy="100" r="15" fill="white" stroke="black" stroke-width="2"/>
@@ -44,14 +42,14 @@ const mockCambridgeOmanExam: AssessmentScenario[] = [
         commandVerb: "Calculate",
         content: "إذا كانت قيمة المقاومة 6 أوم، ما هي قراءة الجهاز A؟",
         marks: 1,
-        options: ["0.5 A", "2.0 A", "72 A", "18 A"], // 4 خيارات مطابقة للوثيقة العمانية
+        options: ["0.5 A", "2.0 A", "72 A", "18 A"],
         markScheme: { correctAnswer: "2.0 A", stepByStepMarks: ["1 mark for correct option"], ecfAllowed: false, alternativeWording: [] }
       },
       {
         id: "q1c",
         label: "c",
         itemType: "LONG_ANSWER",
-        omanCognitiveLevel: "REASONING", // يقيس الاستدلال (تفكير عليا)
+        omanCognitiveLevel: "REASONING",
         commandVerb: "Suggest",
         content: "تغييراً يمكن إجراؤه على الدائرة لتقليل قراءة الجهاز A إلى النصف، مع التفسير.",
         marks: 3,
@@ -61,13 +59,28 @@ const mockCambridgeOmanExam: AssessmentScenario[] = [
   }
 ];
 
-// 2. تشغيل الواجهة بمجرد تحميل الصفحة
-document.addEventListener('DOMContentLoaded', () => {
+// 2. دالة التشغيل الآمنة جداً
+function initApp() {
   try {
+    const container = document.getElementById('exam-container');
+    if (!container) {
+      console.warn("جاري انتظار تحميل هيكل الصفحة...");
+      setTimeout(initApp, 100); // المحاولة مرة أخرى بعد جزء من الثانية
+      return;
+    }
+    
+    container.innerHTML = ''; // تنظيف الحاوية
     const renderer = new ExamRenderer('exam-container');
     renderer.renderExam(mockCambridgeOmanExam);
-    console.log("تم بنجاح رسم الاختبار التجريبي بأسلوب كامبريدج!");
+    console.log("نجاح: تم رسم الاختبار بأسلوب كامبريدج!");
   } catch (error) {
-    console.error("خطأ أثناء تشغيل الواجهة:", error);
+    console.error("خطأ حرج أثناء تشغيل الواجهة:", error);
   }
-});
+}
+
+// 3. تشغيل التطبيق فور جاهزية المتصفح
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initApp);
+} else {
+  initApp();
+}
