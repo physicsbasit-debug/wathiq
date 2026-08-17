@@ -1,155 +1,47 @@
-import type {
-  AssessmentType,
-  CambridgeProgrammeId,
-  CognitiveLevel,
-  Difficulty,
-  ItemDifficulty,
-  QuestionType,
-  QuestionVisualSpec,
-} from "../types.js";
+// src/assessment-engine/contracts.ts
 
-export const ASSESSMENT_ENGINE_SCHEMA_VERSION = 1 as const;
-export const ASSESSMENT_CONTRACT_VERSION = 4 as const;
-export const ASSESSMENT_BLUEPRINT_VERSION = 4 as const;
+// 1. ثوابت سلطنة عمان (Oman Ministry Constraints)
+export type OmanCognitiveLevel = 'KNOWLEDGE' | 'APPLICATION' | 'REASONING';
+export type OmanDifficulty = 'LOW' | 'MEDIUM' | 'HIGH';
+export type OmanItemType = 'MULTIPLE_CHOICE' | 'SHORT_ANSWER' | 'LONG_ANSWER' | 'PRACTICAL_INQUIRY';
 
-export type AssessmentGenerationRunStatus =
-  | "queued" | "running" | "reviewing" | "completed" | "partial" | "failed" | "cancelled" | "superseded";
+// 2. أفعال أمر كامبريدج (Cambridge Command Words)
+export type CambridgeCommandVerb = 'State' | 'Describe' | 'Explain' | 'Suggest' | 'Calculate' | 'Determine';
 
-export type AssessmentGenerationItemStatus =
-  | "queued" | "grounding" | "generating" | "normalizing" | "validating" | "ready" | "retry_pending" | "failed" | "cancelled" | "superseded";
-
-export type AssessmentEngineErrorCode =
-  | "INVALID_BLUEPRINT" | "INVALID_ITEM_CONTRACT" | "STALE_PLAN" | "AUTHORIZATION_FAILED"
-  | "MODEL_TIMEOUT" | "MODEL_RATE_LIMITED" | "MODEL_QUOTA_EXHAUSTED" | "MODEL_UNAVAILABLE"
-  | "MODEL_REQUEST_INVALID" | "MODEL_AUTH_FAILED" | "MODEL_NOT_FOUND"
-  | "MODEL_OUTPUT_TRUNCATED" | "MODEL_OUTPUT_BLOCKED"
-  | "MODEL_INVALID_JSON" | "MODEL_INCOMPLETE_CONTENT" | "MODEL_SCIENTIFIC_MISMATCH" | "MODEL_ASSESSMENT_MISMATCH"
-  | "GLOBAL_DUPLICATION" | "CANCELLED_BY_USER" | "SUPERSEDED_BY_NEW_RUN" | "INTERNAL_ERROR";
-
-export type AssessmentEngineRetryClass = "none" | "transport_backoff" | "content_once" | "manual_authentication";
-export type AssessmentSourceMode = "global_curriculum";
-
-export interface AssessmentSourceSnapshot {
-  mode: AssessmentSourceMode;
-  sourceId: string;
-  sourceTitle: string;
-  sourceKind: string;
-  sourceReferenceId: string;
-  chunkIndex: number;
-  pageFrom: number;
-  pageTo: number;
-  contentHash: string;
-  extractionVersion: string;
-}
-
-/** الحد الأدنى الذي يملكه واثق قبل التأليف من هوية كامبريدج والموضوع فقط. */
-export interface AssessmentItemSeed {
-  planItemId: string;
-  lessonId: string;
-  lessonLabel: string;
-  questionType: QuestionType;
-  cognitiveLevel: CognitiveLevel;
-  difficultyLevel?: ItemDifficulty;
-  assessmentFocus?: "استقصاء علمي";
-  marks: number;
-}
-
-export interface AssessmentBlueprintItem extends AssessmentItemSeed {
-  order: number;
-  source: AssessmentSourceSnapshot;
-}
-
-export interface AssessmentCurriculumIdentity {
-  programmeId: CambridgeProgrammeId;
-  syllabusCode: string;
-  stageLabel: string;
-}
-
-export interface AssessmentBlueprint extends AssessmentCurriculumIdentity {
-  engineSchemaVersion: typeof ASSESSMENT_ENGINE_SCHEMA_VERSION;
-  blueprintVersion: typeof ASSESSMENT_BLUEPRINT_VERSION;
-  draftId: string;
-  generationEpoch: number;
-  assessmentType: AssessmentType;
-  assessmentPolicyId: string;
-  grade: number;
-  subject: string;
+// 3. الهيكل الجديد للسؤال (Cambridge Multipart Scenario)
+// السؤال لم يعد مجرد "سؤال وجواب"، بل سيناريو علمي يتبعه عدة فروع
+export interface AssessmentScenario {
+  scenarioId: string;
   topic: string;
-  difficulty: Difficulty;
-  totalMarks: number;
-  itemCount: number;
-  planHash: string;
-  sourceSnapshotHash: string;
-  items: AssessmentBlueprintItem[];
+  curriculum: 'CAMBRIDGE_IGCSE' | 'OMAN_MINISTRY';
+  contextText: string; // السياق العلمي أو القصة المعطاة للطالب
+  visualRequirement?: ScientificVisual; // طلبات الرسوم والصور الدقيقة
+  subQuestions: SubQuestion[]; // الفروع (a, b, c) المتدرجة في الصعوبة
 }
 
-export interface AssessmentItemContract extends AssessmentCurriculumIdentity {
-  engineSchemaVersion: typeof ASSESSMENT_ENGINE_SCHEMA_VERSION;
-  contractVersion: typeof ASSESSMENT_CONTRACT_VERSION;
-  draftId: string;
-  generationEpoch: number;
-  planHash: string;
-  assessmentType: AssessmentType;
-  assessmentPolicyId: string;
-  planItemId: string;
-  order: number;
-  grade: number;
-  subject: string;
-  topic: string;
-  difficulty: Difficulty;
-  lessonId: string;
-  lessonLabel: string;
-  questionType: QuestionType;
-  cognitiveLevel: CognitiveLevel;
-  difficultyLevel?: ItemDifficulty;
-  assessmentFocus?: "استقصاء علمي";
-  marks: number;
-  source: AssessmentSourceSnapshot;
-  contractHash: string;
+export interface SubQuestion {
+  id: string;
+  label: 'a' | 'b' | 'c' | 'd'; // ترقيم كامبريدج للأسئلة
+  itemType: OmanItemType; // نوع السؤال حسب الوثيقة العمانية
+  omanCognitiveLevel: OmanCognitiveLevel; // لضمان التوافق مع أوزان التقويم
+  commandVerb: CambridgeCommandVerb; // إجبار الـ LLM على أفعال كامبريدج
+  content: string; // نص السؤال الفرعي
+  marks: number; // الدرجة المخصصة
+  options?: string[]; // للأسئلة الموضوعية فقط (يجب أن تكون 4 دائماً)
+  markScheme: ExpertMarkScheme; // نموذج التصحيح الشامل
 }
 
-/** الحقول الوحيدة التي يسمح للنموذج اللغوي بإعادتها. */
-export interface AssessmentModelContent {
-  stimulus: string;
-  text: string;
-  options: string[];
-  answer: string;
-  rationale: string;
-  markScheme: string[];
+// 4. نموذج التصحيح الاحترافي (Mark Scheme)
+export interface ExpertMarkScheme {
+  correctAnswer: string;
+  stepByStepMarks: string[]; // توزيع الدرجات على خطوات الحل
+  ecfAllowed: boolean; // السماح بالخطأ المتراكم (Error Carried Forward)
+  alternativeWording: string[]; // الكلمات البديلة المقبولة [AW]
 }
 
-export interface AssessmentEvidenceAnchor {
-  evidenceIndex: number;
-  evidenceHash: string;
-  excerpt: string;
-  score: number;
+// 5. محرك الرسوميات العلمية الدقيقة (Vector Graphics)
+export interface ScientificVisual {
+  type: 'CIRCUIT' | 'GRAPH' | 'TABLE' | 'BIOLOGY_CELL' | 'CHEMISTRY_APPARATUS';
+  format: 'SVG' | 'MERMAID'; // يجب أن يعود الرسم ككود لضمان الجودة الفائقة للطباعة
+  renderCode: string; // كود الرسم الذي سيتم تحويله لصورة في واجهة المستخدم
 }
-
-export interface AssessmentGeneratedItemResult {
-  planItemId: string;
-  contractHash: string;
-  content: AssessmentModelContent;
-  evidence: AssessmentEvidenceAnchor;
-  visual: QuestionVisualSpec;
-  model: string;
-  generatedAt: string;
-  requestId: string;
-  durationMs: number;
-}
-
-export interface AssessmentGenerationStageTimings { groundingMs: number; modelMs: number; normalizationMs: number; validationMs: number; totalMs: number; }
-
-export interface AssessmentGenerationItemSnapshot {
-  id: string; runId: string; planItemId: string; contractHash: string; status: AssessmentGenerationItemStatus;
-  attemptCount: number; maxAttempts: number; transportRetryCount: number; retryAfterAt: string; errorCode: AssessmentEngineErrorCode | ""; errorMessage: string;
-  stageTimings: AssessmentGenerationStageTimings; result?: AssessmentGeneratedItemResult;
-  startedAt: string; completedAt: string; updatedAt: string;
-}
-
-export interface AssessmentGenerationRunSnapshot {
-  id: string; draftId: string; generationEpoch: number; planHash: string; sourceSnapshotHash: string;
-  status: AssessmentGenerationRunStatus; totalItems: number; completedItems: number; failedItems: number;
-  items: AssessmentGenerationItemSnapshot[]; startedAt: string; completedAt: string; updatedAt: string;
-}
-
-export const MODEL_ALLOWED_OUTPUT_FIELDS = Object.freeze(["stimulus", "text", "options", "answer", "rationale", "markScheme"] as const);
