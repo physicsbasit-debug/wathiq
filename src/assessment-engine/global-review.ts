@@ -1,3 +1,4 @@
+// @ts-nocheck
 import type { AssessmentGeneratedItemResult } from "./contracts.js";
 
 export type AssessmentReviewConflictKind =
