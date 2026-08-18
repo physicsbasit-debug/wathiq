@@ -3,15 +3,22 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>واثق | اختبار كامبريدج - عُمان</title>
+    <meta name="description" content="واثق: نموذج تفاعلي مبسط لإنشاء الاختبارات القصيرة في مواد العلوم" />
+    <title>واثق | إنشاء اختبار قصير</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%231d3f72'/%3E%3Cpath d='M18 35l9 9 20-25' fill='none' stroke='%23d8b35a' stroke-width='7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+    
     <style>
+      /* --- متطلبات حارس الجودة لدعم اتجاه RTL --- */
+      html, body, #app { direction: rtl; text-align: right; }
+      input, select, textarea { direction: rtl; }
+      .mobile-nav { display: grid; grid-template-columns: repeat(3, 1fr); }
+      
       body {
         background-color: #e9ecef;
         font-family: 'Arial', sans-serif;
         padding: 40px 20px;
         margin: 0;
       }
-      /* لوحة التحكم العلوية */
       #control-panel {
         max-width: 210mm;
         margin: 0 auto 20px auto;
@@ -30,19 +37,7 @@
         border-radius: 5px;
         cursor: pointer;
         font-weight: bold;
-        transition: background 0.3s;
       }
-      .btn-primary:hover {
-        background-color: #2a5a9c;
-      }
-      #loading-indicator {
-        display: none;
-        margin-top: 15px;
-        color: #d8b35a;
-        font-weight: bold;
-        font-size: 1.1em;
-      }
-      /* تنسيق ورقة الاختبار */
       #exam-container {
         background-color: #ffffff;
         max-width: 210mm;
@@ -54,192 +49,20 @@
         border-radius: 4px;
         line-height: 1.6;
       }
-      .exam-scenario {
-        border-bottom: 2px solid #000;
-        padding-bottom: 30px;
-        margin-bottom: 30px;
-      }
-      .scenario-context { font-size: 1.1em; }
-      .scientific-visual-container { text-align: center; margin: 20px 0; }
-      .sub-questions-container { padding-right: 20px; }
-      .sub-question { margin-bottom: 25px; }
-      .answer-lines hr {
-        border: none;
-        border-bottom: 2px dotted #777;
-        margin-top: 35px;
-        margin-bottom: 0;
-      }
     </style>
   </head>
   <body>
-    
-    <!-- لوحة التحكم -->
+    <!-- لوحة التحكم الوهمية حالياً لطلب الاختبار -->
     <div id="control-panel">
-      <button class="btn-primary" onclick="generateNewExam()">توليد اختبار جديد (بواسطة الذكاء الاصطناعي)</button>
-      <div id="loading-indicator">⏳ جاري الاتصال بالذكاء الاصطناعي وتوليد الأسئلة والرسوميات... الرجاء الانتظار.</div>
+      <h2 style="color: #1d3f72;">واثق - منصة التقييم المؤسسية</h2>
+      <button class="btn-primary" onclick="alert('سيتم ربط هذا الزر بمحرك الذكاء الاصطناعي (Supabase) في الخطوات القادمة!')">توليد اختبار جديد (AI)</button>
     </div>
 
-    <!-- حاوية الاختبار -->
+    <!-- حاوية الاختبار الأساسية -->
     <div id="exam-container"></div>
-
-    <script>
-      // 1. البيانات التجريبية (تعمل في حالة فشل الاتصال بالخادم)
-      const mockCambridgeOmanExam = [
-        {
-          scenarioId: "scn-001",
-          contextText: "قام طالب بتركيب الدائرة الكهربائية الموضحة في الشكل أدناه لقياس شدة التيار المار في المقاومة.",
-          visualRequirement: {
-            format: "SVG",
-            renderCode: `<svg width="300" height="200" viewBox="0 0 300 200" xmlns="http://www.w3.org/2000/svg">
-              <rect x="50" y="50" width="200" height="100" fill="none" stroke="black" stroke-width="2"/>
-              <circle cx="50" cy="100" r="15" fill="white" stroke="black" stroke-width="2"/>
-              <text x="44" y="105" font-family="Arial" font-size="16">A</text>
-              <path d="M 130 50 L 140 30 L 150 70 L 160 30 L 170 50" fill="none" stroke="black" stroke-width="2"/>
-              <line x1="120" y1="150" x2="120" y2="130" stroke="black" stroke-width="2"/>
-              <line x1="140" y1="160" x2="140" y2="120" stroke="black" stroke-width="4"/>
-              <text x="125" y="180" font-family="Arial" font-size="14">12V</text>
-            </svg>`
-          },
-          subQuestions: [
-            { id: "q1a", label: "a", itemType: "SHORT_ANSWER", commandVerb: "State", content: "اسم الجهاز المشار إليه بالرمز A في الدائرة الكهربائية.", marks: 1 },
-            { id: "q1b", label: "b", itemType: "MULTIPLE_CHOICE", commandVerb: "Calculate", content: "إذا كانت قيمة المقاومة 6 أوم، ما هي قراءة الجهاز A؟", marks: 1, options: ["0.5 A", "2.0 A", "72 A", "18 A"] },
-            { id: "q1c", label: "c", itemType: "LONG_ANSWER", commandVerb: "Suggest", content: "تغييراً يمكن إجراؤه على الدائرة لتقليل قراءة الجهاز A إلى النصف، مع التفسير.", marks: 3 }
-          ]
-        }
-      ];
-
-      // 2. محرك رسم الاختبار (UI Renderer)
-      function renderExam(scenarios) {
-        const container = document.getElementById('exam-container');
-        container.innerHTML = '';
-        
-        scenarios.forEach((scenario, index) => {
-          const scenarioEl = document.createElement('div');
-          scenarioEl.className = 'exam-scenario';
-          
-          const contextEl = document.createElement('p');
-          contextEl.className = 'scenario-context';
-          contextEl.innerHTML = '<strong>السؤال ' + (index + 1) + ':</strong> ' + scenario.contextText;
-          scenarioEl.appendChild(contextEl);
-
-          if (scenario.visualRequirement) {
-            const visualEl = document.createElement('div');
-            visualEl.className = 'scientific-visual-container';
-            visualEl.innerHTML = scenario.visualRequirement.renderCode;
-            scenarioEl.appendChild(visualEl);
-          }
-
-          const subQuestionsContainer = document.createElement('div');
-          subQuestionsContainer.className = 'sub-questions-container';
-          
-          scenario.subQuestions.forEach((sq) => {
-            const wrapper = document.createElement('div');
-            wrapper.className = 'sub-question';
-            
-            const qText = document.createElement('p');
-            qText.innerHTML = '<strong dir="ltr">(' + sq.label + ')</strong> <span dir="ltr">' + sq.commandVerb + '</span> ' + sq.content;
-            wrapper.appendChild(qText);
-
-            const answerContainer = document.createElement('div');
-            answerContainer.style.display = 'flex';
-            answerContainer.style.alignItems = 'flex-end';
-            answerContainer.style.width = '100%';
-            answerContainer.style.marginTop = '10px';
-
-            const answerSpace = document.createElement('div');
-            answerSpace.className = 'answer-lines';
-            answerSpace.style.flexGrow = '1'; 
-
-            if (sq.itemType === 'MULTIPLE_CHOICE' && sq.options) {
-              const optionsList = document.createElement('ul');
-              optionsList.style.listStyleType = 'none';
-              optionsList.style.padding = '0';
-              sq.options.forEach((opt, idx) => {
-                const li = document.createElement('li');
-                li.style.marginBottom = '8px';
-                const letter = String.fromCharCode(65 + idx);
-                li.innerHTML = '<label style="cursor:pointer;"><input type="radio" name="q_' + sq.id + '" value="' + opt + '"> <strong dir="ltr">' + letter + '</strong>. ' + opt + '</label>';
-                optionsList.appendChild(li);
-              });
-              answerSpace.appendChild(optionsList);
-            } else {
-              const linesCount = sq.marks * 2; 
-              for (let i = 0; i < linesCount; i++) {
-                const line = document.createElement('hr');
-                answerSpace.appendChild(line);
-              }
-            }
-
-            const markSpan = document.createElement('span');
-            markSpan.innerHTML = '[' + sq.marks + ']';
-            markSpan.style.marginLeft = '20px';
-            markSpan.style.marginRight = '20px';
-            markSpan.style.fontWeight = 'bold';
-            markSpan.style.direction = 'ltr';
-
-            answerContainer.appendChild(answerSpace);
-            answerContainer.appendChild(markSpan);
-            
-            wrapper.appendChild(answerContainer);
-            subQuestionsContainer.appendChild(wrapper);
-          });
-          
-          scenarioEl.appendChild(subQuestionsContainer);
-          container.appendChild(scenarioEl);
-        });
-      }
-
-      // 3. الدالة التي تتصل بالخادم (API Fetch) عند الضغط على الزر
-      async function generateNewExam() {
-        const container = document.getElementById('exam-container');
-        const loading = document.getElementById('loading-indicator');
-
-        // تنظيف الشاشة وإظهار التحميل
-        container.innerHTML = '';
-        loading.style.display = 'block';
-
-        try {
-          // رابط الـ API الخاص بـ Supabase (يجب تغييره لاحقاً برابط مشروعك الحقيقي)
-          const SUPABASE_FUNCTION_URL = 'https://YOUR_SUPABASE_PROJECT_ID.supabase.co/functions/v1/assessment-generation-orchestrator';
-          
-          // إرسال طلب التوليد
-          const response = await fetch(SUPABASE_FUNCTION_URL, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              // 'Authorization': 'Bearer YOUR_SUPABASE_ANON_KEY' // سيتم تفعيله لاحقاً
-            },
-            body: JSON.stringify({
-              subject: "الفيزياء",
-              grade: 10,
-              topic: "الدوائر الكهربائية"
-            })
-          });
-
-          if (!response.ok) {
-            throw new Error('فشل الاتصال بالخادم. تأكد من إعداد روابط Supabase.');
-          }
-
-          // استلام الاختبار من الذكاء الاصطناعي
-          const generatedData = await response.json();
-          
-          // إخفاء التحميل ورسم الاختبار الحقيقي
-          loading.style.display = 'none';
-          renderExam(generatedData.scenarios);
-
-        } catch (error) {
-          // نظام الطوارئ: في حالة فشل الاتصال، نعرض رسالة خطأ والاختبار التجريبي
-          console.error(error);
-          loading.style.display = 'none';
-          container.innerHTML = '<p style="color:red; text-align:center; padding: 20px; font-weight:bold;">تعذر الاتصال بالخادم (رابط Supabase غير مفعل بعد). نعرض لك الآن النسخة التجريبية.</p>';
-          renderExam(mockCambridgeOmanExam);
-        }
-      }
-
-      // تشغيل الكود المبدئي فوراً عند فتح الصفحة
-      document.addEventListener('DOMContentLoaded', () => {
-        renderExam(mockCambridgeOmanExam);
-      });
-    </script>
+    
+    <!-- هذه الملفات سيتم بناؤها تلقائياً بواسطة Github Actions بعد نجاح الفحص -->
+    <script src="./runtime-config.js"></script>
+    <script type="module" src="./assets/app.js"></script>
   </body>
 </html>
