@@ -11,6 +11,38 @@
         padding: 40px 20px;
         margin: 0;
       }
+      /* لوحة التحكم العلوية */
+      #control-panel {
+        max-width: 210mm;
+        margin: 0 auto 20px auto;
+        text-align: center;
+        background: white;
+        padding: 15px;
+        border-radius: 8px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+      }
+      .btn-primary {
+        background-color: #1d3f72;
+        color: white;
+        border: none;
+        padding: 12px 25px;
+        font-size: 16px;
+        border-radius: 5px;
+        cursor: pointer;
+        font-weight: bold;
+        transition: background 0.3s;
+      }
+      .btn-primary:hover {
+        background-color: #2a5a9c;
+      }
+      #loading-indicator {
+        display: none;
+        margin-top: 15px;
+        color: #d8b35a;
+        font-weight: bold;
+        font-size: 1.1em;
+      }
+      /* تنسيق ورقة الاختبار */
       #exam-container {
         background-color: #ffffff;
         max-width: 210mm;
@@ -27,19 +59,10 @@
         padding-bottom: 30px;
         margin-bottom: 30px;
       }
-      .scenario-context {
-        font-size: 1.1em;
-      }
-      .scientific-visual-container {
-        text-align: center;
-        margin: 20px 0;
-      }
-      .sub-questions-container {
-        padding-right: 20px;
-      }
-      .sub-question {
-        margin-bottom: 25px;
-      }
+      .scenario-context { font-size: 1.1em; }
+      .scientific-visual-container { text-align: center; margin: 20px 0; }
+      .sub-questions-container { padding-right: 20px; }
+      .sub-question { margin-bottom: 25px; }
       .answer-lines hr {
         border: none;
         border-bottom: 2px dotted #777;
@@ -49,10 +72,18 @@
     </style>
   </head>
   <body>
+    
+    <!-- لوحة التحكم -->
+    <div id="control-panel">
+      <button class="btn-primary" onclick="generateNewExam()">توليد اختبار جديد (بواسطة الذكاء الاصطناعي)</button>
+      <div id="loading-indicator">⏳ جاري الاتصال بالذكاء الاصطناعي وتوليد الأسئلة والرسوميات... الرجاء الانتظار.</div>
+    </div>
+
+    <!-- حاوية الاختبار -->
     <div id="exam-container"></div>
 
     <script>
-      // 1. البيانات التجريبية بأسلوب كامبريدج وعُمان
+      // 1. البيانات التجريبية (تعمل في حالة فشل الاتصال بالخادم)
       const mockCambridgeOmanExam = [
         {
           scenarioId: "scn-001",
@@ -77,7 +108,7 @@
         }
       ];
 
-      // 2. محرك رسم الاختبار
+      // 2. محرك رسم الاختبار (UI Renderer)
       function renderExam(scenarios) {
         const container = document.getElementById('exam-container');
         container.innerHTML = '';
@@ -86,13 +117,11 @@
           const scenarioEl = document.createElement('div');
           scenarioEl.className = 'exam-scenario';
           
-          // رسم السياق
           const contextEl = document.createElement('p');
           contextEl.className = 'scenario-context';
           contextEl.innerHTML = '<strong>السؤال ' + (index + 1) + ':</strong> ' + scenario.contextText;
           scenarioEl.appendChild(contextEl);
 
-          // رسم الصورة
           if (scenario.visualRequirement) {
             const visualEl = document.createElement('div');
             visualEl.className = 'scientific-visual-container';
@@ -103,24 +132,20 @@
           const subQuestionsContainer = document.createElement('div');
           subQuestionsContainer.className = 'sub-questions-container';
           
-          // رسم الفروع
           scenario.subQuestions.forEach((sq) => {
             const wrapper = document.createElement('div');
             wrapper.className = 'sub-question';
             
-            // نص السؤال (بدون الدرجة هنا)
             const qText = document.createElement('p');
             qText.innerHTML = '<strong dir="ltr">(' + sq.label + ')</strong> <span dir="ltr">' + sq.commandVerb + '</span> ' + sq.content;
             wrapper.appendChild(qText);
 
-            // حاوية مرنة تجمع بين مساحة الإجابة والدرجة
             const answerContainer = document.createElement('div');
             answerContainer.style.display = 'flex';
-            answerContainer.style.alignItems = 'flex-end'; // محاذاة للأسفل
+            answerContainer.style.alignItems = 'flex-end';
             answerContainer.style.width = '100%';
             answerContainer.style.marginTop = '10px';
 
-            // مساحة الإجابة
             const answerSpace = document.createElement('div');
             answerSpace.className = 'answer-lines';
             answerSpace.style.flexGrow = '1'; 
@@ -145,7 +170,6 @@
               }
             }
 
-            // الدرجة (توضع على اليسار)
             const markSpan = document.createElement('span');
             markSpan.innerHTML = '[' + sq.marks + ']';
             markSpan.style.marginLeft = '20px';
@@ -165,7 +189,54 @@
         });
       }
 
-      // تشغيل الكود فوراً
+      // 3. الدالة التي تتصل بالخادم (API Fetch) عند الضغط على الزر
+      async function generateNewExam() {
+        const container = document.getElementById('exam-container');
+        const loading = document.getElementById('loading-indicator');
+
+        // تنظيف الشاشة وإظهار التحميل
+        container.innerHTML = '';
+        loading.style.display = 'block';
+
+        try {
+          // رابط الـ API الخاص بـ Supabase (يجب تغييره لاحقاً برابط مشروعك الحقيقي)
+          const SUPABASE_FUNCTION_URL = 'https://YOUR_SUPABASE_PROJECT_ID.supabase.co/functions/v1/assessment-generation-orchestrator';
+          
+          // إرسال طلب التوليد
+          const response = await fetch(SUPABASE_FUNCTION_URL, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              // 'Authorization': 'Bearer YOUR_SUPABASE_ANON_KEY' // سيتم تفعيله لاحقاً
+            },
+            body: JSON.stringify({
+              subject: "الفيزياء",
+              grade: 10,
+              topic: "الدوائر الكهربائية"
+            })
+          });
+
+          if (!response.ok) {
+            throw new Error('فشل الاتصال بالخادم. تأكد من إعداد روابط Supabase.');
+          }
+
+          // استلام الاختبار من الذكاء الاصطناعي
+          const generatedData = await response.json();
+          
+          // إخفاء التحميل ورسم الاختبار الحقيقي
+          loading.style.display = 'none';
+          renderExam(generatedData.scenarios);
+
+        } catch (error) {
+          // نظام الطوارئ: في حالة فشل الاتصال، نعرض رسالة خطأ والاختبار التجريبي
+          console.error(error);
+          loading.style.display = 'none';
+          container.innerHTML = '<p style="color:red; text-align:center; padding: 20px; font-weight:bold;">تعذر الاتصال بالخادم (رابط Supabase غير مفعل بعد). نعرض لك الآن النسخة التجريبية.</p>';
+          renderExam(mockCambridgeOmanExam);
+        }
+      }
+
+      // تشغيل الكود المبدئي فوراً عند فتح الصفحة
       document.addEventListener('DOMContentLoaded', () => {
         renderExam(mockCambridgeOmanExam);
       });
