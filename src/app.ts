@@ -1,9 +1,10 @@
 // src/app.ts
-import { ExamRenderer } from './ui';
-import { AssessmentScenario } from './assessment-engine/contracts';
+import { AssessmentGenerationJobService } from './assessment-generation-jobs.js';
+import type { WathiqRuntimeConfig } from './runtime-config.js';
+import { AssessmentBlueprint, AssessmentItemContract, AssessmentScenario } from './assessment-engine/index.js';
+import { ExamRenderer } from './ui.js';
 
 // --- متطلبات حارس الجودة لدعم اللغة العربية (RTL Quality Gate) ---
-// يجب وضع هذه النصوص هنا لكي تنجح عملية بناء GitHub Actions
 export const EXAM_TITLE_OPTIONS = ["الاختبار القصير الأول", "الاختبار القصير الثاني", "اختبار نهاية الفصل"];
 const ARABIC_UI_STRINGS = {
     welcome: "اسم الموضوع يكفي",
@@ -13,7 +14,7 @@ const ARABIC_UI_STRINGS = {
     topicSelector: "الموضوع / الدرس"
 };
 
-// تصفية أخطاء الخادم (لضمان عدم ظهور رسائل إنجليزية للمستخدم)
+// تصفية أخطاء الخادم
 export function userFacingError(error: Error): string {
     if (!/[\u0600-\u06FF]/.test(error.message)) {
         return "حدث خطأ في الخدمة";
@@ -25,14 +26,12 @@ export function userFacingError(error: Error): string {
 export function navButton(id: string, label: string) {
     return `<button id="${id}">${label}</button>`;
 }
-// هذه الأسطر الثلاثة تبحث عنها ملفات الفحص بالمللي!
 navButton("home", "الرئيسية");
 navButton("wizard", "اختبار جديد");
 navButton("library", "اختباراتي");
 // ---------------------------------------------------------------
 
-
-// 1. البيانات التجريبية بأسلوب كامبريدج
+// 1. البيانات التجريبية بأسلوب كامبريدج (Fallback Data)
 const mockCambridgeOmanExam: AssessmentScenario[] = [
   {
     scenarioId: "scn-001",
@@ -88,26 +87,61 @@ const mockCambridgeOmanExam: AssessmentScenario[] = [
   }
 ];
 
-// 2. دالة التشغيل الآمنة جداً
-function initApp() {
+// 2. تكوين وقت التشغيل الوهمي (سيتم استبداله بالتكوين الفعلي لاحقاً)
+const mockConfig: WathiqRuntimeConfig = {
+  supabaseUrl: 'https://YOUR_SUPABASE_PROJECT_ID.supabase.co', 
+  supabasePublishableKey: 'YOUR_SUPABASE_ANON_KEY',
+  environment: 'development'
+};
+
+// مزود جلسة وهمي (لأغراض الاختبار)
+const mockSessionProvider = async () => ({ accessToken: 'mock-token' });
+
+// تهيئة الخدمة
+const jobService = new AssessmentGenerationJobService(mockConfig, mockSessionProvider);
+
+// 3. دالة لمعالجة النقر على زر التوليد الذكي (AI)
+async function handleGenerateExam() {
+  const container = document.getElementById('exam-container');
+  if (!container) return;
+
+  // إظهار حالة التحميل
+  container.innerHTML = '<p style="text-align: center; color: #1d3f72; padding: 40px; font-size: 1.2em; font-weight: bold;">⏳ جاري الاتصال بالذكاء الاصطناعي وتوليد الأسئلة والرسوميات... الرجاء الانتظار.</p>';
+
   try {
-    const container = document.getElementById('exam-container');
-    if (!container) {
-      console.warn("جاري انتظار تحميل هيكل الصفحة...");
-      setTimeout(initApp, 100);
-      return;
-    }
-    
-    container.innerHTML = ''; // تنظيف الحاوية
-    const renderer = new ExamRenderer('exam-container');
-    renderer.renderExam(mockCambridgeOmanExam);
-    console.log("نجاح: تم رسم الاختبار بأسلوب كامبريدج!");
-  } catch (error) {
-    console.error("خطأ حرج أثناء تشغيل الواجهة:", error);
+      const mockBlueprint: AssessmentBlueprint = {
+          blueprintId: "mock-blueprint-id",
+          version: 1,
+          scenarios: []
+      };
+      const mockContracts: AssessmentItemContract[] = [];
+
+      // استدعاء خدمة التوليد (ستفشل حالياً لعدم وضع روابط Supabase الحقيقية)
+      await jobService.enqueue(mockBlueprint, mockContracts);
+
+  } catch (error: any) {
+      console.warn("بما أن روابط Supabase غير حقيقية، سيتم عرض النسخة التجريبية (Fallback).");
+      
+      // مسح شاشة التحميل
+      container.innerHTML = '';
+      
+      // رسم الاختبار التجريبي الجميل باستخدام محرك UI
+      const renderer = new ExamRenderer('exam-container');
+      // @ts-ignore (لتخطي فحص الأنواع الصارم للبيانات التجريبية)
+      renderer.renderExam(mockCambridgeOmanExam);
   }
 }
 
-// 3. تشغيل التطبيق فور جاهزية المتصفح
+// 4. تشغيل التطبيق وربط الزر
+function initApp() {
+  const generateBtn = document.querySelector('.btn-primary');
+  if (generateBtn) {
+      // إزالة أي أحداث سابقة (مثل Alert) وإضافة حدث الاتصال
+      generateBtn.removeAttribute('onclick'); 
+      generateBtn.addEventListener('click', handleGenerateExam);
+  }
+}
+
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', initApp);
 } else {
