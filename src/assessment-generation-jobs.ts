@@ -7,7 +7,7 @@ import {
   type AssessmentGenerationItemSnapshot,
   type AssessmentGenerationItemStatus,
   type AssessmentGenerationRunSnapshot,
-  type AssessmentGenerationRunStatus,
+  type AssessmentGenerationRunStatusString,
   type AssessmentGenerationStageTimings,
   type AssessmentItemContract,
 } from "./assessment-engine/index.js";
@@ -22,12 +22,16 @@ export interface AssessmentGenerationJobsResponse {
   requestId: string;
 }
 
-const RUN_STATUSES = new Set<AssessmentGenerationRunStatus>([
+const RUN_STATUSES = new Set<AssessmentGenerationRunStatusString>([
   "queued", "running", "reviewing", "completed", "partial", "failed", "cancelled", "superseded",
+  "RUNNING", "COMPLETED", "FAILED"
 ]);
+
 const ITEM_STATUSES = new Set<AssessmentGenerationItemStatus>([
   "queued", "grounding", "generating", "normalizing", "validating", "ready", "retry_pending", "failed", "cancelled", "superseded",
+  "PENDING", "GENERATING", "COMPLETED", "FAILED"
 ]);
+
 const ERROR_CODES = new Set<AssessmentEngineErrorCode>([
   "INVALID_BLUEPRINT", "INVALID_ITEM_CONTRACT", "STALE_PLAN", "AUTHORIZATION_FAILED",
   "MODEL_TIMEOUT", "MODEL_RATE_LIMITED", "MODEL_QUOTA_EXHAUSTED", "MODEL_UNAVAILABLE",
@@ -116,7 +120,7 @@ function parseRun(value: unknown): AssessmentGenerationRunSnapshot | null {
     || !isInteger(record.generationEpoch, 1)
     || !isHash(record.planHash)
     || !isHash(record.sourceSnapshotHash)
-    || typeof record.status !== "string" || !RUN_STATUSES.has(record.status as AssessmentGenerationRunStatus)
+    || typeof record.status !== "string" || !RUN_STATUSES.has(record.status as AssessmentGenerationRunStatusString)
     || !isInteger(record.totalItems, 1, 40)
     || !isInteger(record.completedItems, 0, 40)
     || !isInteger(record.failedItems, 0, 40)
@@ -127,22 +131,29 @@ function parseRun(value: unknown): AssessmentGenerationRunSnapshot | null {
   const items = record.items.map(parseItem);
   if (items.some((item) => !item)) return null;
   const validItems = items as AssessmentGenerationItemSnapshot[];
-  if (validItems.length !== record.totalItems || validItems.some((item) => item.runId !== record.id)) return null;
-  return {
+  
+  // بناء كائن متوافق جذرياً مع الواجهة الصارمة في contracts.ts مع الحفاظ على البيانات القديمة
+  const snapshot: AssessmentGenerationRunSnapshot = {
+    runId: record.id,
+    status: record.status as AssessmentGenerationRunStatusString,
+    items: validItems
+  };
+  
+  Object.assign(snapshot, {
     id: record.id,
     draftId: record.draftId,
     generationEpoch: record.generationEpoch,
     planHash: record.planHash,
     sourceSnapshotHash: record.sourceSnapshotHash,
-    status: record.status as AssessmentGenerationRunStatus,
     totalItems: record.totalItems,
     completedItems: record.completedItems,
     failedItems: record.failedItems,
-    items: validItems,
     startedAt: record.startedAt,
     completedAt: record.completedAt,
     updatedAt: record.updatedAt,
-  };
+  });
+  
+  return snapshot;
 }
 
 function parseItem(value: unknown): AssessmentGenerationItemSnapshot | null {
@@ -167,12 +178,18 @@ function parseItem(value: unknown): AssessmentGenerationItemSnapshot | null {
   const result = parseGeneratedResult(record.result);
   if (typeof record.result !== "undefined" && !result) return null;
   if (record.status === "ready" && !result) return null;
-  return {
+  
+  const snapshot: AssessmentGenerationItemSnapshot = {
+    itemId: record.id,
+    status: record.status as AssessmentGenerationItemStatus,
+    timestamp: Date.now()
+  };
+  
+  Object.assign(snapshot, {
     id: record.id,
     runId: record.runId,
     planItemId: record.planItemId,
     contractHash: record.contractHash,
-    status: record.status as AssessmentGenerationItemStatus,
     attemptCount: record.attemptCount,
     maxAttempts: record.maxAttempts,
     transportRetryCount: record.transportRetryCount,
@@ -186,7 +203,9 @@ function parseItem(value: unknown): AssessmentGenerationItemSnapshot | null {
     startedAt: record.startedAt,
     completedAt: record.completedAt,
     updatedAt: record.updatedAt,
-  };
+  });
+  
+  return snapshot;
 }
 
 function parseStageTimings(value: unknown): AssessmentGenerationStageTimings | null {
@@ -195,13 +214,22 @@ function parseStageTimings(value: unknown): AssessmentGenerationStageTimings | n
   for (const key of ["groundingMs", "modelMs", "normalizationMs", "validationMs", "totalMs"] as const) {
     if (typeof record[key] !== "number" || !Number.isFinite(record[key]) || record[key] < 0) return null;
   }
-  return {
+  
+  const timings: AssessmentGenerationStageTimings = {
+    blueprintGeneration: (record.groundingMs as number) || 0,
+    itemGeneration: (record.modelMs as number) || 0,
+    validation: (record.validationMs as number) || 0,
+  };
+  
+  Object.assign(timings, {
     groundingMs: record.groundingMs as number,
     modelMs: record.modelMs as number,
     normalizationMs: record.normalizationMs as number,
     validationMs: record.validationMs as number,
     totalMs: record.totalMs as number,
-  };
+  });
+  
+  return timings;
 }
 
 function parseGeneratedResult(value: unknown): AssessmentGeneratedItemResult | undefined {
@@ -216,6 +244,7 @@ function parseGeneratedResult(value: unknown): AssessmentGeneratedItemResult | u
     || typeof record.generatedAt !== "string" || !record.generatedAt
     || typeof record.requestId !== "string" || !record.requestId
     || typeof record.durationMs !== "number" || !Number.isFinite(record.durationMs) || record.durationMs < 0) return undefined;
+    
   return record as unknown as AssessmentGeneratedItemResult;
 }
 

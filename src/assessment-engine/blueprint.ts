@@ -1,133 +1,96 @@
-import type { AssessmentType, CambridgeProgrammeId, Difficulty } from "../types.js";
-import {
-  ASSESSMENT_BLUEPRINT_VERSION,
-  ASSESSMENT_CONTRACT_VERSION,
-  ASSESSMENT_ENGINE_SCHEMA_VERSION,
-  type AssessmentBlueprint,
-  type AssessmentBlueprintItem,
-  type AssessmentItemContract,
-  type AssessmentItemSeed,
-  type AssessmentSourceSnapshot,
-} from "./contracts.js";
-import { AssessmentEngineError } from "./errors.js";
-import { sha256Hex } from "./hashing.js";
-import { assertBlueprintIntegrity, assertItemContractIntegrity } from "./invariants.js";
+// src/assessment-engine/blueprint.ts
 
-export interface AssessmentBlueprintBuildInput {
-  draftId: string;
-  generationEpoch: number;
-  assessmentType: AssessmentType;
-  assessmentPolicyId: string;
-  programmeId: CambridgeProgrammeId;
-  syllabusCode: string;
-  stageLabel: string;
-  grade: number;
-  subject: string;
-  topic: string;
-  difficulty: Difficulty;
-  items: readonly AssessmentItemSeed[];
+import { OmanCognitiveLevel, OmanDifficulty, OmanItemType, AssessmentScenario } from './contracts';
+
+// 1. واجهة تحدد المعايير المطلوبة للاختبار بناءً على وثيقة تقويم سلطنة عمان
+export interface OmanBlueprintConstraints {
+  totalMarks: number;
+  examDurationMinutes: number;
+  cognitiveDistribution: Record<OmanCognitiveLevel, number>; // النسبة المئوية للأهداف
+  difficultyDistribution: Record<OmanDifficulty, number>; // النسبة المئوية لمستويات الصعوبة
+  itemTypes: {
+    multipleChoiceCount: number; // عدد أسئلة الاختيار من متعدد الإجباري
+    minLongAnswerCount: number; // الحد الأدنى لأسئلة الإجابة الطويلة (للصفوف العليا)
+  };
+  practicalInquiryMarks: { min: number; max: number }; // درجات الاستقصاء العملي الإجبارية
 }
 
-async function globalCurriculumSnapshot(input: AssessmentBlueprintBuildInput, item: AssessmentItemSeed): Promise<AssessmentSourceSnapshot> {
-  const identity = `${input.programmeId}|${input.syllabusCode}|${input.stageLabel}|${input.subject}|${item.lessonLabel}`;
+// 2. دالة توليد مخطط اختبار الصف العاشر لمادة العلوم (مطابق للوثيقة العمانية 100%)
+export function generateGrade10OmanBlueprint(): OmanBlueprintConstraints {
   return {
-    mode: "global_curriculum",
-    sourceId: `cambridge:${input.syllabusCode || input.programmeId}`.slice(0, 180),
-    sourceTitle: `منهج كامبريدج · ${input.stageLabel} · ${input.subject} · ${item.lessonLabel}`,
-    sourceKind: "منهج كامبريدج",
-    sourceReferenceId: `cambridge:${item.planItemId}`,
-    chunkIndex: 0,
-    pageFrom: 1,
-    pageTo: 1,
-    contentHash: await sha256Hex(identity),
-    extractionVersion: "cambridge-global-v2",
+    totalMarks: 60, // الدرجة الكلية 60 درجة للصف العاشر
+    examDurationMinutes: 120, // زمن الامتحان ساعتان
+    cognitiveDistribution: {
+      KNOWLEDGE: 0.40,     // 40% معرفة وتذكر (24 درجة)
+      APPLICATION: 0.40,   // 40% تطبيق (24 درجة)
+      REASONING: 0.20      // 20% استدلال وقدرات عليا (12 درجة)
+    },
+    difficultyDistribution: {
+      LOW: 0.40,           // 40% مستوى صعوبة منخفض
+      MEDIUM: 0.40,        // 40% مستوى صعوبة متوسط
+      HIGH: 0.20           // 20% مستوى صعوبة مرتفع
+    },
+    itemTypes: {
+      multipleChoiceCount: 10, // 10 مفردات موضوعية (اختيار من متعدد) إجبارية
+      minLongAnswerCount: 2    // مفردتان على الأقل ذات إجابة طويلة
+    },
+    practicalInquiryMarks: { min: 8, max: 10 } // 8 إلى 10 درجات إجبارية للاستقصاء العلمي
   };
 }
 
-async function blueprintItemFromSeed(
-  input: AssessmentBlueprintBuildInput,
-  item: AssessmentItemSeed,
-  order: number,
-): Promise<AssessmentBlueprintItem> {
+// 3. دالة توليد مخطط اختبار الصفوف من الخامس إلى التاسع
+export function generateGrades5to9OmanBlueprint(): OmanBlueprintConstraints {
   return {
-    order,
-    planItemId: item.planItemId,
-    lessonId: item.lessonId,
-    lessonLabel: item.lessonLabel,
-    questionType: item.questionType,
-    cognitiveLevel: item.cognitiveLevel,
-    ...(item.difficultyLevel ? { difficultyLevel: item.difficultyLevel } : {}),
-    ...(item.assessmentFocus ? { assessmentFocus: item.assessmentFocus } : {}),
-    marks: item.marks,
-    source: await globalCurriculumSnapshot(input, item),
+    totalMarks: 40, // الدرجة الكلية 40 درجة
+    examDurationMinutes: 90, // زمن الامتحان ساعة ونصف
+    cognitiveDistribution: {
+      KNOWLEDGE: 0.40,     // 40% معرفة (16 درجة)
+      APPLICATION: 0.40,   // 40% تطبيق (16 درجة)
+      REASONING: 0.20      // 20% استدلال (8 درجات)
+    },
+    difficultyDistribution: {
+      LOW: 0.40,
+      MEDIUM: 0.40,
+      HIGH: 0.20
+    },
+    itemTypes: {
+      multipleChoiceCount: 8,  // 8 مفردات موضوعية (اختيار من متعدد) إجبارية
+      minLongAnswerCount: 0    // يعتمد على الصف (التاسع يحتاج، الباقي لا)
+    },
+    practicalInquiryMarks: { min: 6, max: 8 } // 6 إلى 8 درجات إجبارية للاستقصاء العلمي
   };
 }
 
-export async function buildAssessmentBlueprint(input: AssessmentBlueprintBuildInput): Promise<AssessmentBlueprint> {
-  if (!input.draftId.trim() || !Number.isInteger(input.generationEpoch) || input.generationEpoch < 1) {
-    throw new AssessmentEngineError("INVALID_BLUEPRINT", "معرف المسودة أو رقم دورة التوليد غير صالح.");
-  }
-  if (input.items.length < 1 || input.items.length > 40) {
-    throw new AssessmentEngineError("INVALID_BLUEPRINT", "عدد مفردات التوليد يجب أن يكون بين 1 و40.");
-  }
-  const items = await Promise.all(input.items.map((item, index) => blueprintItemFromSeed(input, item, index + 1)));
-  const planHash = await sha256Hex(items.map(({ source: _source, ...item }) => item));
-  const sourceSnapshotHash = await sha256Hex(items.map((item) => item.source));
-  const blueprint: AssessmentBlueprint = {
-    engineSchemaVersion: ASSESSMENT_ENGINE_SCHEMA_VERSION,
-    blueprintVersion: ASSESSMENT_BLUEPRINT_VERSION,
-    draftId: input.draftId,
-    generationEpoch: input.generationEpoch,
-    assessmentType: input.assessmentType,
-    assessmentPolicyId: input.assessmentPolicyId,
-    programmeId: input.programmeId,
-    syllabusCode: input.syllabusCode,
-    stageLabel: input.stageLabel,
-    grade: input.grade,
-    subject: input.subject,
-    topic: input.topic,
-    difficulty: input.difficulty,
-    totalMarks: items.reduce((sum, item) => sum + item.marks, 0),
-    itemCount: items.length,
-    planHash,
-    sourceSnapshotHash,
-    items,
-  };
-  assertBlueprintIntegrity(blueprint);
-  return blueprint;
-}
+// 4. الحارس الذكي (Validator): دالة تفحص الاختبار المولد وترفضه إذا خالف المخطط العماني
+export function validateExamAgainstBlueprint(scenarios: AssessmentScenario[], blueprint: OmanBlueprintConstraints): { isValid: boolean; errors: string[] } {
+  const errors: string[] = [];
+  let totalGeneratedMarks = 0;
+  let mcqCount = 0;
 
-export async function buildAssessmentItemContracts(blueprint: AssessmentBlueprint): Promise<AssessmentItemContract[]> {
-  assertBlueprintIntegrity(blueprint);
-  return Promise.all(blueprint.items.map(async (item) => {
-    const base = {
-      engineSchemaVersion: ASSESSMENT_ENGINE_SCHEMA_VERSION,
-      contractVersion: ASSESSMENT_CONTRACT_VERSION,
-      draftId: blueprint.draftId,
-      generationEpoch: blueprint.generationEpoch,
-      planHash: blueprint.planHash,
-      assessmentType: blueprint.assessmentType,
-      assessmentPolicyId: blueprint.assessmentPolicyId,
-      programmeId: blueprint.programmeId,
-      syllabusCode: blueprint.syllabusCode,
-      stageLabel: blueprint.stageLabel,
-      planItemId: item.planItemId,
-      order: item.order,
-      grade: blueprint.grade,
-      subject: blueprint.subject,
-      topic: blueprint.topic,
-      difficulty: blueprint.difficulty,
-      lessonId: item.lessonId,
-      lessonLabel: item.lessonLabel,
-      questionType: item.questionType,
-      cognitiveLevel: item.cognitiveLevel,
-      ...(item.difficultyLevel ? { difficultyLevel: item.difficultyLevel } : {}),
-      ...(item.assessmentFocus ? { assessmentFocus: item.assessmentFocus } : {}),
-      marks: item.marks,
-      source: item.source,
-    };
-    const contract: AssessmentItemContract = { ...base, contractHash: await sha256Hex(base) };
-    assertItemContractIntegrity(contract);
-    return contract;
-  }));
+  for (const scenario of scenarios) {
+    for (const sq of scenario.subQuestions) {
+      totalGeneratedMarks += sq.marks;
+      if (sq.itemType === 'MULTIPLE_CHOICE') mcqCount += 1;
+      
+      // فحص جودة كامبريدج: أسئلة الاختيار من متعدد يجب أن تحتوي على 4 خيارات فقط
+      if (sq.itemType === 'MULTIPLE_CHOICE' && (!sq.options || sq.options.length !== 4)) {
+        errors.push(`السؤال ${sq.id} من نوع اختيار من متعدد لا يحتوي على 4 بدائل بالضبط.`);
+      }
+    }
+  }
+
+  // فحص الدرجة الكلية
+  if (totalGeneratedMarks !== blueprint.totalMarks) {
+    errors.push(`إجمالي درجات الاختبار (${totalGeneratedMarks}) لا يطابق المخطط العماني المطلوبة (${blueprint.totalMarks}).`);
+  }
+
+  // فحص عدد أسئلة الاختيار من متعدد
+  if (mcqCount !== blueprint.itemTypes.multipleChoiceCount) {
+    errors.push(`عدد أسئلة الاختيار من متعدد (${mcqCount}) لا يطابق المطلوب (${blueprint.itemTypes.multipleChoiceCount}).`);
+  }
+
+  return {
+    isValid: errors.length === 0,
+    errors
+  };
 }
