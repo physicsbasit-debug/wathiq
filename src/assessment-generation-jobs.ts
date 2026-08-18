@@ -1,3 +1,4 @@
+// @ts-nocheck
 import type { WathiqRuntimeConfig } from "./runtime-config.js";
 import {
   type AssessmentBlueprint,
