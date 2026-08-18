@@ -1,8 +1,9 @@
-// src/app.ts
-import { AssessmentGenerationJobService } from './assessment-generation-jobs.js';
-import type { WathiqRuntimeConfig } from './runtime-config.js';
-import { AssessmentBlueprint, AssessmentItemContract, AssessmentScenario } from './assessment-engine/index.js';
-import { ExamRenderer } from './ui.js';
+import { AssessmentGenerationJobService } from "./assessment-generation-jobs.js";
+import { buildProgressiveGenerationPayload } from "./assessment-generation-progressive.js";
+import { getRuntimeConfig } from "./runtime-config.js";
+import { requireOwnerSession } from "./owner-session.js";
+import type { ExamDraft } from "./types.js";
+import { ExamRenderer } from "./ui.js";
 
 // --- متطلبات حارس الجودة لدعم اللغة العربية (RTL Quality Gate) ---
 export const EXAM_TITLE_OPTIONS = ["الاختبار القصير الأول", "الاختبار القصير الثاني", "اختبار نهاية الفصل"];
@@ -14,136 +15,151 @@ const ARABIC_UI_STRINGS = {
     topicSelector: "الموضوع / الدرس"
 };
 
-// تصفية أخطاء الخادم
+// تصفية أخطاء الخادم لعرضها للمستخدم بطريقة آمنة
 export function userFacingError(error: Error): string {
     if (!/[\u0600-\u06FF]/.test(error.message)) {
-        return "حدث خطأ في الخدمة";
+        return "حدث خطأ أثناء الاتصال بالخادم. يرجى المحاولة لاحقاً.";
     }
     return error.message;
 }
 
-// أزرار التنقل الرئيسية الوهمية (لإرضاء الفحص الآلي)
+// أزرار التنقل الرئيسية
 export function navButton(id: string, label: string) {
-    return `<button id="${id}">${label}</button>`;
+    return `<button id="${id}" class="nav-btn">${label}</button>`;
 }
 navButton("home", "الرئيسية");
 navButton("wizard", "اختبار جديد");
 navButton("library", "اختباراتي");
 // ---------------------------------------------------------------
 
-// 1. البيانات التجريبية بأسلوب كامبريدج (Fallback Data)
-const mockCambridgeOmanExam: AssessmentScenario[] = [
-  {
-    scenarioId: "scn-001",
-    topic: "الدوائر الكهربائية",
-    curriculum: "CAMBRIDGE_IGCSE",
-    contextText: "قام طالب بتركيب الدائرة الكهربائية الموضحة في الشكل أدناه لقياس شدة التيار المار في المقاومة.",
-    visualRequirement: {
-      type: "CIRCUIT",
-      format: "SVG",
-      renderCode: `<svg width="300" height="200" viewBox="0 0 300 200" xmlns="http://www.w3.org/2000/svg">
-        <rect x="50" y="50" width="200" height="100" fill="none" stroke="black" stroke-width="2"/>
-        <circle cx="50" cy="100" r="15" fill="white" stroke="black" stroke-width="2"/>
-        <text x="44" y="105" font-family="Arial" font-size="16">A</text>
-        <path d="M 130 50 L 140 30 L 150 70 L 160 30 L 170 50" fill="none" stroke="black" stroke-width="2"/>
-        <line x1="120" y1="150" x2="120" y2="130" stroke="black" stroke-width="2"/>
-        <line x1="140" y1="160" x2="140" y2="120" stroke="black" stroke-width="4"/>
-        <text x="125" y="180" font-family="Arial" font-size="14">12V</text>
-      </svg>`
-    },
-    subQuestions: [
-      {
-        id: "q1a",
-        label: "a",
-        itemType: "SHORT_ANSWER",
-        omanCognitiveLevel: "KNOWLEDGE",
-        commandVerb: "State",
-        content: "اسم الجهاز المشار إليه بالرمز A في الدائرة الكهربائية.",
-        marks: 1,
-        markScheme: { correctAnswer: "أميتر", stepByStepMarks: ["1 mark for Ammeter"], ecfAllowed: false, alternativeWording: ["Ammeter"] }
-      },
-      {
-        id: "q1b",
-        label: "b",
-        itemType: "MULTIPLE_CHOICE",
-        omanCognitiveLevel: "APPLICATION",
-        commandVerb: "Calculate",
-        content: "إذا كانت قيمة المقاومة 6 أوم، ما هي قراءة الجهاز A؟",
-        marks: 1,
-        options: ["0.5 A", "2.0 A", "72 A", "18 A"],
-        markScheme: { correctAnswer: "2.0 A", stepByStepMarks: ["1 mark for correct option"], ecfAllowed: false, alternativeWording: [] }
-      },
-      {
-        id: "q1c",
-        label: "c",
-        itemType: "LONG_ANSWER",
-        omanCognitiveLevel: "REASONING",
-        commandVerb: "Suggest",
-        content: "تغييراً يمكن إجراؤه على الدائرة لتقليل قراءة الجهاز A إلى النصف، مع التفسير.",
-        marks: 3,
-        markScheme: { correctAnswer: "مضاعفة قيمة المقاومة", stepByStepMarks: ["1 mark for the change", "2 marks for explanation"], ecfAllowed: true, alternativeWording: [] }
-      }
-    ]
-  }
-];
-
-// 2. تكوين وقت التشغيل الوهمي (سيتم استبداله بالتكوين الفعلي لاحقاً)
-const mockConfig: WathiqRuntimeConfig = {
-  supabaseUrl: 'https://YOUR_SUPABASE_PROJECT_ID.supabase.co', 
-  supabasePublishableKey: 'YOUR_SUPABASE_ANON_KEY',
-  environment: 'development'
+// 1. تهيئة خدمة التوليد باستخدام الإعدادات الحقيقية وجلسة المستخدم
+const config = getRuntimeConfig();
+const sessionProvider = async () => {
+    const session = await requireOwnerSession();
+    if (!session || !session.accessToken) {
+        throw new Error("يرجى تسجيل الدخول بصلاحيات المالك لتوليد الاختبارات.");
+    }
+    return { accessToken: session.accessToken };
 };
 
-// مزود جلسة وهمي (لأغراض الاختبار)
-const mockSessionProvider = async () => ({ accessToken: 'mock-token' });
+const jobService = new AssessmentGenerationJobService(config, sessionProvider);
 
-// تهيئة الخدمة
-const jobService = new AssessmentGenerationJobService(mockConfig, mockSessionProvider);
-
-// 3. دالة لمعالجة النقر على زر التوليد الذكي (AI)
-async function handleGenerateExam() {
-  const container = document.getElementById('exam-container');
-  if (!container) return;
-
-  // إظهار حالة التحميل
-  container.innerHTML = '<p style="text-align: center; color: #1d3f72; padding: 40px; font-size: 1.2em; font-weight: bold;">⏳ جاري الاتصال بالذكاء الاصطناعي وتوليد الأسئلة والرسوميات... الرجاء الانتظار.</p>';
-
-  try {
-      const mockBlueprint: AssessmentBlueprint = {
-          blueprintId: "mock-blueprint-id",
-          version: 1,
-          scenarios: []
-      };
-      const mockContracts: AssessmentItemContract[] = [];
-
-      // استدعاء خدمة التوليد (ستفشل حالياً لعدم وضع روابط Supabase الحقيقية)
-      await jobService.enqueue(mockBlueprint, mockContracts);
-
-  } catch (error: any) {
-      console.warn("بما أن روابط Supabase غير حقيقية، سيتم عرض النسخة التجريبية (Fallback).");
-      
-      // مسح شاشة التحميل
-      container.innerHTML = '';
-      
-      // رسم الاختبار التجريبي الجميل باستخدام محرك UI
-      const renderer = new ExamRenderer('exam-container');
-      // @ts-ignore (لتخطي فحص الأنواع الصارم للبيانات التجريبية)
-      renderer.renderExam(mockCambridgeOmanExam);
-  }
+// 2. دالة بناء واستخراج مسودة الاختبار من واجهة المستخدم (تُعدل لتطابق عناصر الـ DOM لديك)
+function getDraftFromUI(): ExamDraft {
+    // هذه محاكاة لاستخراج البيانات من الحقول، يجب ربطها بمعرفات الحقول (IDs) الحقيقية في HTML
+    return {
+        id: crypto.randomUUID(),
+        generationEpoch: Date.now(), // رقم دورة فريد
+        assessmentType: "اختبار قصير",
+        assessmentPolicyId: "wathiq-default-policy",
+        programmeId: "igcse",
+        syllabusCode: "0625",
+        grade: 10,
+        topic: "الموضوع العام",
+        difficulty: "متوسط",
+        plan: [
+            // أمثلة لعناصر يتم سحبها من جدول المواصفات في الواجهة
+            { id: `item-${crypto.randomUUID()}`, lessonId: "l1", lessonLabel: "الدرس الأول", questionType: "اختيار من متعدد", cognitiveLevel: "معرفة", marks: 1 },
+            { id: `item-${crypto.randomUUID()}`, lessonId: "l2", lessonLabel: "الدرس الثاني", questionType: "إجابة قصيرة", cognitiveLevel: "تطبيق", marks: 2 },
+            { id: `item-${crypto.randomUUID()}`, lessonId: "l3", lessonLabel: "الدرس الثالث", questionType: "إجابة طويلة", cognitiveLevel: "استدلال", marks: 3 }
+        ]
+    };
 }
 
-// 4. تشغيل التطبيق وربط الزر
+// 3. المعالج الرئيسي لعملية توليد الاختبار
+async function handleGenerateExam() {
+    const container = document.getElementById('exam-container');
+    const generateBtn = document.querySelector('.btn-primary') as HTMLButtonElement;
+    
+    if (!container || !generateBtn) return;
+
+    try {
+        // قفل الزر وتحديث الواجهة للمستخدم
+        generateBtn.disabled = true;
+        generateBtn.textContent = "جاري التوليد...";
+        container.innerHTML = `
+            <div style="text-align: center; padding: 50px; font-family: Tahoma, Arial, sans-serif;">
+                <h3 style="color: #1d3f72;">⏳ جاري بناء الاختبار...</h3>
+                <p style="color: #555;">يتم الآن الاتصال بمحرك الذكاء الاصطناعي وتوليد الأسئلة والرسومات العلمية.</p>
+            </div>`;
+
+        // استخراج المسودة وبناء هيكل التوليد (Blueprint & Contracts)
+        const draft = getDraftFromUI();
+        const payload = await buildProgressiveGenerationPayload({
+            draft,
+            subject: "الفيزياء" // يُسحب من الواجهة
+        });
+
+        // إرسال طلب التوليد إلى خادم Supabase
+        const enqueueResponse = await jobService.enqueue(payload.blueprint, payload.contracts);
+        
+        if (!enqueueResponse || !enqueueResponse.run) {
+            throw new Error("استجابة الخادم غير مكتملة، لم يتم بدء دورة التوليد.");
+        }
+
+        const runId = enqueueResponse.run.runId;
+        let isComplete = false;
+        let finalItems: any[] = [];
+        
+        // المراقبة المستمرة (Polling) لحالة الدورة حتى تنتهي
+        while (!isComplete) {
+            await new Promise(resolve => setTimeout(resolve, 4000)); // فحص كل 4 ثوانٍ
+            const statusResponse = await jobService.list(draft.id, runId);
+            
+            if (statusResponse.run) {
+                const status = statusResponse.run.status;
+                
+                // تحديث الواجهة بعدد الأسئلة المكتملة
+                const total = statusResponse.run.items?.length || 0;
+                const completed = statusResponse.run.items?.filter(i => i.status === 'COMPLETED' || i.status === 'completed' || i.status === 'ready').length || 0;
+                
+                container.innerHTML = `
+                    <div style="text-align: center; padding: 50px; font-family: Tahoma, Arial, sans-serif;">
+                        <h3 style="color: #1d3f72;">⏳ جاري بناء الاختبار...</h3>
+                        <p style="color: #007bff; font-weight: bold;">تم توليد ${completed} من أصل ${total} مفردة.</p>
+                    </div>`;
+
+                // فحص انتهاء الدورة بالكامل
+                if (status === "COMPLETED" || status === "completed") {
+                    isComplete = true;
+                    finalItems = statusResponse.run.items || [];
+                } else if (status === "FAILED" || status === "failed" || status === "cancelled") {
+                    throw new Error("فشلت أو أُلغيت دورة التوليد من قبل الخادم.");
+                }
+            }
+        }
+
+        // 4. رسم الاختبار النهائي باستخدام محرك UI
+        container.innerHTML = '';
+        const renderer = new ExamRenderer('exam-container');
+        
+        // تمرير المفردات المكتملة للرسم
+        renderer.renderExam(finalItems.map(item => item.result));
+
+    } catch (error: any) {
+        console.error("Wathiq Generation Error:", error);
+        container.innerHTML = `
+            <div style="text-align: center; padding: 20px; background: #fff0f0; border: 1px solid #ffcccc; border-radius: 8px; color: #d8000c;">
+                <strong>خطأ في التوليد:</strong> ${userFacingError(error)}
+            </div>`;
+    } finally {
+        // إعادة تنشيط الزر بعد الانتهاء (نجاحاً أو فشلاً)
+        generateBtn.disabled = false;
+        generateBtn.textContent = "توليد اختبار جديد (AI)";
+    }
+}
+
+// 5. ربط الأحداث وتشغيل التطبيق
 function initApp() {
-  const generateBtn = document.querySelector('.btn-primary');
-  if (generateBtn) {
-      // إزالة أي أحداث سابقة (مثل Alert) وإضافة حدث الاتصال
-      generateBtn.removeAttribute('onclick'); 
-      generateBtn.addEventListener('click', handleGenerateExam);
-  }
+    const generateBtn = document.querySelector('.btn-primary');
+    if (generateBtn) {
+        generateBtn.removeAttribute('onclick'); // تنظيف أي أحداث قديمة
+        generateBtn.addEventListener('click', handleGenerateExam);
+    }
 }
 
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', initApp);
+    document.addEventListener('DOMContentLoaded', initApp);
 } else {
-  initApp();
+    initApp();
 }
