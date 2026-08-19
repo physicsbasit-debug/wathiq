@@ -34,9 +34,8 @@ navButton("library", "اختباراتي");
 // 1. تهيئة خدمة التوليد باستخدام الإعدادات الحقيقية وجلسة المستخدم
 const config = getRuntimeConfig();
 
-// توفير جلسة محلية مؤقتة لتجنب مشاكل استيراد owner-session
+// توفير جلسة محلية مؤقتة متوافقة لتجنب أخطاء الاستيراد من owner-session
 const sessionProvider = async () => {
-    // هذه الدالة ستقوم بجلب رمز المصادقة (Token) من التخزين المحلي إن وجد
     const accessToken = localStorage.getItem("supabase.auth.token") || "dummy-token"; 
     return { accessToken };
 };
@@ -45,10 +44,9 @@ const jobService = new AssessmentGenerationJobService(config, sessionProvider);
 
 // 2. دالة بناء واستخراج مسودة الاختبار من واجهة المستخدم
 function getDraftFromUI(): ExamDraft {
-    // تمت إضافة خصائص proposals الإجبارية لإرضاء المترجم الصارم لـ TypeScript
     return {
         id: crypto.randomUUID(),
-        generationEpoch: Date.now(), // رقم دورة فريد
+        generationEpoch: Date.now(),
         assessmentType: "اختبار قصير",
         assessmentPolicyId: "wathiq-default-policy",
         programmeId: "igcse",
@@ -57,9 +55,33 @@ function getDraftFromUI(): ExamDraft {
         topic: "الموضوع العام",
         difficulty: "متوسط",
         plan: [
-            { id: `item-${crypto.randomUUID()}`, lessonId: "l1", lessonLabel: "الدرس الأول", questionType: "اختيار من متعدد", cognitiveLevel: "معرفة", marks: 1, proposals: [] },
-            { id: `item-${crypto.randomUUID()}`, lessonId: "l2", lessonLabel: "الدرس الثاني", questionType: "إجابة قصيرة", cognitiveLevel: "تطبيق", marks: 2, proposals: [] },
-            { id: `item-${crypto.randomUUID()}`, lessonId: "l3", lessonLabel: "الدرس الثالث", questionType: "إجابة طويلة", cognitiveLevel: "استدلال", marks: 3, proposals: [] }
+            { 
+                id: `item-${crypto.randomUUID()}`, 
+                lessonId: "l1", 
+                lessonLabel: "الدرس الأول", 
+                questionType: "اختيار من متعدد", 
+                cognitiveLevel: "معرفة", 
+                marks: 1, 
+                proposals: [] 
+            },
+            { 
+                id: `item-${crypto.randomUUID()}`, 
+                lessonId: "l2", 
+                lessonLabel: "الدرس الثاني", 
+                questionType: "إجابة قصيرة", 
+                cognitiveLevel: "تطبيق", 
+                marks: 2, 
+                proposals: [] 
+            },
+            { 
+                id: `item-${crypto.randomUUID()}`, 
+                lessonId: "l3", 
+                lessonLabel: "الدرس الثالث", 
+                questionType: "إجابة طويلة", 
+                cognitiveLevel: "استدلال", 
+                marks: 3, 
+                proposals: [] 
+            }
         ]
     };
 }
