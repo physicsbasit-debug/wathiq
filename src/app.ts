@@ -4,7 +4,7 @@ import { getRuntimeConfig } from "./runtime-config.js";
 import { requireOwnerSession } from "./owner-session.js";
 import type { ExamDraft } from "./types.js";
 import { ExamRenderer } from "./ui.js";
-import type { AssessmentGenerationItemSnapshot, AssessmentGeneratedItemResult } from "./assessment-engine/index.js";
+import type { AssessmentGenerationItemSnapshot } from "./assessment-engine/index.js";
 
 // --- متطلبات حارس الجودة لدعم اللغة العربية (RTL Quality Gate) ---
 export const EXAM_TITLE_OPTIONS = ["الاختبار القصير الأول", "الاختبار القصير الثاني", "اختبار نهاية الفصل"];
@@ -38,7 +38,7 @@ const jobService = new AssessmentGenerationJobService(config, requireOwnerSessio
 // 2. دالة بناء واستخراج مسودة الاختبار 
 function getDraftFromUI(): ExamDraft {
     return {
-        id: crypto.randomUUID(),
+        id: crypto.randomUUID() as `${string}-${string}-${string}-${string}-${string}`,
         generationEpoch: Date.now(),
         assessmentType: "اختبار قصير",
         assessmentPolicyId: "wathiq-default-policy",
@@ -107,9 +107,9 @@ async function handleGenerateExam(): Promise<void> {
             throw new Error("استجابة الخادم غير مكتملة، لم يتم بدء دورة التوليد.");
         }
 
-        // دعم التوافق مع الأنواع القديمة والجديدة لمعرف الدورة
-        const run = enqueueResponse.run as Record<string, unknown>;
+        const run = enqueueResponse.run as unknown as Record<string, unknown>;
         const runId = typeof run.runId === "string" ? run.runId : String(run.id);
+        
         let isComplete = false;
         let finalItems: AssessmentGenerationItemSnapshot[] = [];
         
@@ -143,12 +143,41 @@ async function handleGenerateExam(): Promise<void> {
         container.innerHTML = '';
         const renderer = new ExamRenderer('exam-container');
         
-        // استخراج النتائج الصالحة فقط للرسم
+        type ItemWithResult = AssessmentGenerationItemSnapshot & { result: Record<string, any>, topic?: string };
+        
         const validResults = finalItems
-            .map((item) => item.result)
-            .filter((result): result is AssessmentGeneratedItemResult => Boolean(result));
+            .filter((item): item is ItemWithResult => Boolean((item as any).result))
+            .map((item) => {
+                const res = item.result;
+                const content = res.content || {};
+                
+                return {
+                    scenarioId: item.itemId || crypto.randomUUID(),
+                    topic: item.topic || "موضوع علمي",
+                    curriculum: "CAMBRIDGE_IGCSE",
+                    contextText: content.stimulus || "",
+                    subQuestions: [
+                        {
+                            id: `sq-${crypto.randomUUID()}`,
+                            label: "a",
+                            itemType: content.options && content.options.length ? "MULTIPLE_CHOICE" : "SHORT_ANSWER",
+                            omanCognitiveLevel: "APPLICATION",
+                            commandVerb: "أجب",
+                            content: content.text || "",
+                            marks: 1,
+                            options: content.options || [],
+                            markScheme: {
+                                correctAnswer: content.answer || "",
+                                stepByStepMarks: content.markScheme || [],
+                                ecfAllowed: false,
+                                alternativeWording: []
+                            }
+                        }
+                    ]
+                };
+            });
             
-        renderer.renderExam(validResults);
+        renderer.renderExam(validResults as any);
 
     } catch (error: unknown) {
         const err = error instanceof Error ? error : new Error(String(error));
@@ -158,8 +187,10 @@ async function handleGenerateExam(): Promise<void> {
                 <strong>خطأ في التوليد:</strong> ${userFacingError(err)}
             </div>`;
     } finally {
-        generateBtn.disabled = false;
-        generateBtn.textContent = "توليد اختبار جديد (AI)";
+        if (generateBtn) {
+            generateBtn.disabled = false;
+            generateBtn.textContent = "توليد اختبار جديد (AI)";
+        }
     }
 }
 
