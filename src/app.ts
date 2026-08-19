@@ -37,8 +37,9 @@ const jobService = new AssessmentGenerationJobService(config, requireOwnerSessio
 
 // 2. دالة بناء واستخراج مسودة الاختبار 
 function getDraftFromUI(): ExamDraft {
-    return {
-        id: crypto.randomUUID() as `${string}-${string}-${string}-${string}-${string}`,
+    // تم الإصلاح: بناء الكائن ثم تأكيد نوعه كمسودة بشكل آمن (Casting)
+    const draft: unknown = {
+        id: crypto.randomUUID(),
         generationEpoch: Date.now(),
         assessmentType: "اختبار قصير",
         assessmentPolicyId: "wathiq-default-policy",
@@ -77,6 +78,7 @@ function getDraftFromUI(): ExamDraft {
             }
         ]
     };
+    return draft as ExamDraft;
 }
 
 // 3. المعالج الرئيسي لعملية توليد الاختبار
@@ -143,7 +145,6 @@ async function handleGenerateExam(): Promise<void> {
         container.innerHTML = '';
         const renderer = new ExamRenderer('exam-container');
         
-        // تحويل صارم للأنواع (Strict Type Mapping) بدون استخدام Any
         const validResults: AssessmentScenario[] = finalItems
             .filter((item) => {
                 const record = item as unknown as Record<string, unknown>;
@@ -169,7 +170,7 @@ async function handleGenerateExam(): Promise<void> {
                             label: "a",
                             itemType: options.length > 0 ? "MULTIPLE_CHOICE" : "SHORT_ANSWER",
                             omanCognitiveLevel: "APPLICATION",
-                            commandVerb: "أجب",
+                            commandVerb: "State", // تم الإصلاح: استخدام فعل معتمد في كامبريدج
                             content: typeof content.text === "string" ? content.text : "",
                             marks: 1,
                             options: options,
