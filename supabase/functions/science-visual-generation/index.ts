@@ -175,6 +175,8 @@ function illustrationBrief(request: VisualIllustrationRequest): string {
 }
 
 function renderModeForVisual(_visual: VisualRecord): RequiredMode {
+  // Quality reset: every illustrative scientific asset is a complete validated 2D replacement.
+  // Exact numeric representations (tables/graphs/scales) never enter this image function.
   return "replace";
 }
 
@@ -287,7 +289,7 @@ async function reviewImage(
   if (!response.ok) throw providerError(payload, `تعذر تدقيق الرسم العلمي (${response.status}).`, response.status);
   const output = findOutputText(payload);
   if (!output) throw httpError("لم يُرجع المراجع العلمي نتيجة قابلة للقراءة.", 502);
-  const record = requireRecord(parseLooseJson(output), "استجابة المراجع العلمي غير صالحة.");
+  const record = requireRecord(parseJson(output), "استجابة المراجع العلمي غير صالحة.");
   const review: VisualReview = {
     approved: record.approved === true,
     requiredObjectsPresent: record.requiredObjectsPresent === true,
@@ -405,7 +407,7 @@ function findOutputText(payload: unknown): string {
   return parts.map((part) => textField(asRecord(part)?.text)).filter(Boolean).join("\n").trim();
 }
 
-function parseLooseJson(value: string): unknown {
+function parseJson(value: string): unknown {
   const cleaned = value.replace(/^\uFEFF/u, "").trim().replace(/^```(?:json)?\s*/iu, "").replace(/\s*```$/u, "").trim();
   try { return JSON.parse(cleaned); }
   catch {
@@ -434,19 +436,6 @@ function parseLooseJson(value: string): unknown {
       }
     }
     throw httpError("تعذر قراءة نتيجة المراجع العلمي.", 502);
-  }
-}
-
-// التعديل المطلوب لاجتياز اختبار الحدود المنتظم (Regex Boundaries)
-function parseJson(value: string): unknown {
-  try {
-    return JSON.parse(value);
-  } catch {
-    const jsonMatch = value.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      return JSON.parse(jsonMatch[0]);
-    }
-    throw httpError("Invalid JSON response", 502);
   }
 }
 

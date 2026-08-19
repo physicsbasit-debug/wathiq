@@ -1,4 +1,4 @@
-# نشر واثق 0.3.15
+# نشر واثق 0.3.16 — Recovery Baseline Reconciliation
 
 ## متغيرات GitHub Pages
 
@@ -23,35 +23,20 @@ GEMINI_VISUAL_PLANNER_MODEL
 GEMINI_IMAGE_MODEL
 ```
 
-## ترتيب تحديث 0.3.15
+## ترتيب الاستعادة
 
-إذا كانت البيئة الحالية على 0.3.12:
+1. ارفع حزمة `changed_files_only` فوق المستودع الحالي وانتظر نجاح GitHub Actions وPages.
+2. **لا تشغّل SQL جديدًا**؛ Runtime Contract v0.3.12 وSchema 0.3.15 يبقيان كما هما.
+3. هذه المرحلة لا تضيف Provider Protocol جديدًا ولا تتطلب Secret جديدًا.
+4. لا تعِد نشر Edge Functions تلقائيًا لمجرد رفع الحزمة. بعد النشر افحص `assessment-generation-worker/health`: يجب أن يبقى `providerProtocolVersion=5`, `thinItemContractVersion=1`, `visualPlannerVersion=2`, `databaseContractVersion=1`.
+5. إذا كان الـWorker الحي أقدم من ذلك فقط، أعد نشر `assessment-generation-worker` من المستودع ثم أعد فحص health.
+6. لا تعِد نشر `science-visual-generation` في مرحلة الاستعادة قبل فحص نسخته الحية؛ ملف المستودع أعيد إلى آخر نسخة محلية اجتازت الفحوص، لكن حالة النشر الحي لا يمكن إثباتها من هذه البيئة.
+7. نفّذ تحديثًا قويًا للصفحة ثم اختبار قبول حي كامل: تسجيل الدخول → اختيار صف/مادة/موضوع → إنشاء الدورة → أول مفردة → استكمال/تحديث الصفحة → المرئيات → المراجعة → Word/PDF.
 
-1. ارفع حزمة ملفات 0.3.15 إلى GitHub وانتظر نجاح Actions وPages.
-2. **لا تشغّل SQL جديدًا**؛ Runtime Contract من v0.3.12 يبقى صالحًا كما هو.
-3. أعد نشر وظيفة واحدة فقط:
-
-```text
-supabase/functions/assessment-generation-worker/index.ts
-```
-
-4. لا يلزم إعادة نشر `assessment-generation-jobs` أو وظائف الصور.
-5. اعمل تحديثًا قويًا للصفحة. `health` يجب أن يؤكد `thinItemContractVersion=1` و`visualPlannerVersion=2` و`visualContractVersion=3` و`providerProtocolVersion=5`. لا يوجد Provider preflight على مسار بدء الاختبار.
-6. للمسودة التي فشلت سابقًا بـ `MODEL_REQUEST_INVALID`، أعد المفردة أو استكمل الدورة بعد نشر Worker الجديد؛ لا حاجة إلى ترحيل بيانات.
-
-## Runtime Contract الحالي من v0.3.12 (لا Migration جديدة في v0.3.15)
-
-- RPC مستقلة لتأجيل أخطاء النقل، لا يمكنها إنتاج حالة `failed`.
-- RPC مستقلة لفشل المحتوى والمراجعة.
-- استرداد Canonical للمهام ذات lease المنتهي.
-- Runtime contract قابل للفحص من Worker قبل بدء التوليد.
-- إصلاح تلقائي للمفردات الحالية التي تحمل خطأ Gemini مؤقتًا لكنها سُجلت `failed` بالإصدارات السابقة.
-
-## الفحص قبل النشر
+## الفحص قبل الرفع
 
 ```bash
 npm run check
 ```
 
 `dist/` ناتج بناء ولا يحفظ في `main`.
-

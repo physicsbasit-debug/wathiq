@@ -1,5 +1,14 @@
 # التاريخ المختصر
 
+## 0.3.16 — Recovery Baseline Reconciliation
+
+- فحص End-to-End للنسخة الحالية كشف أن Wathiq 2.0 استبدل `app.ts` الكامل بواجهة مختصرة، وأدخل stubs لعقود Blueprint وimports فارغة لإرضاء الاختبارات؛ لذلك لم يعد build ولا المسار UI → enqueue صالحين.
+- أُعيدت النواة العميلية من Artifact 0.3.14 المثبت محليًا بـ107/107، ثم أُعيد تطبيق تغييرات 0.3.15 المحدودة الخاصة بـ Durable First-Item Provider Gate.
+- أُبقي `assessment-generation-worker` وRuntime Contract و`providerProtocolVersion=5` من 0.3.15 دون إعادة بناء.
+- أُعيدت نسخة `science-visual-generation` السابقة لانحراف الاختبارات الشكلي، وأزيل تعريف JSON الإضافي الذي أُدخل فقط لإرضاء Regex.
+- أضيف `runtime:check` لمنع stubs و`@ts-nocheck` و`import type {}` الفارغ وVisual Placeholder/no-op export guards من دخول runtime مجددًا.
+- لا Migration جديدة ولا Secret جديد. القبول الحي مع Supabase/Gemini يبقى شرط إغلاق المرحلة.
+
 ## 0.3.15 — Durable First-Item Provider Gate
 
 - فحص End-to-End أثبت أن الملفات الأربع المنشورة في Supabase مطابقة حرفيًا لنسخة المستودع 0.3.14، وأن الانقطاع الحالي يقع قبل `enqueue` بسبب Provider preflight إلزامي.

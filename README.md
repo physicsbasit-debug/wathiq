@@ -4,11 +4,17 @@
 
 > **اسم الموضوع يكفي. حرية عالية في التأليف، صرامة عالية في المراجعة العلمية، وعربية كاملة من اليمين إلى اليسار.**
 
-- الإصدار الحالي: **0.3.15 — Durable First-Item Provider Gate**.
+- الإصدار الحالي: **0.3.16 — Recovery Baseline Reconciliation**.
 - النطاق: **مواد العلوم فقط**.
 - Cambridge Primary Science **0097**: المراحل **1–6**.
 - Cambridge Lower Secondary Science **0893**: المراحل **7–9**.
 - Cambridge IGCSE: الفيزياء **0625**، الكيمياء **0620**، الأحياء **0610**، العلوم المجمعة **0653**، العلوم المنسقة **0654**.
+
+## 0.3.16 — Recovery Baseline Reconciliation
+
+أعاد هذا الإصدار خط التشغيل الكامل الذي انحرف بعد 0.3.15: واجهة اختيار الصف/المادة/الموضوع، بناء Blueprint v4 وعقود المفردات، الاستئناف الدائم، مزامنة المرئيات، المراجعة، وWord/PDF. لم يُعَد بناء Durable Generation ولم يُغيَّر Runtime Contract أو Provider Protocol؛ أساس التشغيل ما زال 0.3.15 مع `providerProtocolVersion=5`.
+
+أضيف `runtime:check` كحارس مستقل يمنع الأنماط التي سببت الانحدار نفسه: `@ts-nocheck` في runtime، استيرادات `import type {}` الفارغة لإرضاء فحص reachability، stubs تعيد `{}`/`[]` بدل Blueprint حقيقي، placeholders بصرية، وتحويل فحوص التصدير إلى no-op. هذه المرحلة **استعادة خط أساس** وليست مرحلة تحسين جودة الأسئلة؛ تحسينات Learning Objective Card وVisual Assessment Integrity تأتي بعد إثبات القبول الحي.
 
 ## إصلاح 0.3.15 — Durable First-Item Provider Gate
 
@@ -86,6 +92,7 @@ Renderer حتمي للمخططات العلمية الدقيقة
 - لا تظهر رسالة مزود خام بالإنجليزية للمستخدم.
 - الواجهة والتقارير والتصدير عربية واتجاهها من اليمين إلى اليسار.
 - `npm run legacy:check` يفشل إذا عادت أحفورة محظورة.
+- `npm run runtime:check` يفشل إذا تحولت النواة إلى stubs/no-op أو عادت reachability وهمية بدل ارتباط runtime حقيقي.
 - `npm run ui:check` يفشل إذا كُسرت العربية أو RTL أو تسربت واجهة إنجليزية معروفة.
 
 ## قاعدة تحديث التوثيق
@@ -101,7 +108,7 @@ npm install --no-package-lock --no-audit --no-fund
 npm run check
 ```
 
-يشمل الفحص: نظافة المستودع، منع الأحافير، العربية وRTL، بناء TypeScript، واختبارات السلوك الحالي فقط.
+يشمل الفحص: نظافة المستودع، منع الأحافير، سلامة runtime، العربية وRTL، بناء TypeScript، واختبارات السلوك الحالي فقط.
 
 ## الإعداد الخارجي
 
