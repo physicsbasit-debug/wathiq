@@ -4,7 +4,7 @@ import { getRuntimeConfig } from "./runtime-config.js";
 import { requireOwnerSession } from "./owner-session.js";
 import type { ExamDraft } from "./types.js";
 import { ExamRenderer } from "./ui.js";
-import type { AssessmentGenerationItemSnapshot } from "./assessment-engine/index.js";
+import type { AssessmentGenerationItemSnapshot, AssessmentScenario } from "./assessment-engine/index.js";
 
 // --- متطلبات حارس الجودة لدعم اللغة العربية (RTL Quality Gate) ---
 export const EXAM_TITLE_OPTIONS = ["الاختبار القصير الأول", "الاختبار القصير الثاني", "اختبار نهاية الفصل"];
@@ -143,49 +143,59 @@ async function handleGenerateExam(): Promise<void> {
         container.innerHTML = '';
         const renderer = new ExamRenderer('exam-container');
         
-        type ItemWithResult = AssessmentGenerationItemSnapshot & { result: Record<string, any>, topic?: string };
-        
-        const validResults = finalItems
-            .filter((item): item is ItemWithResult => Boolean((item as any).result))
+        // تحويل صارم للأنواع (Strict Type Mapping) بدون استخدام Any
+        const validResults: AssessmentScenario[] = finalItems
+            .filter((item) => {
+                const record = item as unknown as Record<string, unknown>;
+                return Boolean(record.result);
+            })
             .map((item) => {
-                const res = item.result;
-                const content = res.content || {};
+                const record = item as unknown as Record<string, unknown>;
+                const res = record.result as Record<string, unknown>;
+                const content = (res.content as Record<string, unknown>) || {};
                 
-                return {
-                    scenarioId: item.itemId || crypto.randomUUID(),
-                    topic: item.topic || "موضوع علمي",
+                const optionsRaw = Array.isArray(content.options) ? content.options : [];
+                const options = optionsRaw.map(String);
+                const markSchemeRaw = Array.isArray(content.markScheme) ? content.markScheme : [];
+                
+                const scenario: AssessmentScenario = {
+                    scenarioId: typeof item.itemId === "string" ? item.itemId : crypto.randomUUID(),
+                    topic: typeof record.topic === "string" ? record.topic : "موضوع علمي",
                     curriculum: "CAMBRIDGE_IGCSE",
-                    contextText: content.stimulus || "",
+                    contextText: typeof content.stimulus === "string" ? content.stimulus : "",
                     subQuestions: [
                         {
                             id: `sq-${crypto.randomUUID()}`,
                             label: "a",
-                            itemType: content.options && content.options.length ? "MULTIPLE_CHOICE" : "SHORT_ANSWER",
+                            itemType: options.length > 0 ? "MULTIPLE_CHOICE" : "SHORT_ANSWER",
                             omanCognitiveLevel: "APPLICATION",
                             commandVerb: "أجب",
-                            content: content.text || "",
+                            content: typeof content.text === "string" ? content.text : "",
                             marks: 1,
-                            options: content.options || [],
+                            options: options,
                             markScheme: {
-                                correctAnswer: content.answer || "",
-                                stepByStepMarks: content.markScheme || [],
+                                correctAnswer: typeof content.answer === "string" ? content.answer : "",
+                                stepByStepMarks: markSchemeRaw.map(String),
                                 ecfAllowed: false,
                                 alternativeWording: []
                             }
                         }
                     ]
                 };
+                return scenario;
             });
             
-        renderer.renderExam(validResults as any);
+        renderer.renderExam(validResults);
 
     } catch (error: unknown) {
         const err = error instanceof Error ? error : new Error(String(error));
         console.error("Wathiq Generation Error:", err);
-        container.innerHTML = `
-            <div style="text-align: center; padding: 20px; background: #fff0f0; border: 1px solid #ffcccc; border-radius: 8px; color: #d8000c;">
-                <strong>خطأ في التوليد:</strong> ${userFacingError(err)}
-            </div>`;
+        if (container) {
+            container.innerHTML = `
+                <div style="text-align: center; padding: 20px; background: #fff0f0; border: 1px solid #ffcccc; border-radius: 8px; color: #d8000c;">
+                    <strong>خطأ في التوليد:</strong> ${userFacingError(err)}
+                </div>`;
+        }
     } finally {
         if (generateBtn) {
             generateBtn.disabled = false;
