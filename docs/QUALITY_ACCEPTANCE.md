@@ -45,19 +45,23 @@
 - 403 يجب أن يظهر MODEL_AUTH_FAILED.
 - 404 يجب أن يظهر MODEL_NOT_FOUND.
 - MAX_TOKENS يجب أن يظهر MODEL_OUTPUT_TRUNCATED.
-- لا يجوز أن يحتوي author/reviewer schema على حقول هندسة المرئيات الثقيلة مثل `vectors/anchors/segments/dimensions/series/components`.
-- يجب أن تكون مخططات Visual Planner متخصصة حسب النوع؛ force schema لا يحمل حقول circuit والعكس.
-- يجب ألا يُستدعى Visual Planner المنظم عند `none` أو `illustration_2d`.
-- يجب أن يحدث Visual Planner بعد اعتماد المراجع، لا قبلها.
-- يجب أن يستمر Runtime Contract v0.3.12 دون SQL إضافي في v0.3.15.
-
+- لا يجوز أن يحتوي author/reviewer schema على هندسة الرسوم التخطيطية القديمة.
+- يجب أن يحدث Visual Planner للبيانات بعد اعتماد المراجع، لا قبلها.
+- يجب أن يستمر Runtime Contract v0.3.12 دون SQL إضافي.
 - يجب أن يفشل health قبل بدء الدورة إذا غاب Runtime Contract لقاعدة البيانات.
 - يجب ألا تنتج `defer_assessment_generation_item_v1` حالة `failed` لأي رمز نقل مؤقت.
 
-### بوابة Visual Planner v0.3.15
-- لا يوجد `responseJsonSchema` في طلب `visual_planner`.
-- يجب أن يكون الإخراج JSON صالحًا، ثم يمر عبر normalize + validateContent محليًا قبل الحفظ.
-- فشل مخطط مرئي يؤثر على المفردة التي طلبته فقط، ولا توجد بوابة preflight للمزود تحجب الدورة.
+## 2D Visual Reset Gate — 0.3.18
+
+- FAIL إذا ظهر في Worker أي نوع من: `force_diagram`, `circuit_diagram`, `electrostatic_diagram`, `ray_diagram`, `pressure_diagram`, `flow_diagram`, `instrument_scale`.
+- FAIL إذا عاد أي renderer خطي قديم للقوى/الدوائر/الأشعة/الضغط/التسلسل/التدريج.
+- المرئي العلمي غير الرقمي يجب أن يكون `context_scene` بأصل 2D مدقق، لا SVG تخطيطي قديم.
+- `data_table`, `line_graph`, `bar_chart` فقط تبقى حتمية؛ لا يجوز إرسالها إلى نموذج الصور.
+- Visual Planner للبيانات يجب أن يرى `studentVisibleQuestion` فقط؛ وجود `answer` أو `markScheme` في prompt = FAIL.
+- مراجع الصورة يجب أن يثبت `noAnswerLeakage=true` قبل اعتماد الأصل.
+- FAIL إذا ظهرت صورة 2D تكشف الإجابة أو اتجاه النتيجة المطلوب استنتاجها.
+- FAIL إذا احتوى PDF/Word على placeholder أو الرسم التخطيطي الأسود القديم بدل الأصل 2D المطلوب.
+- المسودات القديمة ذات النوع التخطيطي يجب أن تُرحل إلى `context_scene` دون إعادة استخدام vectors/components/geometry القديمة.
 
 ## Throughput Gate — 0.3.17
 

@@ -8,28 +8,18 @@ function draftWithVisual(type, extra = {}) {
     selectedProposalByPlanItem: { p1: "q1" },
     plan: [{
       id: "p1", lessonLabel: "القوى والحركة",
-      visual: { type, visualId: "v1", purpose: "توضيح", title: "مرئي", altText: "مرئي علمي", xAxisLabel: "", xAxisUnit: "", yAxisLabel: "", yAxisUnit: "", xMin: 0, xMax: 1, yMin: 0, yMax: 1, points: [], series: [], labels: [], values: [], components: [], annotations: [], tableColumns: [], tableRows: [], tableCells: [], hiddenCells: [], vectors: [], ...extra },
+      visual: { type, visualId: "v1", purpose: "توضيح", title: "مرئي", altText: "مرئي علمي", xAxisLabel: "", xAxisUnit: "", yAxisLabel: "", yAxisUnit: "", xMin: 0, xMax: 1, yMin: 0, yMax: 1, points: [], series: [], labels: [], values: [], components: [], annotations: [], tableColumns: [], tableRows: [], tableCells: [], hiddenCells: [], vectors: [], anchors: [], segments: [], dimensions: [], ...extra },
       proposals: [{ id: "q1", stimulus: "", text: "فسر العلاقة.", answer: "", reviewSupport: "سياق كامبريدج العالمي" }],
     }],
   };
 }
 
-test("المشهد السياقي فقط ينشئ مهمة صورة 2D", () => {
+test("كل context_scene ينشئ مهمة صورة 2D", () => {
   const items = visualJobItems(draftWithVisual("context_scene"), "الفيزياء");
   assert.equal(items.length, 1);
   assert.equal(items[0].requiredMode, "replace");
   assert.equal(items[0].programmeId, "igcse");
   assert.equal(items[0].stageLabel, "كامبريدج للشهادة الدولية العامة للتعليم الثانوي");
-});
-
-test("مخطط القوى لا يرسل إلى نموذج الصور لأنه يرسم من البيانات المنظمة", () => {
-  const draft = draftWithVisual("force_diagram", {
-    vectors: [
-      { label: "الدفع", x: 50, y: 50, dx: 0, dy: 1, magnitude: 25000, unit: "N" },
-      { label: "الوزن", x: 50, y: 50, dx: 0, dy: -1, magnitude: 15000, unit: "N" },
-    ],
-  });
-  assert.equal(visualJobItems(draft, "الفيزياء").length, 0);
 });
 
 test("الرسم البياني الدقيق لا يرسل إلى نموذج الصور", () => {
@@ -40,7 +30,7 @@ test("الرسم البياني الدقيق لا يرسل إلى نموذج ا�
   assert.equal(visualJobItems(draft, "الفيزياء").length, 0);
 });
 
-test("VisualJobService يرسل المشهد السياقي إلى الوظيفة الدائمة", async () => {
+test("VisualJobService يرسل المشهد 2D إلى الوظيفة الدائمة", async () => {
   const calls = [];
   const service = new VisualJobService(
     { supabaseUrl: "https://example.supabase.co", supabasePublishableKey: "sb_publishable_test" },

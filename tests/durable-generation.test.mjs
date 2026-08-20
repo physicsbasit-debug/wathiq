@@ -249,13 +249,14 @@ test("عامل v0.3.12 لا يصنف HTTP 400 من Gemini على أنه JSON م�
   assert.match(worker, /"medium", REVIEW_MODEL_TIMEOUT_MS/);
 });
 
-test("مخطط المرئي v0.3.14 يقيد الإحداثيات محليًا ويدعم القوة الرمزية F", async () => {
+test("v0.3.18 يزيل هندسة المخططات الخطية من عامل المفردات", async () => {
   const { readFile } = await import("node:fs/promises");
   const worker = await readFile(new URL("../supabase/functions/assessment-generation-worker/index.ts", import.meta.url), "utf8");
-  assert.match(worker, /validCoordinate = .*value >= 0 && value <= 100/);
-  assert.match(worker, /magnitude=0 وvalueLabel=F/);
-  assert.match(worker, /vector\.magnitude < 0/);
-  assert.match(worker, /رسم القوى يحتاج متجهات مسماة واتجاهات وقيمًا صالحة/);
+  assert.doesNotMatch(worker, /validCoordinate\s*=/);
+  assert.doesNotMatch(worker, /valueLabel=F/);
+  assert.doesNotMatch(worker, /vector\.magnitude/);
+  assert.match(worker, /ألغى مولد الرسوم التخطيطية القديم/);
+  assert.match(worker, /illustration_2d لأي مشهد علمي أو جهاز أو زنبرك أو قوة أو دائرة/);
 });
 
 
@@ -298,14 +299,16 @@ test("v0.3.13 يفصل عقد السؤال النحيف عن بيانات الر
   assert.doesNotMatch(worker, /function visualSchema\(/);
 });
 
-test("v0.3.14 يبقي مخطط المرئي متخصصًا حسب النوع مع تحقق محلي", async () => {
+test("v0.3.18 يقصر Visual Planner على الجداول والرسوم البيانية الرقمية", async () => {
   const { readFile } = await import("node:fs/promises");
   const worker = await readFile(new URL("../supabase/functions/assessment-generation-worker/index.ts", import.meta.url), "utf8");
   assert.doesNotMatch(worker, /function visualPlannerSchema\(/);
   assert.match(worker, /function visualPlannerJsonContract\(mode: VisualMode\)/);
-  assert.match(worker, /mode === "force_diagram"[\s\S]*vectors[\s\S]*anchors[\s\S]*segments[\s\S]*dimensions/);
-  assert.match(worker, /mode === "circuit_diagram"[\s\S]*components/);
-  assert.match(worker, /mode === "line_graph" \|\| mode === "bar_chart"[\s\S]*series/);
+  assert.match(worker, /mode === "data_table"/);
+  assert.match(worker, /mode === "line_graph" \|\| mode === "bar_chart"/);
+  for (const oldType of ["force_diagram", "circuit_diagram", "electrostatic_diagram", "ray_diagram", "pressure_diagram", "flow_diagram", "instrument_scale"]) {
+    assert.doesNotMatch(worker, new RegExp(oldType), oldType);
+  }
   assert.match(worker, /VISUAL_PLANNER_MODEL/);
   assert.match(worker, /visualPlannerVersion:\s*2/);
 });
@@ -501,10 +504,17 @@ test("v0.3.15 يحافظ على أخطاء النقل داخل دورة المف
   assert.doesNotMatch(app.slice(app.indexOf("async function generateQuestionsForPlan("), app.indexOf("async function retryGenerationItem(")), /يفحص واثق اتصال Gemini/);
 });
 
-test("v0.3.14 يصف عقد JSON المحلي لكل نوع مرئي قبل التحقق الحتمي", async () => {
+test("v0.3.18 يصف عقد JSON المحلي للبيانات فقط ويمنع تسريب الإجابة إلى المخطط", async () => {
   const { readFile } = await import("node:fs/promises");
   const worker = await readFile(new URL("../supabase/functions/assessment-generation-worker/index.ts", import.meta.url), "utf8");
   assert.match(worker, /function visualPlannerJsonContract\(mode: VisualMode\)/);
-  assert.match(worker, /mode === "force_diagram"[\s\S]*vectors[\s\S]*anchors[\s\S]*segments[\s\S]*dimensions/);
+  assert.match(worker, /mode === "data_table"/);
+  assert.match(worker, /mode === "line_graph" \|\| mode === "bar_chart"/);
+  const start = worker.indexOf("async function callVisualPlanner(");
+  const end = worker.indexOf("function emptyVisualProposal", start);
+  const body = worker.slice(start, end);
+  assert.match(body, /studentVisibleQuestion/);
+  assert.doesNotMatch(body, /answer:/);
+  assert.doesNotMatch(body, /markScheme:/);
   assert.match(worker, /validateContent\(content, contract\)/);
 });

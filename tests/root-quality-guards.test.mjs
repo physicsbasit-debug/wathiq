@@ -84,17 +84,19 @@ test("منطق التأليف يلتزم بأنواع المفردات الرس�
   assert.match(worker, /لا تجعل جميع الأسئلة القصيرة من نوع اذكر\/عرّف/);
 });
 
-test("قرار المرئي يبقى بسيطًا لكن البيانات العلمية الدقيقة تستخدم مخططًا دلاليًا لا صورة حرة", async () => {
+test("قرار المرئي يبقى بسيطًا: المشاهد العلمية 2D والبيانات الرقمية فقط حتمية", async () => {
   const worker = await text("supabase/functions/assessment-generation-worker/index.ts");
   assert.match(worker, /وظّف المرئي عندما يساهم فعلًا في الإجابة أو يوضح السؤال أو جزءًا منه/);
   assert.match(worker, /لا توجد نسبة صور مفروضة/);
   assert.doesNotMatch(worker, /visualRequirement/);
   assert.doesNotMatch(worker, /enum: \["none", "helpful", "required"\]/);
   assert.doesNotMatch(worker, /requirement:\s*requested/);
-  assert.match(worker, /force_diagram/);
-  assert.match(worker, /رسم القوى لا يحمل كل القيم العددية الواردة في السؤال/);
-  assert.match(worker, /استخدم illustration_2d للمشهد السياقي فقط/);
+  assert.match(worker, /illustration_2d لأي مشهد علمي أو جهاز أو زنبرك أو قوة أو دائرة/);
+  assert.match(worker, /data_table\/line_graph\/bar_chart فقط عندما تكون بيانات رقمية دقيقة/);
   assert.match(worker, /const requested = visual\.mode !== "none"/);
+  for (const oldType of ["force_diagram", "circuit_diagram", "electrostatic_diagram", "ray_diagram", "pressure_diagram", "flow_diagram", "instrument_scale"]) {
+    assert.doesNotMatch(worker, new RegExp(oldType), oldType);
+  }
 });
 test("ورقة الطالب لا تعرض رسائل فشل الأصول البصرية ولا العبارة النظامية الداخلية", async () => {
   const app = await text("src/app.ts");

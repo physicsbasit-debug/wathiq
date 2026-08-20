@@ -11,7 +11,7 @@ const GEMINI_REVIEW_MODEL = Deno.env.get("GEMINI_REVIEW_MODEL")?.trim()
 const IMAGE_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_IMAGE_MODEL)}:generateContent`;
 const REVIEW_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_REVIEW_MODEL)}:generateContent`;
 const QUESTION_VISUAL_BUCKET = "wathiq-question-visuals";
-const VISUAL_PROMPT_VERSION = "wathiq-context-scene-v2";
+const VISUAL_PROMPT_VERSION = "wathiq-science-2d-reset-v3";
 const IMAGE_GENERATION_TIMEOUT_MS = 70_000;
 const IMAGE_REVIEW_TIMEOUT_MS = 45_000;
 const MAX_IMAGE_BASE64_CHARACTERS = 18_000_000;
@@ -62,6 +62,7 @@ interface VisualReview {
   clear2DComposition: boolean;
   printReady: boolean;
   forbiddenTextDetected: boolean;
+  noAnswerLeakage: boolean;
   reason: string;
 }
 
@@ -97,7 +98,7 @@ function parseVisualRequest(payload: Record<string, unknown>): VisualIllustratio
   const visualType = textField(visual.type);
   if (!visualType || visualType === "none") throw httpError("لا توجد حاجة إلى أصل بصري ثنائي الأبعاد لهذه المفردة.", 400);
   if (visualType !== "context_scene") {
-    throw httpError("المخططات العلمية ذات البيانات والاتجاهات تُرسم حتميًا داخل واثق ولا تُرسل إلى نموذج الصور.", 409);
+    throw httpError("وظيفة الصور تقبل المرئيات العلمية ثنائية الأبعاد فقط؛ الجداول والرسوم البيانية الرقمية تبقى حتمية داخل واثق.", 409);
   }
   return {
     action: "generate_visual_illustration",
@@ -158,7 +159,6 @@ function illustrationBrief(request: VisualIllustrationRequest): string {
   const title = textField(visual.title);
   const labels = stringArray(visual.labels, 16, 120);
   const annotations = stringArray(visual.annotations, 16, 140);
-  const components = stringArray(visual.components, 20, 80);
 
   return [
     `برنامج كامبريدج: ${request.stageLabel}، رمز المنهج: ${request.syllabusCode}، المادة: ${request.subject}.`,
@@ -169,28 +169,28 @@ function illustrationBrief(request: VisualIllustrationRequest): string {
     altText ? `الوصف المطلوب: ${altText}.` : "",
     title ? `العنوان الداخلي للمواصفة: ${title}.` : "",
     labels.length ? `عناصر/مسميات دلالية: ${labels.join("، ")}.` : "",
-    components.length ? `مكونات مطلوبة: ${components.join("، ")}.` : "",
     annotations.length ? `ملاحظات دلالية: ${annotations.join("، ")}.` : "",
   ].filter(Boolean).join("\n");
 }
 
 function renderModeForVisual(_visual: VisualRecord): RequiredMode {
-  // Quality reset: every illustrative scientific asset is a complete validated 2D replacement.
-  // Exact numeric representations (tables/graphs/scales) never enter this image function.
+  // v0.3.18: every non-data scientific visual is a complete reviewed 2D replacement.
+  // Exact tables and graphs never enter the image model.
   return "replace";
 }
 
 function imagePrompt(request: VisualIllustrationRequest, correction: string): string {
   return [
-    "أنشئ مشهداً علمياً تعليمياً ثنائي الأبعاد عالي الجودة لورقة اختبار علوم مدرسية.",
-    "هذه الوظيفة للمشهد السياقي فقط، وليست لرسم مخطط قوى أو دائرة أو أشعة أو قيم عددية دقيقة؛ تلك المرئيات يرسمها واثق حتميًا من بيانات منظمة.",
+    "أنشئ رسماً علمياً تعليمياً ثنائي الأبعاد عالي الجودة لورقة اختبار علوم مدرسية.",
+    "واثق لا يستخدم مولداً تخطيطياً خطياً للمشاهد العلمية. قد يكون المطلوب زنبركاً أو جهازاً أو قوة أو دائرة أو شحنات أو بصريات أو ضغطاً أو تسلسلاً؛ مثّل المشهد كرسوم كتاب مدرسي 2D واضحة لا كهيكل خطي بدائي.",
+    "الجداول والرسوم البيانية ذات القيم الرقمية الدقيقة لا تصل إلى هذه الوظيفة أصلاً؛ لذلك لا تخترع بيانات كمية داخل الصورة.",
     "الأولوية المطلقة: الدقة العلمية، ثم الوضوح، ثم الجمال البصري.",
-    "الأسلوب: رسم كتاب مدرسي حديث ونظيف، 2D حقيقي، خلفية بيضاء، تباين واضح، مناسب للطباعة A4.",
+    "الأسلوب: رسم كتاب مدرسي حديث ونظيف، 2D حقيقي، خلفية بيضاء، تباين واضح، أشكال مفهومة وحواف نظيفة، مناسب للطباعة A4.",
     "لا تنسخ صورة منشورة أو شعاراً أو علامة تجارية. أنشئ رسماً أصلياً.",
     "لا تضف أي جسم أو جهاز أو علاقة علمية غير مطلوبة في الملخص أدناه.",
-    "لا تضع نصوصاً أو أرقاماً أو وحدات أو أحرفاً أو عناوين داخل الصورة إلا إذا نص الملخص صراحة على أن هذه الكتابة جزء ضروري من السؤال.",
-    "لا تضع أسهماً أو رموز شحنة أو قيم قياس من عندك إلا إذا كانت ضرورية علمياً ومطلوبة صراحة في ملخص المرئي.",
-    "هذه صورة نهائية كاملة: أظهر الظاهرة أو المشهد المطلوب بصرياً دون كشف الإجابة للطالب.",
+    "لا تضع نصوصاً أو أرقاماً أو وحدات أو أحرفاً أو عناوين داخل الصورة إلا إذا كانت ظاهرة أصلاً في نص الطالب ومطلوبة لفهم المشهد.",
+    "لا تضف أسهماً أو رموز شحنة أو قيماً أو اتجاهات نتيجة من عندك. إذا كان السؤال يطلب من الطالب استنتاج الاتجاه أو العلاقة فلا ترسم النتيجة له.",
+    "هذه صورة نهائية كاملة: أظهر الظاهرة أو الجهاز أو المشهد المطلوب بصرياً دون كشف الإجابة أو التفسير للطالب.",
     "يجب أن يكون الحجم والعلاقات المكانية معقولة علمياً، وألا يختلط عنصر بآخر أو تختفي عناصر مهمة.",
     illustrationBrief(request),
     correction ? `تصحيح إلزامي بعد المراجعة السابقة: ${correction}` : "",
@@ -239,12 +239,13 @@ const REVIEW_SCHEMA = {
     clear2DComposition: { type: "boolean" },
     printReady: { type: "boolean" },
     forbiddenTextDetected: { type: "boolean" },
+    noAnswerLeakage: { type: "boolean" },
     reason: { type: "string" },
   },
   required: [
     "approved", "requiredObjectsPresent", "scientificRelationshipCorrect", "spatialRelationshipsCorrect",
     "noScientificContradiction", "noExtraScientificObjects", "clear2DComposition", "printReady",
-    "forbiddenTextDetected", "reason",
+    "forbiddenTextDetected", "noAnswerLeakage", "reason",
   ],
   additionalProperties: false,
 };
@@ -267,10 +268,11 @@ async function reviewImage(
         role: "user",
         parts: [
           { text: [
-            "راجع الأصل 2D التالي مقارنة بالسؤال وسياق المراجعة والمواصفة الدلالية.",
+            "راجع الأصل 2D التالي مقارنة بنص الطالب وسياق المراجعة والمواصفة الدلالية.",
             "وافق فقط إذا كان الرسم صحيحاً علمياً، والعناصر المطلوبة وعلاقاتها المكانية صحيحة، ولا توجد عناصر علمية زائدة أو تضليل بصري.",
-            "اعتبر أي نص/رقم/وحدة/سهم/رمز غير مطلوب صراحة عيباً.",
-            "هذا أصل نهائي كامل؛ يجب أن يخدم السؤال دون كشف الإجابة، ولا توجد طبقة خطية لاحقة ستصلح أخطاءه.",
+            "اعتبر أي نص/رقم/وحدة/سهم/رمز غير موجود في معلومات الطالب أو غير لازم للمشهد عيباً.",
+            "ارفض الصورة إذا كشفت إجابة السؤال أو اتجاه النتيجة أو العلاقة التي يجب على الطالب استنتاجها، حتى لو كان الرسم جميلاً وصحيحاً علمياً.",
+            "هذا أصل نهائي كامل؛ لا توجد طبقة تخطيطية خطية لاحقة ستصلح أخطاءه.",
             illustrationBrief(request),
           ].join("\n\n") },
           { inlineData: { mimeType: image.mimeType, data: image.data } },
@@ -300,6 +302,7 @@ async function reviewImage(
     clear2DComposition: record.clear2DComposition === true,
     printReady: record.printReady === true,
     forbiddenTextDetected: record.forbiddenTextDetected === true,
+    noAnswerLeakage: record.noAnswerLeakage === true,
     reason: typeof record.reason === "string" ? record.reason.trim().slice(0, 500) : "",
   };
   review.approved = review.approved
@@ -310,7 +313,8 @@ async function reviewImage(
     && review.noExtraScientificObjects
     && review.clear2DComposition
     && review.printReady
-    && !review.forbiddenTextDetected;
+    && !review.forbiddenTextDetected
+    && review.noAnswerLeakage;
   log(requestId, "visual_image_reviewed", { attempt, approved: review.approved, reason: review.reason, durationMs: Date.now() - startedAt });
   return review;
 }
@@ -325,6 +329,7 @@ function reviewerCorrection(review: VisualReview): string {
   if (!review.clear2DComposition) failures.push("بسّط التكوين واجعله واضحاً كرسوم الكتب المدرسية");
   if (!review.printReady) failures.push("حسّن الوضوح للطباعة");
   if (review.forbiddenTextDetected) failures.push("احذف النصوص والأرقام والرموز غير المطلوبة");
+  if (!review.noAnswerLeakage) failures.push("أعد بناء المشهد دون إظهار الإجابة أو اتجاه النتيجة التي يجب على الطالب استنتاجها");
   return `${review.reason || "أعد بناء الرسم وفق المواصفة."}${failures.length ? `؛ ${failures.join("؛ ")}` : ""}`.slice(0, 900);
 }
 

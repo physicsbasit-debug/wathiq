@@ -23,15 +23,22 @@ GEMINI_VISUAL_PLANNER_MODEL
 GEMINI_IMAGE_MODEL
 ```
 
-## ترتيب الاستعادة
+## نشر 0.3.18 — 2D Visual Reset
 
-1. ارفع حزمة `changed_files_only` فوق المستودع الحالي وانتظر نجاح GitHub Actions وPages.
-2. **لا تشغّل SQL جديدًا**؛ Runtime Contract v0.3.12 وSchema 0.3.15 يبقيان كما هما.
-3. هذه المرحلة لا تضيف Provider Protocol جديدًا ولا تتطلب Secret جديدًا.
-4. لا تعِد نشر Edge Functions تلقائيًا لمجرد رفع الحزمة. بعد النشر افحص `assessment-generation-worker/health`: يجب أن يبقى `providerProtocolVersion=5`, `thinItemContractVersion=1`, `visualPlannerVersion=2`, `databaseContractVersion=1`.
-5. إذا كان الـWorker الحي أقدم من ذلك فقط، أعد نشر `assessment-generation-worker` من المستودع ثم أعد فحص health.
-6. لا تعِد نشر `science-visual-generation` في مرحلة الاستعادة قبل فحص نسخته الحية؛ ملف المستودع أعيد إلى آخر نسخة محلية اجتازت الفحوص، لكن حالة النشر الحي لا يمكن إثباتها من هذه البيئة.
-7. نفّذ تحديثًا قويًا للصفحة ثم اختبار قبول حي كامل: تسجيل الدخول → اختيار صف/مادة/موضوع → إنشاء الدورة → أول مفردة → استكمال/تحديث الصفحة → المرئيات → المراجعة → Word/PDF.
+1. ارفع حزمة `changed_files_only` فوق 0.3.17 وانتظر نجاح GitHub Actions وPages.
+2. **لا تشغّل SQL جديدًا.** Runtime Contract v0.3.12 وSchema الحاليان لا يتغيران.
+3. لا Secret جديدًا؛ يستخدم مسار الصور `GEMINI_IMAGE_MODEL` الحالي إن كان مضبوطًا، وإلا fallback الموجود في الوظيفة.
+4. أعد نشر **وظيفتين فقط** من ملفات المستودع الحالية كاملة، لا ترقيعًا يدويًا:
+
+```text
+supabase/functions/assessment-generation-worker/index.ts
+supabase/functions/science-visual-generation/index.ts
+```
+
+5. لا تعِد نشر `assessment-generation-jobs` أو `question-visual-jobs`.
+6. نفّذ تحديثًا قويًا للصفحة.
+7. اختبار القبول الحي: أنشئ اختبارًا يحتوي زنبركًا/قوة/دائرة أو مشهدًا علميًا غير رقمي، وتأكد أن واثق لا يعرض الرسم التخطيطي الأسود القديم بل ينشئ مهمة `context_scene` ثم أصل 2D مدقق. اختبر أيضًا جدولًا أو رسمًا بيانيًا وتأكد أنه يبقى حتميًا بلا مهمة صورة.
+8. القبول النهائي يتطلب تجربة Supabase/Gemini الحية؛ اختبارات المستودع لا تثبت نجاح نموذج الصور الخارجي.
 
 ## الفحص قبل الرفع
 
@@ -40,12 +47,3 @@ npm run check
 ```
 
 `dist/` ناتج بناء ولا يحفظ في `main`.
-
-## تحديث 0.3.17
-
-1. ارفع `changed_files_only` فوق 0.3.16 وانتظر نجاح Actions وPages.
-2. لا SQL جديد.
-3. لا Secret جديد.
-4. لا تعِد نشر أي Edge Function؛ التغيير Client-side في منسق التوليد والواجهة فقط.
-5. نفّذ تحديثًا قويًا للصفحة.
-6. اختبار القبول: أول مفردة وحدها، ثم مفردتان بالتوازي؛ وعند ضغط مؤقت هبوط إلى واحدة ثم عودة تلقائية إلى اثنتين بعد التعافي.

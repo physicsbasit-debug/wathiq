@@ -8,9 +8,7 @@ export type ExamTitleOption = "الاختبار القصير الأول" | "ال
 export type AssessmentType = "اختبار قصير" | "اختبار نهائي";
 export type AssessmentGenerationMode = "progressive_items_v1";
 export type CambridgeProgrammeId = "primary" | "lower_secondary" | "igcse";
-export type QuestionVisualType = "none" | "context_scene" | "line_graph" | "bar_chart" | "pressure_diagram" | "circuit_diagram" | "electrostatic_diagram" | "data_table" | "instrument_scale" | "ray_diagram" | "force_diagram" | "flow_diagram";
-export type CircuitComponent = "battery" | "switch_open" | "switch_closed" | "lamp" | "resistor" | "motor" | "ammeter" | "voltmeter";
-
+export type QuestionVisualType = "none" | "context_scene" | "line_graph" | "bar_chart" | "data_table";
 export interface QuestionVisualPoint {
   x: number;
   y: number;
@@ -20,44 +18,6 @@ export interface QuestionVisualPoint {
 export interface QuestionVisualSeries {
   label: string;
   points: QuestionVisualPoint[];
-}
-
-export interface QuestionVisualVector {
-  label: string;
-  x: number;
-  y: number;
-  dx: number;
-  dy: number;
-  magnitude: number;
-  unit?: string;
-  valueLabel?: string;
-}
-
-
-export interface QuestionVisualAnchor {
-  kind: "pivot" | "point" | "support" | "object";
-  label: string;
-  x: number;
-  y: number;
-}
-
-export interface QuestionVisualSegment {
-  kind: "rod" | "surface" | "path";
-  label: string;
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
-}
-
-export interface QuestionVisualDimension {
-  label: string;
-  value: number;
-  unit: string;
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
 }
 
 export type QuestionVisualIllustrationAssetKind = "scene_2d";
@@ -114,16 +74,11 @@ export interface QuestionVisualSpec {
   series: QuestionVisualSeries[];
   labels: string[];
   values: number[];
-  components: CircuitComponent[];
   annotations: string[];
   tableColumns: string[];
   tableRows: string[];
   tableCells: string[][];
   hiddenCells: string[];
-  vectors: QuestionVisualVector[];
-  anchors: QuestionVisualAnchor[];
-  segments: QuestionVisualSegment[];
-  dimensions: QuestionVisualDimension[];
   illustration?: QuestionVisualIllustration;
 }
 

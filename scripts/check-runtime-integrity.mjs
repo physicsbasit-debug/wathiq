@@ -34,6 +34,9 @@ const app = await readFile(join(ROOT, "src/app.ts"), "utf8");
 const blueprint = await readFile(join(ROOT, "src/assessment-engine/blueprint.ts"), "utf8");
 const contracts = await readFile(join(ROOT, "src/assessment-engine/contracts.ts"), "utf8");
 const visualGenerator = await readFile(join(ROOT, "supabase/functions/science-visual-generation/index.ts"), "utf8");
+const questionVisual = await readFile(join(ROOT, "src/question-visual.ts"), "utf8");
+const visualTypes = await readFile(join(ROOT, "src/types.ts"), "utf8");
+const generationWorker = await readFile(join(ROOT, "supabase/functions/assessment-generation-worker/index.ts"), "utf8");
 
 // Freeze gate: يمنع استبدال واجهة واثق الكاملة بواجهة تجريبية صغيرة دون قرار معماري صريح وتحديث هذا العقد.
 if (app.split("\n").length < 1200) failures.push("src/app.ts تقلصت دون تحديث عقد الاستعادة (<1200 سطر).");
@@ -82,6 +85,45 @@ if (/function\s+buildAssessmentBlueprint[\s\S]{0,200}return\s*\{\s*\}/u.test(con
 
 const parseJsonDefinitions = visualGenerator.match(/function\s+parseJson\s*\(/gu) ?? [];
 if (parseJsonDefinitions.length > 1) failures.push("science-visual-generation يحتوي تعريفات parseJson مكررة.");
+
+// Visual Reset 0.3.18: old schematic renderers are forbidden in production. Legacy names may exist only in the read-only migration set.
+const forbiddenSchematicRenderers = [
+  "renderForceDiagram", "renderCircuitDiagram", "renderRayDiagram",
+  "renderPressureDiagram", "renderFlowDiagram", "renderInstrumentScale",
+];
+for (const renderer of forbiddenSchematicRenderers) {
+  if (questionVisual.includes(`function ${renderer}`)) failures.push(`عاد مولد تخطيطي محظور إلى src/question-visual.ts: ${renderer}`);
+}
+
+const oldSchematicModes = [
+  "force_diagram", "circuit_diagram", "electrostatic_diagram", "ray_diagram",
+  "pressure_diagram", "flow_diagram", "instrument_scale",
+];
+for (const mode of oldSchematicModes) {
+  if (generationWorker.includes(mode)) failures.push(`عاد النوع التخطيطي القديم إلى Worker: ${mode}`);
+}
+
+if (!/export\s+type\s+QuestionVisualType\s*=\s*"none"\s*\|\s*"context_scene"\s*\|\s*"line_graph"\s*\|\s*"bar_chart"\s*\|\s*"data_table"/u.test(visualTypes)) {
+  failures.push("QuestionVisualType لم يعد محصورًا في none/context_scene والجدول/الرسم البياني الحتمي.");
+}
+for (const legacyGeometrySymbol of ["CircuitComponent", "QuestionVisualVector", "QuestionVisualAnchor", "QuestionVisualSegment", "QuestionVisualDimension"]) {
+  if (visualTypes.includes(legacyGeometrySymbol)) failures.push(`بقايا هندسة المولد التخطيطي القديم ما زالت في src/types.ts: ${legacyGeometrySymbol}`);
+}
+if (!/LEGACY_SCHEMATIC_VISUAL_TYPES/u.test(questionVisual) || !/return\s+"context_scene"/u.test(questionVisual)) {
+  failures.push("جسر ترحيل المرئيات التخطيطية القديمة إلى context_scene مفقود.");
+}
+if (!/wathiq-science-2d-reset-v3/u.test(visualGenerator) || !/noAnswerLeakage/u.test(visualGenerator)) {
+  failures.push("science-visual-generation لا يطبق عقد 2D v3 مع بوابة منع تسريب الإجابة.");
+}
+if (!/studentVisibleQuestion\s*:\s*\{/u.test(generationWorker)) {
+  failures.push("Visual Planner لا يستخدم studentVisibleQuestion بعد Visual Reset.");
+}
+const plannerStart = generationWorker.indexOf('role: "typed_scientific_visual_planner"');
+const plannerEnd = plannerStart >= 0 ? generationWorker.indexOf("const planned = await callJsonModel", plannerStart) : -1;
+const plannerPrompt = plannerStart >= 0 && plannerEnd > plannerStart ? generationWorker.slice(plannerStart, plannerEnd) : "";
+if (!plannerPrompt || /\banswer\s*:/u.test(plannerPrompt) || /\bmarkScheme\s*:/u.test(plannerPrompt)) {
+  failures.push("Visual Planner عاد لرؤية answer/markScheme أو تعذر إثبات عزله عنهما.");
+}
 
 if (failures.length) {
   console.error("FAIL: runtime integrity gate");

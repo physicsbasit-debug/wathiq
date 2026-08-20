@@ -65,19 +65,21 @@ test("عقد التوليد لا يحمل قوالب تأليف أو أهداف�
   assert.doesNotMatch(worker, /needsReview\s*:/);
 });
 
-test("المرئيات العلمية الدقيقة ترسم من بيانات منظمة والمشهد السياقي وحده يستخدم نموذج الصور", async () => {
+test("المولد التخطيطي القديم مقتلع: المشاهد العلمية 2D والجداول والرسوم البيانية فقط حتمية", async () => {
   const visual = await text("src/question-visual.ts");
   const edge = await text("supabase/functions/science-visual-generation/index.ts");
   const worker = await text("supabase/functions/assessment-generation-worker/index.ts");
   assert.match(visual, /return spec\.type === "context_scene"/);
-  assert.match(visual, /renderForceDiagram/);
-  assert.match(visual, /renderCircuitDiagram/);
-  assert.match(visual, /renderRayDiagram/);
-  assert.match(worker, /force_diagram/);
-  assert.match(worker, /مخطط مرئي علمي متخصص/);
-  assert.match(edge, /المخططات العلمية ذات البيانات والاتجاهات تُرسم حتميًا داخل واثق/);
+  assert.match(visual, /LEGACY_SCHEMATIC_VISUAL_TYPES/);
+  for (const renderer of ["renderForceDiagram", "renderCircuitDiagram", "renderRayDiagram", "renderPressureDiagram", "renderFlowDiagram", "renderInstrumentScale"]) {
+    assert.doesNotMatch(visual, new RegExp(`function\s+${renderer}`), renderer);
+  }
+  for (const oldType of ["force_diagram", "circuit_diagram", "electrostatic_diagram", "ray_diagram", "pressure_diagram", "flow_diagram", "instrument_scale"]) {
+    assert.doesNotMatch(worker, new RegExp(oldType), oldType);
+  }
   assert.match(edge, /gemini-3\.1-flash-image/);
-  assert.match(edge, /wathiq-context-scene-v2/);
+  assert.match(edge, /wathiq-science-2d-reset-v3/);
+  assert.match(edge, /noAnswerLeakage/);
 });
 
 test("مسار الصور يحمل هوية كامبريدج ويعمل أيضًا في IGCSE بلا رقم مرحلة", async () => {

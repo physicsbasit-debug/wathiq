@@ -1,5 +1,16 @@
 # التاريخ المختصر
 
+## 0.3.18 — 2D Visual Reset
+
+- اقتُلع مولد الرسوم التخطيطية الخطية القديم من runtime بعد أن أثبتت ملفات قبول حية أن بعض مخططات القوى/الزنبرك خرجت كأشكال سوداء غير صالحة للاختبار.
+- حُصرت الأنواع البصرية الجديدة في `none`, `illustration_2d`, `data_table`, `line_graph`, `bar_chart`.
+- كل مشهد علمي غير رقمي يتحول إلى `context_scene` ويدخل مسار صورة 2D المدققة؛ الجداول والرسوم البيانية فقط تبقى حتمية.
+- أزيلت هندسة vectors/components/anchors/segments/dimensions من Worker الحالي ومسار التخطيط الخطي.
+- Visual Planner للبيانات أصبح يرى `studentVisibleQuestion` فقط دون `answer` أو `markScheme`.
+- مراجع الصور يفرض `noAnswerLeakage` وعقد prompt جديد `wathiq-science-2d-reset-v3`.
+- المسودات القديمة ذات الأنواع التخطيطية تُرحّل عند القراءة إلى `context_scene` دون إعادة استخدام هندستها القديمة.
+- لا SQL ولا Secret جديد. النشر يحتاج `assessment-generation-worker` و`science-visual-generation` فقط.
+
 ## 0.3.17 — Adaptive Parallel Generation
 
 - كشف اختبار القبول الحي أن الواجهة كانت تنشئ المنسق بـ`concurrency=1`، لذلك لم تعد بوابة المفردة الأولى إلى أي توازٍ فعلي بعد نجاحها.
@@ -146,18 +157,6 @@
 - ثُبتت `actions/checkout@v6` في فحص واثق والنشر.
 - تثبيت الاعتماديات في GitHub Actions لا ينشئ `package-lock.json` غير المتتبع.
 - لا تغيير في منطق Cambridge-first أو التوليد أو Supabase.
-
-# التاريخ المختصر
-
-## 0.3.13 — Thin Item Contract + Typed Visual Planner
-- فصل عقد التأليف والمراجعة عن بيانات المرئيات الهندسية التفصيلية بعد ظهور `MODEL_REQUEST_INVALID` مع Structured Output الرئيسي الكبير.
-- أصبح المؤلف والمراجع يعيدان `visualIntent` فقط (`mode` + `brief`) مع نص المفردة ونموذج التصحيح.
-- أضيف Visual Planner متخصص لكل نوع مرئي منظم؛ كل استدعاء يستخدم JSON Schema صغيرًا لا يحتوي إلا حقول النوع المطلوب.
-- `none` و`illustration_2d` لا يدخلان Visual Planner المنظم؛ المشهد السياقي يبقى في مسار الصور 2D الحالي.
-- أضيف preflight للعقود الفعلية: thin author + thin reviewer + typed force-diagram planner قبل بدء الدورة.
-- ارتفعت عقود الصحة إلى `visualContractVersion=3`, `thinItemContractVersion=1`, `visualPlannerVersion=1`, `providerProtocolVersion=3`.
-- لا SQL جديد؛ Runtime Contract v0.3.12 وقواعد quota/retry تبقى كما هي.
-- تم تحديث README والتوثيق التشغيلي والمعماري مع الإصدار.
 
 ## 0.3.0 — Cambridge Core Purge
 
