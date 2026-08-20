@@ -52,6 +52,13 @@ for (const marker of requiredAppMarkers) {
   if (!marker.test(app)) failures.push(`مسار UI أساسي مفقود من src/app.ts: ${marker}`);
 }
 
+if (!/new\s+ProgressiveAssessmentGenerationOrchestrator\([\s\S]{0,240}concurrency:\s*2/u.test(app)) {
+  failures.push("مسار الإنتاج لا يفعّل التوازي التشغيلي المحافظ (concurrency=2) بعد بوابة المفردة الأولى.");
+}
+if (/new\s+ProgressiveAssessmentGenerationOrchestrator\([\s\S]{0,240}concurrency:\s*1/u.test(app)) {
+  failures.push("عاد مسار الإنتاج إلى concurrency=1 الدائم؛ هذا يلغي التوازي بعد نجاح بوابة المفردة الأولى.");
+}
+
 if (/export\s+function\s+renderQuestionVisualForPaper\s*\(/u.test(app)) {
   failures.push("src/app.ts يعيد تعريف renderQuestionVisualForPaper بدل استخدام الوحدة الأصلية.");
 }

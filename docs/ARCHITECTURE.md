@@ -1,4 +1,4 @@
-# معمارية واثق 0.3.16
+# معمارية واثق 0.3.17
 
 ## خط أساس الاستعادة 0.3.16
 
@@ -163,3 +163,7 @@ Deterministic renderer
 - لذلك لا يرسل Visual Planner مخطط JSON Schema هندسيًا إلى Gemini. يطلب JSON خفيفًا فقط (`responseMimeType=application/json`) ويصف الشكل المتوقع في التعليمات.
 - واثق يعامل الخرج كبيانات غير موثوقة: JSON.parse → normalizeVisual → validateContent → buildVisualSpec. لا يصل أي مرئي ناقص أو غير متسق إلى النتيجة الجاهزة.
 - preflight العام لا يشغّل Visual Planner؛ المسار الاختياري لا يحق له حجب دورة اختبار كاملة.
+
+## Adaptive Parallel Generation — 0.3.17
+
+المسار التشغيلي: أول مفردة منفردة → أول `ready` → حتى مفردتين بالتوازي. عند وجود إشارة ضغط مؤقتة من المزود يهبط المنسق إلى مفردة واحدة، ويظل التأجيل داخل `retry_pending`. بعد زوال إشارة الضغط من الـsnapshot يستعيد التوازي 2 تلقائيًا. هذا توازٍ محافظ للـthroughput ولا يغيّر ترتيب Author/Reviewer داخل المفردة الواحدة.

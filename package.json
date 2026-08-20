@@ -1,9 +1,9 @@
 {
   "name": "wathiq",
-  "version": "0.3.16",
+  "version": "0.3.17",
   "private": true,
   "type": "module",
-  "description": "واثق: استعادة خط التشغيل الكامل بعد انحراف Wathiq 2.0، مع الإبقاء على Durable First-Item Provider Gate من 0.3.15 وإضافة حارس سلامة يمنع stubs وtype-only reachability الوهمية.",
+  "description": "واثق: توليد تدريجي متكيف يحافظ على بوابة المفردة الأولى، ثم يشغّل مفردتين بالتوازي ويهبط مؤقتًا إلى مفردة واحدة عند ضغط المزود قبل استعادة التوازي تلقائيًا.",
   "scripts": {
     "build": "node scripts/build.mjs",
     "dev": "node scripts/serve.mjs",

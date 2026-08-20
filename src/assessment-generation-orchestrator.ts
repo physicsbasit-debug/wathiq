@@ -177,15 +177,18 @@ export class ProgressiveAssessmentGenerationOrchestrator {
 
   private observePressure(snapshot: AssessmentGenerationRunSnapshot, now: number): number {
     let pressureUntil = 0;
+    let hasPressureSignal = false;
     for (const item of snapshot.items) {
       if (!TRANSIENT_PRESSURE_CODES.has(item.errorCode)) continue;
       if (item.status !== "retry_pending" && item.status !== "failed") continue;
-      this.pressureMode = true;
+      hasPressureSignal = true;
       const updatedAt = Date.parse(item.updatedAt);
       if (!Number.isFinite(updatedAt)) continue;
       const retryAt = Date.parse(item.retryAfterAt);
       pressureUntil = Math.max(pressureUntil, Number.isFinite(retryAt) ? retryAt : updatedAt + transientBackoffMs(item.errorCode, item.transportRetryCount));
     }
+    // الضغط حالة آنية لا ذاكرة دائمة: بعد تعافي المفردة لا نبقي بقية الدورة محصورة في مسار تسلسلي واحد.
+    this.pressureMode = hasPressureSignal;
     return pressureUntil > now ? pressureUntil : 0;
   }
 

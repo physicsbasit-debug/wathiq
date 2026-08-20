@@ -85,7 +85,7 @@ const assessmentGenerationWorkerService = ownerSessionService
   ? new AssessmentGenerationWorkerService(runtimeConfig, () => ownerSessionService.getActiveSession())
   : null;
 let assessmentGenerationOrchestrator = assessmentGenerationJobService && assessmentGenerationWorkerService
-  ? new ProgressiveAssessmentGenerationOrchestrator(assessmentGenerationJobService, assessmentGenerationWorkerService, { concurrency: 1 })
+  ? new ProgressiveAssessmentGenerationOrchestrator(assessmentGenerationJobService, assessmentGenerationWorkerService, { concurrency: 2 })
   : null;
 const visualJobService = ownerSessionService
   ? new VisualJobService(runtimeConfig, () => ownerSessionService.getActiveSession())

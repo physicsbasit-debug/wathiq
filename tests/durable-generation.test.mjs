@@ -399,6 +399,98 @@ test("v0.3.15 يستخدم أول مفردة حقيقية كبوابة للمز�
   assert.deepEqual(dispatched, [itemId, item2], "يجب اختبار المزود بالمفردة الأولى فقط قبل السماح بتوسيع التوازي");
 });
 
+test("v0.3.17 يشغّل مفردتين معًا بعد نجاح بوابة المفردة الأولى", async () => {
+  const item2 = "123e4567-e89b-42d3-a456-426614174002";
+  const item3 = "123e4567-e89b-42d3-a456-426614174003";
+  const mkItem = (id, order, status = "queued") => ({
+    ...baseItem(status), id, planItemId: `plan-${order}`, contractHash: String(order).repeat(64).slice(0,64),
+  });
+  const queuedRun = {
+    ...run("running", "queued"), totalItems: 3, completedItems: 0,
+    items: [mkItem(itemId, 1), mkItem(item2, 2), mkItem(item3, 3)],
+  };
+  const oneReadyRun = {
+    ...queuedRun, completedItems: 1,
+    items: [mkItem(itemId, 1, "ready"), mkItem(item2, 2), mkItem(item3, 3)],
+  };
+  const doneRun = {
+    ...queuedRun, status: "completed", completedItems: 3,
+    items: [mkItem(itemId, 1, "ready"), mkItem(item2, 2, "ready"), mkItem(item3, 3, "ready")],
+  };
+  let listCount = 0;
+  const dispatchBatches = [];
+  let currentBatch = [];
+  const jobs = {
+    enqueue: async () => ({ run: queuedRun, created: true, requestId: "r" }),
+    list: async () => ({ run: ++listCount === 1 ? oneReadyRun : doneRun, created: false, requestId: "r" }),
+  };
+  const worker = {
+    processItem: async (id) => {
+      currentBatch.push(id);
+      queueMicrotask(() => {});
+      return { accepted: true, itemId: id, requestId: "r" };
+    },
+  };
+  const sleep = async () => {
+    if (currentBatch.length) {
+      dispatchBatches.push(currentBatch);
+      currentBatch = [];
+    }
+  };
+  const orchestrator = new ProgressiveAssessmentGenerationOrchestrator(jobs, worker, {
+    concurrency: 2, pollIntervalMs: 250, dispatchCooldownMs: 1_000, sleep,
+  });
+  await orchestrator.start({}, []);
+  if (currentBatch.length) dispatchBatches.push(currentBatch);
+  assert.deepEqual(dispatchBatches[0], [itemId], "يجب أن تبقى المفردة الأولى بوابة مزود منفردة");
+  assert.deepEqual(new Set(dispatchBatches[1]), new Set([item2, item3]), "بعد أول ready يجب تشغيل مسارين بالتوازي");
+});
+
+test("v0.3.17 يخرج من pressureMode بعد زوال إشارة الضغط ويستعيد التوازي", async () => {
+  const item2 = "123e4567-e89b-42d3-a456-426614174002";
+  const item3 = "123e4567-e89b-42d3-a456-426614174003";
+  const item4 = "123e4567-e89b-42d3-a456-426614174004";
+  const nowIso = new Date(1_000_000).toISOString();
+  const pastIso = new Date(900_000).toISOString();
+  const mkItem = (id, order, status = "queued", extra = {}) => ({
+    ...baseItem(status), id, planItemId: `plan-${order}`, contractHash: String(order).repeat(64).slice(0,64), updatedAt: pastIso, ...extra,
+  });
+  const initial = {
+    ...run("running", "queued"), totalItems: 4, completedItems: 1,
+    items: [
+      mkItem(itemId, 1, "ready"),
+      mkItem(item2, 2, "retry_pending", { errorCode: "MODEL_UNAVAILABLE", retryAfterAt: pastIso, transportRetryCount: 1 }),
+      mkItem(item3, 3),
+      mkItem(item4, 4),
+    ],
+  };
+  const recovered = {
+    ...initial, completedItems: 2,
+    items: [mkItem(itemId, 1, "ready"), mkItem(item2, 2, "ready"), mkItem(item3, 3), mkItem(item4, 4)],
+  };
+  const done = {
+    ...recovered, status: "completed", completedItems: 4,
+    items: [mkItem(itemId, 1, "ready"), mkItem(item2, 2, "ready"), mkItem(item3, 3, "ready"), mkItem(item4, 4, "ready")],
+  };
+  let listCount = 0;
+  const batches = [];
+  let currentBatch = [];
+  const jobs = {
+    enqueue: async () => ({ run: initial, created: true, requestId: "r" }),
+    list: async () => ({ run: ++listCount === 1 ? recovered : done, created: false, requestId: "r" }),
+  };
+  const worker = { processItem: async (id) => { currentBatch.push(id); return { accepted: true, itemId: id, requestId: "r" }; } };
+  const sleep = async () => { if (currentBatch.length) { batches.push(currentBatch); currentBatch = []; } };
+  const orchestrator = new ProgressiveAssessmentGenerationOrchestrator(jobs, worker, {
+    concurrency: 2, pollIntervalMs: 250, dispatchCooldownMs: 1_000, sleep, now: () => 1_000_000,
+  });
+  await orchestrator.start({}, []);
+  if (currentBatch.length) batches.push(currentBatch);
+  assert.deepEqual(batches[0], [item2], "مع إشارة ضغط قائمة يجب اختبار التعافي بمفردة واحدة فقط");
+  assert.deepEqual(new Set(batches[1]), new Set([item3, item4]), "بعد زوال الضغط يجب استعادة concurrency=2 تلقائيًا");
+  assert.equal(nowIso, new Date(1_000_000).toISOString());
+});
+
 test("v0.3.15 يحافظ على أخطاء النقل داخل دورة المفردة بدل منع enqueue", async () => {
   const { readFile } = await import("node:fs/promises");
   const worker = await readFile(new URL("../supabase/functions/assessment-generation-worker/index.ts", import.meta.url), "utf8");
