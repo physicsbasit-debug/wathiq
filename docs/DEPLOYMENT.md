@@ -1,4 +1,4 @@
-# نشر واثق 0.3.17 — Adaptive Parallel Generation
+# نشر واثق 0.3.19 — Server-Owned 2D Visual Jobs
 
 ## متغيرات GitHub Pages
 
@@ -22,6 +22,21 @@ GEMINI_REVIEW_MODEL
 GEMINI_VISUAL_PLANNER_MODEL
 GEMINI_IMAGE_MODEL
 ```
+
+## نشر 0.3.19 — Server-Owned 2D Visual Jobs
+
+1. ارفع حزمة `changed_files_only` فوق 0.3.18 وانتظر نجاح GitHub Actions وPages.
+2. **لا تشغّل SQL جديدًا** ولا تضف Secret جديدًا.
+3. أعد نشر هاتين الوظيفتين فقط من ملفات المستودع الحالية كاملة:
+
+```text
+supabase/functions/assessment-generation-worker/index.ts
+supabase/functions/question-visual-jobs/index.ts
+```
+
+4. لا حاجة لإعادة نشر `science-visual-generation` إذا كانت نسخة 0.3.18 الحالية منشورة، ولا تعِد نشر `assessment-generation-jobs`.
+5. نفّذ تحديثًا قويًا للصفحة ثم أنشئ اختبارًا جديدًا يحتاج `context_scene`.
+6. القبول: لا تظهر عبارة «لم تُنشأ مهمة الصورة بعد» بعد اكتمال المفردة؛ يجب أن تظهر مهمة `queued/generating/validating/ready`. وإذا تعذرت خدمة الصور يجب ألا تصبح المفردة `ready` بلا مهمة.
 
 ## نشر 0.3.18 — 2D Visual Reset
 

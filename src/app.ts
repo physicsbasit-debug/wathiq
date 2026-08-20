@@ -231,6 +231,9 @@ function invalidateGeneratedQuestions(): void {
   state.draft.plan = [];
   state.draft.selectedProposalByPlanItem = {};
   state.draft.visualJobs = {};
+  lastAutoVisualEnqueueSignature = "";
+  if (visualJobAutoEnqueueTimer) window.clearTimeout(visualJobAutoEnqueueTimer);
+  visualJobAutoEnqueueTimer = undefined;
   stopVisualJobPolling();
   state.draft.generationRunId = "";
   state.draft.generationEpoch = Math.max(1, state.draft.generationEpoch + 1);
@@ -1193,10 +1196,11 @@ function applyVisualJobSnapshots(jobs: QuestionVisualJobSnapshot[]): boolean {
 function currentAutoVisualEnqueueSignature(): string {
   if (state.authStatus !== "متصل" || state.draft.grade === null) return "";
   // هوية الحاجة البصرية لا تتغير عند وصول الأصل؛ هذا يمنع إعادة enqueue بعد الجاهزية.
-  return visualJobItems(state.draft, visualJobSubject())
+  const itemSignature = visualJobItems(state.draft, visualJobSubject())
     .map((item) => `${item.planItemId}:${item.requiredMode}`)
     .sort()
     .join("|");
+  return itemSignature ? `${state.draft.id}|${itemSignature}` : "";
 }
 
 function scheduleContextSceneVisualJobSync(): void {

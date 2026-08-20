@@ -70,3 +70,12 @@
 - PASS إذا هبط التنفيذ إلى مفردة واحدة عند `retry_pending` المؤقت.
 - FAIL إذا بقي المنسق في `pressureMode` بعد زوال جميع إشارات الضغط من snapshot.
 - لا يجوز تحقيق السرعة بحذف Reviewer أو تقليل التحقق العلمي أو تشغيل Visual Planner قبل الاعتماد.
+
+## Server-Owned Visual Job Gate — 0.3.19
+
+- FAIL إذا أصبحت مفردة `context_scene` بحالة `ready` ولم توجد لها مهمة في `question_visual_jobs`.
+- FAIL إذا أعادت `question-visual-jobs` `jobs=[]` وتعامل العميل أو العامل معها كنجاح.
+- يجب أن يحدث ضمان المهمة داخل `assessment-generation-worker` قبل `complete_assessment_generation_item`.
+- فشل مؤقت في إنشاء المهمة يجب أن يعيد المفردة إلى `retry_pending` ولا يستهلك محاولة محتوى.
+- العميل طبقة reconciliation فقط؛ نجاح الاختبار يجب ألا يعتمد على بقاء الصفحة مفتوحة 250ms بعد اكتمال السؤال.
+

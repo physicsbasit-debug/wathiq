@@ -518,3 +518,21 @@ test("v0.3.18 يصف عقد JSON المحلي للبيانات فقط ويمنع
   assert.doesNotMatch(body, /markScheme:/);
   assert.match(worker, /validateContent\(content, contract\)/);
 });
+
+
+test("v0.3.19 ينشئ مهمة context_scene خادميًا قبل تحويل المفردة إلى ready", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const worker = await readFile(new URL("../supabase/functions/assessment-generation-worker/index.ts", import.meta.url), "utf8");
+  const start = worker.indexOf("async function processItem(");
+  const end = worker.indexOf("function parseAuthorCheckpoint", start);
+  assert.ok(start >= 0 && end > start, "تعذر تحديد processItem وضمان الصورة");
+  const body = worker.slice(start, end);
+  const ensure = body.indexOf("await ensureContextSceneVisualJob(");
+  const complete = body.indexOf('admin.rpc("complete_assessment_generation_item"');
+  assert.ok(ensure >= 0, "يجب أن ينشئ العامل مهمة الصورة خادميًا");
+  assert.ok(complete > ensure, "يجب ضمان مهمة الصورة قبل اعتماد المفردة ready");
+  assert.match(worker, /QUESTION_VISUAL_JOBS_ENDPOINT/);
+  assert.match(worker, /Authorization:\s*`Bearer \$\{input\.accessToken\}`/);
+  assert.match(worker, /VISUAL_JOB_NOT_CREATED/);
+  assert.match(worker, /transport_backoff/);
+});

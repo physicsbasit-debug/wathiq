@@ -155,7 +155,14 @@ export class VisualJobService {
     if (!items.length) return [];
     const jobs: QuestionVisualJobSnapshot[] = [];
     for (let index = 0; index < items.length; index += JOB_BATCH_SIZE) {
-      jobs.push(...await this.post({ action: "enqueue", draftId, items: items.slice(index, index + JOB_BATCH_SIZE) }));
+      const batch = items.slice(index, index + JOB_BATCH_SIZE);
+      const batchJobs = await this.post({ action: "enqueue", draftId, items: batch });
+      const returnedPlanItemIds = new Set(batchJobs.map((job) => job.planItemId));
+      const missing = batch.filter((item) => !returnedPlanItemIds.has(item.planItemId));
+      if (missing.length) {
+        throw new Error(`لم تنشئ منظومة الصور ${missing.length} مهمة ثنائية الأبعاد مطلوبة. لم يعتبر واثق الاستجابة الفارغة نجاحًا.`);
+      }
+      jobs.push(...batchJobs);
     }
     return jobs;
   }

@@ -125,6 +125,21 @@ if (!plannerPrompt || /\banswer\s*:/u.test(plannerPrompt) || /\bmarkScheme\s*:/u
   failures.push("Visual Planner عاد لرؤية answer/markScheme أو تعذر إثبات عزله عنهما.");
 }
 
+
+// Visual job durability 0.3.19: the server owns context-scene job creation; the client is reconciliation only.
+const serverVisualEnsure = generationWorker.indexOf("await ensureContextSceneVisualJob(");
+const serverCompleteItem = generationWorker.indexOf('admin.rpc("complete_assessment_generation_item"');
+if (serverVisualEnsure < 0 || serverCompleteItem < 0 || serverVisualEnsure > serverCompleteItem) {
+  failures.push("عامل المفردات لا يضمن إنشاء مهمة context_scene قبل اعتماد المفردة ready.");
+}
+if (!/QUESTION_VISUAL_JOBS_ENDPOINT/u.test(generationWorker) || !/VISUAL_JOB_NOT_CREATED/u.test(generationWorker)) {
+  failures.push("ضمان Visual Job الخادمي أو فشل jobs=[] الصريح مفقود من Worker.");
+}
+const visualJobsClient = await readFile(join(ROOT, "src/visual-jobs.ts"), "utf8");
+if (!/returnedPlanItemIds/u.test(visualJobsClient) || !/missing\.length/u.test(visualJobsClient)) {
+  failures.push("VisualJobService قد يعود لاعتبار jobs=[] نجاحًا صامتًا.");
+}
+
 if (failures.length) {
   console.error("FAIL: runtime integrity gate");
   failures.forEach((failure) => console.error(` - ${failure}`));

@@ -10,6 +10,7 @@ const AUTHOR_MODEL = Deno.env.get("GEMINI_AUTHOR_MODEL")?.trim() || Deno.env.get
 const REVIEW_MODEL = Deno.env.get("GEMINI_REVIEW_MODEL")?.trim() || AUTHOR_MODEL;
 const VISUAL_PLANNER_MODEL = Deno.env.get("GEMINI_VISUAL_PLANNER_MODEL")?.trim() || REVIEW_MODEL;
 const appOrigin = new URL(WATHIQ_APP_URL).origin;
+const QUESTION_VISUAL_JOBS_ENDPOINT = `${SUPABASE_URL}/functions/v1/question-visual-jobs`;
 const MAX_BODY_BYTES = 32_000;
 const LEASE_SECONDS = 240;
 const AUTHOR_MODEL_TIMEOUT_MS = 50_000;
@@ -222,12 +223,12 @@ Deno.serve(async (req) => {
     const itemId = requireUuid(payload.itemId, "معرف مهمة المفردة غير صالح.");
     await assertItemOwnedByUser(itemId, auth.userId);
     if (action === "process") {
-      EdgeRuntime.waitUntil(processItem(itemId, auth.userId, requestId).catch((error) => {
+      EdgeRuntime.waitUntil(processItem(itemId, auth.userId, auth.accessToken, requestId).catch((error) => {
         console.error(JSON.stringify({ event: "wathiq_assessment_generation_worker_background_failed", requestId, itemId, message: errorMessage(error) }));
       }));
       return json(req, { accepted: true, itemId, requestId }, 202);
     }
-    const outcome = await processItem(itemId, auth.userId, requestId);
+    const outcome = await processItem(itemId, auth.userId, auth.accessToken, requestId);
     return json(req, { accepted: true, itemId, outcome, requestId });
   } catch (error) {
     console.error(JSON.stringify({ event: "wathiq_assessment_generation_worker_request_failed", requestId, message: errorMessage(error) }));
@@ -258,7 +259,7 @@ async function assertDatabaseRuntimeContract(): Promise<Record<string, unknown>>
   return contract;
 }
 
-async function processItem(itemId: string, ownerId: string, requestId: string): Promise<WorkerOutcome> {
+async function processItem(itemId: string, ownerId: string, accessToken: string, requestId: string): Promise<WorkerOutcome> {
   const workerId = `wathiq-quality-reset:${requestId}`;
   let claimed: ClaimedItemRow | null = null;
   const totalStartedAt = Date.now();
@@ -356,6 +357,18 @@ async function processItem(itemId: string, ownerId: string, requestId: string): 
       requestId,
       durationMs: totalMs,
     };
+
+    // ضمان خادمي: لا تصبح المفردة جاهزة قبل وجود مهمة صورة دائمة لكل context_scene.
+    // المتصفح يزامن ويعرض فقط؛ إنشاء المهمة لم يعد معتمدًا على مؤقت UI.
+    await ensureContextSceneVisualJob({
+      contract,
+      content,
+      evidence,
+      visual,
+      accessToken,
+      requestId,
+    });
+
     const completed = await admin.rpc("complete_assessment_generation_item", {
       p_item_id: claimed.id,
       p_worker_id: workerId,
@@ -400,6 +413,97 @@ async function processItem(itemId: string, ownerId: string, requestId: string): 
     if (failed.error) throw databaseError("تعذر تسجيل فشل مفردة التوليد", failed.error);
     const status = failed.data === "retry_pending" ? "retry_pending" : failed.data === "stale" ? "stale" : "failed";
     return { itemId, status, errorCode: mapped.code, errorMessage: mapped.message };
+  }
+}
+
+interface ContextSceneVisualJobEnsureInput {
+  contract: ItemContract;
+  content: ModelContent;
+  evidence: Record<string, unknown>;
+  visual: Record<string, unknown>;
+  accessToken: string;
+  requestId: string;
+}
+
+async function ensureContextSceneVisualJob(input: ContextSceneVisualJobEnsureInput): Promise<void> {
+  if (input.visual.type !== "context_scene") return;
+  const questionText = `${input.content.stimulus ? `${input.content.stimulus} ` : ""}${input.content.text}`.trim();
+  const reviewSupport = typeof input.evidence.excerpt === "string" && input.evidence.excerpt.trim()
+    ? input.evidence.excerpt.trim()
+    : input.contract.lessonLabel;
+  let response: Response;
+  try {
+    response = await fetch(QUESTION_VISUAL_JOBS_ENDPOINT, {
+      method: "POST",
+      headers: {
+        apikey: SUPABASE_SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${input.accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        action: "enqueue",
+        draftId: input.contract.draftId,
+        items: [{
+          planItemId: input.contract.planItemId,
+          programmeId: input.contract.programmeId,
+          syllabusCode: input.contract.syllabusCode,
+          stageLabel: input.contract.stageLabel,
+          subject: input.contract.subject,
+          lessonLabel: input.contract.lessonLabel,
+          questionText,
+          reviewSupport,
+          previousAssetPath: "",
+          requiredMode: "replace",
+          visual: input.visual,
+        }],
+      }),
+    });
+  } catch {
+    throw workerError(
+      "VISUAL_JOB_ENQUEUE_UNAVAILABLE",
+      "تعذر الوصول إلى منظومة الصور ثنائية الأبعاد؛ أبقى واثق المفردة في الطابور بدل اعتمادها بلا صورة.",
+      "transport_backoff",
+      503,
+      20,
+    );
+  }
+
+  const text = await response.text();
+  let payload: unknown = null;
+  if (text) {
+    try { payload = JSON.parse(text) as unknown; }
+    catch { payload = { error: text }; }
+  }
+  if (!response.ok) {
+    const message = errorMessage(payload) || `تعذر إنشاء مهمة الصورة (${response.status}).`;
+    if (response.status === 408 || response.status === 429 || response.status >= 500) {
+      throw workerError("VISUAL_JOB_ENQUEUE_UNAVAILABLE", message, "transport_backoff", 503, 20);
+    }
+    throw workerError("VISUAL_JOB_ENQUEUE_FAILED", message, "none", 502);
+  }
+
+  const record = asRecord(payload);
+  const jobs = Array.isArray(record?.jobs) ? record.jobs : [];
+  const created = jobs.some((value) => {
+    const job = asRecord(value);
+    return job?.planItemId === input.contract.planItemId
+      && job?.requiredMode === "replace"
+      && typeof job?.status === "string";
+  });
+  if (!created) {
+    console.error(JSON.stringify({
+      event: "wathiq_context_scene_job_missing_after_enqueue",
+      requestId: input.requestId,
+      draftId: input.contract.draftId,
+      planItemId: input.contract.planItemId,
+    }));
+    throw workerError(
+      "VISUAL_JOB_NOT_CREATED",
+      "لم تنشئ منظومة الصور مهمة ثنائية الأبعاد للمفردة؛ أبقى واثق السؤال في الطابور وسيعيد المحاولة تلقائيًا.",
+      "transport_backoff",
+      503,
+      15,
+    );
   }
 }
 
@@ -1357,7 +1461,7 @@ async function sha256Hex(value: unknown): Promise<string> { return sha256Text(st
 async function sha256Text(value: string): Promise<string> { const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)); return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join(""); }
 
 async function readJsonBody(req: Request): Promise<unknown> { const declaredLength = Number(req.headers.get("Content-Length") ?? 0); if (Number.isFinite(declaredLength) && declaredLength > MAX_BODY_BYTES) throw httpError("حجم الطلب تجاوز الحد المسموح.", 413); const text = await req.text(); if (new TextEncoder().encode(text).byteLength > MAX_BODY_BYTES) throw httpError("حجم الطلب تجاوز الحد المسموح.", 413); try { return JSON.parse(text) as unknown; } catch { throw httpError("تعذر قراءة الطلب بصيغة JSON.", 400); } }
-async function requireUser(req: Request): Promise<{ userId: string }> { const authorization = req.headers.get("Authorization") ?? ""; if (!authorization.startsWith("Bearer ")) throw httpError("يلزم تسجيل الدخول إلى واثق.", 401); const { data, error } = await admin.auth.getUser(authorization.slice("Bearer ".length)); if (error || !data.user) throw httpError("جلسة المستخدم غير صالحة أو منتهية.", 401); return { userId: data.user.id }; }
+async function requireUser(req: Request): Promise<{ userId: string; accessToken: string }> { const authorization = req.headers.get("Authorization") ?? ""; if (!authorization.startsWith("Bearer ")) throw httpError("يلزم تسجيل الدخول إلى واثق.", 401); const accessToken = authorization.slice("Bearer ".length); const { data, error } = await admin.auth.getUser(accessToken); if (error || !data.user) throw httpError("جلسة المستخدم غير صالحة أو منتهية.", 401); return { userId: data.user.id, accessToken }; }
 function corsHeaders(req: Request): HeadersInit { const origin = req.headers.get("Origin") ?? ""; const allowedOrigin = origin === appOrigin || origin.startsWith("http://localhost:") || origin.startsWith("http://127.0.0.1:") ? origin : appOrigin; return { "Access-Control-Allow-Origin": allowedOrigin, "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type", "Access-Control-Allow-Methods": "POST, OPTIONS", "Vary": "Origin" }; }
 function json(req: Request, payload: unknown, status = 200): Response { return new Response(JSON.stringify(payload), { status, headers: { ...corsHeaders(req), "Content-Type": "application/json; charset=utf-8" } }); }
 function requiredEnv(name: string): string { const value = Deno.env.get(name)?.trim(); if (!value) throw new Error(`الإعداد ${name} غير موجود.`); return value; }

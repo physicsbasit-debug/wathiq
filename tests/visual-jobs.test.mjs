@@ -47,3 +47,16 @@ test("VisualJobService يرسل المشهد 2D إلى الوظيفة الدائ
   assert.equal(jobs.length, 1);
   assert.match(calls[0].url, /question-visual-jobs$/);
 });
+
+
+test("VisualJobService لا يعتبر jobs=[] نجاحًا عندما توجد صورة مطلوبة", async () => {
+  const service = new VisualJobService(
+    { supabaseUrl: "https://example.supabase.co", supabasePublishableKey: "sb_publishable_test" },
+    async () => ({ accessToken: "token" }),
+    async () => new Response(JSON.stringify({ jobs: [] }), { status: 200 }),
+  );
+  await assert.rejects(
+    () => service.enqueue("draft-1", visualJobItems(draftWithVisual("context_scene"), "الفيزياء")),
+    /لم تنشئ منظومة الصور 1 مهمة ثنائية الأبعاد مطلوبة/,
+  );
+});
