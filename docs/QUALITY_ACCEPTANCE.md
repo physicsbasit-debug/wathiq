@@ -71,7 +71,7 @@
 - FAIL إذا بقي المنسق في `pressureMode` بعد زوال جميع إشارات الضغط من snapshot.
 - لا يجوز تحقيق السرعة بحذف Reviewer أو تقليل التحقق العلمي أو تشغيل Visual Planner قبل الاعتماد.
 
-## Server-Owned Visual Job Gate — 0.3.19
+## Server-Owned Visual Job Gate — 0.3.20
 
 - FAIL إذا أصبحت مفردة `context_scene` بحالة `ready` ولم توجد لها مهمة في `question_visual_jobs`.
 - FAIL إذا أعادت `question-visual-jobs` `jobs=[]` وتعامل العميل أو العامل معها كنجاح.

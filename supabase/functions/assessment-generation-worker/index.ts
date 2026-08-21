@@ -11,6 +11,9 @@ const REVIEW_MODEL = Deno.env.get("GEMINI_REVIEW_MODEL")?.trim() || AUTHOR_MODEL
 const VISUAL_PLANNER_MODEL = Deno.env.get("GEMINI_VISUAL_PLANNER_MODEL")?.trim() || REVIEW_MODEL;
 const appOrigin = new URL(WATHIQ_APP_URL).origin;
 const QUESTION_VISUAL_JOBS_ENDPOINT = `${SUPABASE_URL}/functions/v1/question-visual-jobs`;
+const QUESTION_VISUAL_JOBS_TABLE = "question_visual_jobs";
+const VISUAL_JOB_PERSIST_TIMEOUT_MS = 8_000;
+const VISUAL_JOB_KICK_TIMEOUT_MS = 6_000;
 const MAX_BODY_BYTES = 32_000;
 const LEASE_SECONDS = 240;
 const AUTHOR_MODEL_TIMEOUT_MS = 50_000;
@@ -338,6 +341,18 @@ async function processItem(itemId: string, ownerId: string, accessToken: string,
     validationMs = Date.now() - validationStartedAt;
     modelMs = Date.now() - modelStartedAt;
 
+    // الضمان الدائم لا ينتظر Edge Function الصور: نسجل المهمة في قاعدة البيانات أولًا بسرعة،
+    // ثم نوقظ عامل الصور في الخلفية. وهكذا لا تتحول مرحلة validating إلى انتظار دقائق.
+    await persistContextSceneVisualJob({
+      contract,
+      content,
+      evidence,
+      visual,
+      ownerId: claimed.owner_id,
+      accessToken,
+      requestId,
+    });
+
     const totalMs = Date.now() - totalStartedAt;
     const result = {
       planItemId: contract.planItemId,
@@ -357,17 +372,6 @@ async function processItem(itemId: string, ownerId: string, accessToken: string,
       requestId,
       durationMs: totalMs,
     };
-
-    // ضمان خادمي: لا تصبح المفردة جاهزة قبل وجود مهمة صورة دائمة لكل context_scene.
-    // المتصفح يزامن ويعرض فقط؛ إنشاء المهمة لم يعد معتمدًا على مؤقت UI.
-    await ensureContextSceneVisualJob({
-      contract,
-      content,
-      evidence,
-      visual,
-      accessToken,
-      requestId,
-    });
 
     const completed = await admin.rpc("complete_assessment_generation_item", {
       p_item_id: claimed.id,
@@ -416,94 +420,169 @@ async function processItem(itemId: string, ownerId: string, accessToken: string,
   }
 }
 
-interface ContextSceneVisualJobEnsureInput {
+interface ContextSceneVisualJobPersistInput {
   contract: ItemContract;
   content: ModelContent;
   evidence: Record<string, unknown>;
   visual: Record<string, unknown>;
+  ownerId: string;
   accessToken: string;
   requestId: string;
 }
 
-async function ensureContextSceneVisualJob(input: ContextSceneVisualJobEnsureInput): Promise<void> {
+interface ExistingVisualJobRow {
+  id: string;
+  visual_hash: string;
+  status: string;
+  request_payload: Record<string, unknown> | null;
+  asset: Record<string, unknown> | null;
+}
+
+async function persistContextSceneVisualJob(input: ContextSceneVisualJobPersistInput): Promise<void> {
   if (input.visual.type !== "context_scene") return;
   const questionText = `${input.content.stimulus ? `${input.content.stimulus} ` : ""}${input.content.text}`.trim();
   const reviewSupport = typeof input.evidence.excerpt === "string" && input.evidence.excerpt.trim()
     ? input.evidence.excerpt.trim()
     : input.contract.lessonLabel;
-  let response: Response;
-  try {
-    response = await fetch(QUESTION_VISUAL_JOBS_ENDPOINT, {
-      method: "POST",
-      headers: {
-        apikey: SUPABASE_SERVICE_ROLE_KEY,
-        Authorization: `Bearer ${input.accessToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        action: "enqueue",
-        draftId: input.contract.draftId,
-        items: [{
-          planItemId: input.contract.planItemId,
-          programmeId: input.contract.programmeId,
-          syllabusCode: input.contract.syllabusCode,
-          stageLabel: input.contract.stageLabel,
-          subject: input.contract.subject,
-          lessonLabel: input.contract.lessonLabel,
-          questionText,
-          reviewSupport,
-          previousAssetPath: "",
-          requiredMode: "replace",
-          visual: input.visual,
-        }],
-      }),
-    });
-  } catch {
-    throw workerError(
-      "VISUAL_JOB_ENQUEUE_UNAVAILABLE",
-      "تعذر الوصول إلى منظومة الصور ثنائية الأبعاد؛ أبقى واثق المفردة في الطابور بدل اعتمادها بلا صورة.",
-      "transport_backoff",
-      503,
-      20,
-    );
-  }
-
-  const text = await response.text();
-  let payload: unknown = null;
-  if (text) {
-    try { payload = JSON.parse(text) as unknown; }
-    catch { payload = { error: text }; }
-  }
-  if (!response.ok) {
-    const message = errorMessage(payload) || `تعذر إنشاء مهمة الصورة (${response.status}).`;
-    if (response.status === 408 || response.status === 429 || response.status >= 500) {
-      throw workerError("VISUAL_JOB_ENQUEUE_UNAVAILABLE", message, "transport_backoff", 503, 20);
-    }
-    throw workerError("VISUAL_JOB_ENQUEUE_FAILED", message, "none", 502);
-  }
-
-  const record = asRecord(payload);
-  const jobs = Array.isArray(record?.jobs) ? record.jobs : [];
-  const created = jobs.some((value) => {
-    const job = asRecord(value);
-    return job?.planItemId === input.contract.planItemId
-      && job?.requiredMode === "replace"
-      && typeof job?.status === "string";
+  const baseRequestPayload = {
+    draftId: input.contract.draftId,
+    planItemId: input.contract.planItemId,
+    programmeId: input.contract.programmeId,
+    syllabusCode: input.contract.syllabusCode,
+    stageLabel: input.contract.stageLabel,
+    subject: input.contract.subject,
+    lessonLabel: input.contract.lessonLabel,
+    questionText,
+    reviewSupport,
+    previousAssetPath: "",
+    requiredMode: "replace" as const,
+    visual: input.visual,
+  };
+  const visualHash = await sha256Hex({
+    planItemId: baseRequestPayload.planItemId,
+    programmeId: baseRequestPayload.programmeId,
+    syllabusCode: baseRequestPayload.syllabusCode,
+    stageLabel: baseRequestPayload.stageLabel,
+    subject: baseRequestPayload.subject,
+    lessonLabel: baseRequestPayload.lessonLabel,
+    questionText: baseRequestPayload.questionText,
+    reviewSupport: baseRequestPayload.reviewSupport,
+    requiredMode: baseRequestPayload.requiredMode,
+    visual: baseRequestPayload.visual,
   });
-  if (!created) {
-    console.error(JSON.stringify({
-      event: "wathiq_context_scene_job_missing_after_enqueue",
-      requestId: input.requestId,
-      draftId: input.contract.draftId,
-      planItemId: input.contract.planItemId,
-    }));
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), VISUAL_JOB_PERSIST_TIMEOUT_MS);
+  try {
+    const existingQuery = await admin.from(QUESTION_VISUAL_JOBS_TABLE)
+      .select("id,visual_hash,status,request_payload,asset")
+      .eq("owner_id", input.ownerId)
+      .eq("draft_id", input.contract.draftId)
+      .eq("plan_item_id", input.contract.planItemId)
+      .abortSignal(controller.signal)
+      .maybeSingle();
+    if (existingQuery.error) throw existingQuery.error;
+    const existing = existingQuery.data as ExistingVisualJobRow | null;
+    const previousAssetPath = typeof existing?.asset?.assetPath === "string"
+      ? existing.asset.assetPath
+      : typeof existing?.request_payload?.previousAssetPath === "string"
+        ? existing.request_payload.previousAssetPath
+        : "";
+    const requestPayload = { ...baseRequestPayload, previousAssetPath };
+
+    if (existing && existing.visual_hash === visualHash && !["failed", "cancelled"].includes(existing.status)) {
+      console.log(JSON.stringify({ event: "wathiq_context_scene_job_reused", requestId: input.requestId, planItemId: input.contract.planItemId, status: existing.status }));
+    } else if (existing && existing.visual_hash === visualHash) {
+      const reset = await admin.from(QUESTION_VISUAL_JOBS_TABLE).update({
+        status: "retry_pending",
+        request_payload: requestPayload,
+        asset: null,
+        attempt_count: 0,
+        error_code: null,
+        error_message: null,
+        worker_id: null,
+        started_at: null,
+        heartbeat_at: null,
+        completed_at: null,
+      }).eq("id", existing.id).eq("owner_id", input.ownerId).abortSignal(controller.signal).select("id").maybeSingle();
+      if (reset.error || !reset.data) throw reset.error ?? new Error("VISUAL_JOB_RESET_MISSING");
+    } else {
+      const upsert = await admin.from(QUESTION_VISUAL_JOBS_TABLE).upsert({
+        owner_id: input.ownerId,
+        draft_id: input.contract.draftId,
+        plan_item_id: input.contract.planItemId,
+        visual_hash: visualHash,
+        required_mode: "replace",
+        status: "queued",
+        request_payload: requestPayload,
+        asset: null,
+        attempt_count: 0,
+        max_attempts: 2,
+        error_code: null,
+        error_message: null,
+        worker_id: null,
+        started_at: null,
+        heartbeat_at: null,
+        completed_at: null,
+      }, { onConflict: "owner_id,draft_id,plan_item_id" })
+        .abortSignal(controller.signal)
+        .select("id")
+        .maybeSingle();
+      if (upsert.error || !upsert.data) throw upsert.error ?? new Error("VISUAL_JOB_UPSERT_MISSING");
+    }
+  } catch (error) {
+    const timedOut = error instanceof DOMException && error.name === "AbortError";
     throw workerError(
-      "VISUAL_JOB_NOT_CREATED",
-      "لم تنشئ منظومة الصور مهمة ثنائية الأبعاد للمفردة؛ أبقى واثق السؤال في الطابور وسيعيد المحاولة تلقائيًا.",
+      "VISUAL_JOB_PERSIST_FAILED",
+      timedOut
+        ? "تأخر حفظ مهمة الصورة أكثر من الحد الآمن؛ سيعيد واثق المفردة دون إبقائها عالقة في التحقق."
+        : "تعذر حفظ مهمة الصورة الدائمة؛ سيعيد واثق المفردة بدل اعتمادها بلا أصل بصري.",
       "transport_backoff",
       503,
       15,
     );
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  console.log(JSON.stringify({ event: "wathiq_context_scene_job_persisted", requestId: input.requestId, draftId: input.contract.draftId, planItemId: input.contract.planItemId }));
+  scheduleContextSceneVisualKick(input.contract.draftId, input.accessToken, input.requestId);
+}
+
+function scheduleContextSceneVisualKick(draftId: string, accessToken: string, requestId: string): void {
+  const task = kickContextSceneVisualQueue(draftId, accessToken, requestId);
+  if (typeof EdgeRuntime !== "undefined" && EdgeRuntime?.waitUntil) EdgeRuntime.waitUntil(task);
+  else void task;
+}
+
+async function kickContextSceneVisualQueue(draftId: string, accessToken: string, requestId: string): Promise<void> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), VISUAL_JOB_KICK_TIMEOUT_MS);
+  try {
+    const response = await fetch(QUESTION_VISUAL_JOBS_ENDPOINT, {
+      method: "POST",
+      headers: {
+        apikey: SUPABASE_SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ action: "list", draftId }),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      console.error(JSON.stringify({ event: "wathiq_context_scene_kick_failed", requestId, draftId, status: response.status }));
+      return;
+    }
+    console.log(JSON.stringify({ event: "wathiq_context_scene_kicked", requestId, draftId }));
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: "wathiq_context_scene_kick_failed",
+      requestId,
+      draftId,
+      message: error instanceof Error ? error.message : "kick failed",
+    }));
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

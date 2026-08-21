@@ -520,19 +520,25 @@ test("v0.3.18 يصف عقد JSON المحلي للبيانات فقط ويمنع
 });
 
 
-test("v0.3.19 ينشئ مهمة context_scene خادميًا قبل تحويل المفردة إلى ready", async () => {
+test("v0.3.20 يحفظ context_scene مباشرة ثم يوقظ عامل الصور دون حبس ready على Edge Function أخرى", async () => {
   const { readFile } = await import("node:fs/promises");
   const worker = await readFile(new URL("../supabase/functions/assessment-generation-worker/index.ts", import.meta.url), "utf8");
   const start = worker.indexOf("async function processItem(");
   const end = worker.indexOf("function parseAuthorCheckpoint", start);
-  assert.ok(start >= 0 && end > start, "تعذر تحديد processItem وضمان الصورة");
+  assert.ok(start >= 0 && end > start, "تعذر تحديد processItem وتسليم الصورة");
   const body = worker.slice(start, end);
-  const ensure = body.indexOf("await ensureContextSceneVisualJob(");
+  const persist = body.indexOf("await persistContextSceneVisualJob(");
   const complete = body.indexOf('admin.rpc("complete_assessment_generation_item"');
-  assert.ok(ensure >= 0, "يجب أن ينشئ العامل مهمة الصورة خادميًا");
-  assert.ok(complete > ensure, "يجب ضمان مهمة الصورة قبل اعتماد المفردة ready");
-  assert.match(worker, /QUESTION_VISUAL_JOBS_ENDPOINT/);
-  assert.match(worker, /Authorization:\s*`Bearer \$\{input\.accessToken\}`/);
-  assert.match(worker, /VISUAL_JOB_NOT_CREATED/);
-  assert.match(worker, /transport_backoff/);
+  assert.ok(persist >= 0, "يجب أن يحفظ العامل Visual Job خادميًا");
+  assert.ok(complete > persist, "يجب ضمان السجل الدائم قبل اعتماد المفردة ready");
+  assert.match(worker, /QUESTION_VISUAL_JOBS_TABLE/);
+  assert.match(worker, /VISUAL_JOB_PERSIST_TIMEOUT_MS\s*=\s*8_000/);
+  assert.match(worker, /abortSignal\(controller\.signal\)/);
+  assert.match(worker, /scheduleContextSceneVisualKick/);
+  assert.match(worker, /EdgeRuntime\.waitUntil\(task\)/);
+  const persistStart = worker.indexOf("async function persistContextSceneVisualJob(");
+  const kickStart = worker.indexOf("async function kickContextSceneVisualQueue(");
+  const persistBody = worker.slice(persistStart, kickStart);
+  assert.doesNotMatch(persistBody, /await fetch\(QUESTION_VISUAL_JOBS_ENDPOINT/,
+    "المسار الحاجب لا يجوز أن ينتظر question-visual-jobs عبر الشبكة");
 });

@@ -1,12 +1,11 @@
 # التاريخ المختصر
 
-## 0.3.19 — Server-Owned 2D Visual Jobs
+## 0.3.20 — Non-Blocking Durable Visual Handoff
 
-- كشف القبول الحي لـ0.3.18 أن السؤال قد يختار `context_scene` بينما لا تُنشأ له مهمة صورة، لأن الإنشاء كان يعتمد على مؤقت المتصفح بعد حفظ السؤال.
-- نُقل ضمان إنشاء Visual Job إلى `assessment-generation-worker` قبل تحويل المفردة إلى `ready`.
-- أصبحت `jobs=[]` حالة فشل صريحة لا نجاحًا صامتًا، مع `retry_pending` تشغيلي عند تعذر منظومة الصور.
-- بقي العميل طبقة مزامنة واستعادة للمسودات، وربط توقيع المزامنة بمعرف المسودة.
-- لا SQL ولا Secret جديد. إعادة النشر: `assessment-generation-worker` و`question-visual-jobs` فقط.
+- أصلح تعليق المفردة في `validating` عندما كان Worker ينتظر `question-visual-jobs` عبر `fetch` بلا timeout.
+- Visual Job تُحفظ مباشرة في قاعدة البيانات بمهلة 8 ثوانٍ، ثم يُوقظ عامل الصور في الخلفية.
+- السؤال لا ينتظر توليد الصورة ولا Edge Function أخرى، مع بقاء سجل الصورة دائمًا قبل `ready`.
+- 111/111 اختبارًا ناجحًا محليًا، ولا SQL أو Secrets جديدة.
 
 ## 0.3.18 — 2D Visual Reset
 

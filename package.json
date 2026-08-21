@@ -1,9 +1,9 @@
 {
   "name": "wathiq",
-  "version": "0.3.19",
+  "version": "0.3.20",
   "private": true,
   "type": "module",
-  "description": "واثق: المفردة التي تحتاج مشهدًا ثنائي الأبعاد لا تصبح جاهزة قبل إنشاء Visual Job دائمة خادميًا، مع منع الاستجابة الفارغة من الظهور كنجاح صامت.",
+  "description": "واثق: تسليم مرئيات 2D دائم وغير حاجب؛ يحفظ Visual Job مباشرة في قاعدة البيانات ثم يوقظ عامل الصور في الخلفية دون حبس توليد السؤال.",
   "scripts": {
     "build": "node scripts/build.mjs",
     "dev": "node scripts/serve.mjs",

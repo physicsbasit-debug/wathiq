@@ -4,19 +4,21 @@
 
 > **اسم الموضوع يكفي. حرية عالية في التأليف، صرامة عالية في المراجعة العلمية، وعربية كاملة من اليمين إلى اليسار.**
 
-- الإصدار الحالي: **0.3.19 — Server-Owned 2D Visual Jobs**.
+- الإصدار الحالي: **0.3.20 — Non-Blocking Durable Visual Handoff**.
 - النطاق: **مواد العلوم فقط**.
 - Cambridge Primary Science **0097**: المراحل **1–6**.
 - Cambridge Lower Secondary Science **0893**: المراحل **7–9**.
 - Cambridge IGCSE: الفيزياء **0625**، الكيمياء **0620**، الأحياء **0610**، العلوم المجمعة **0653**، العلوم المنسقة **0654**.
 
-## 0.3.19 — Server-Owned 2D Visual Jobs
+## 0.3.20 — Non-Blocking Durable Visual Handoff
 
-- لم يعد إنشاء مهمة صورة `context_scene` يعتمد على مؤقت المتصفح بعد اكتمال السؤال؛ `assessment-generation-worker` يضمن إنشاء Visual Job دائمة خادميًا **قبل** اعتماد المفردة `ready`.
-- إذا تعذرت خدمة `question-visual-jobs` أو أعادت `jobs=[]`، تبقى المفردة في `retry_pending` بدل الظهور كسؤال مكتمل بلا صورة.
-- `VisualJobService` في العميل أصبح يرفض الاستجابة الناقصة صراحة، والعميل بقي طبقة مزامنة/استعادة فقط.
-- توقيع الإنشاء التلقائي أصبح مرتبطًا بمعرف المسودة ويُصفّر عند إبطال التوليد لمنع قفل مزامنة من اختبار سابق.
-- لا SQL ولا Secret جديد. النشر يحتاج `assessment-generation-worker` و`question-visual-jobs` فقط؛ `science-visual-generation` لا يتغير في هذه الدفعة.
+- يعالج تعليق المفردة في حالة `validating` الذي ظهر عند جعل السؤال ينتظر استدعاء `question-visual-jobs` بلا مهلة زمنية.
+- إذا كانت النتيجة `context_scene`، يحفظ `assessment-generation-worker` سجل Visual Job مباشرة في جدول `question_visual_jobs` باستخدام service role قبل اعتماد السؤال `ready`.
+- حفظ المهمة محكوم بمهلة قصوى **8 ثوانٍ**؛ إذا تعذر التخزين يعود السؤال إلى `retry_pending` بدل البقاء عالقًا لدقائق.
+- بعد تثبيت السجل الدائم، يوقظ العامل `question-visual-jobs` في الخلفية عبر `EdgeRuntime.waitUntil` بمهلة قصيرة، ولذلك لا ينتظر توليد الصورة ولا استدعاء Edge Function أخرى حتى يحفظ السؤال.
+- إذا تعذر إيقاظ عامل الصور، تبقى المهمة `queued` في قاعدة البيانات ويمكن لـ`question-visual-jobs` أو مزامنة الواجهة التقاطها لاحقًا دون فقدها.
+- يبقى `VisualJobService` رافضًا لـ`jobs=[]` عندما توجد صورة مطلوبة؛ لا عودة للفشل الصامت.
+- لا SQL ولا Secret جديد. النشر يحتاج **`assessment-generation-worker` فقط**؛ وظائف `question-visual-jobs` و`science-visual-generation` لا تتغير في هذه الدفعة.
 
 ## 0.3.18 — 2D Visual Reset
 

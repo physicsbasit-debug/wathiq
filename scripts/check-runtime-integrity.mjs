@@ -126,14 +126,23 @@ if (!plannerPrompt || /\banswer\s*:/u.test(plannerPrompt) || /\bmarkScheme\s*:/u
 }
 
 
-// Visual job durability 0.3.19: the server owns context-scene job creation; the client is reconciliation only.
-const serverVisualEnsure = generationWorker.indexOf("await ensureContextSceneVisualJob(");
+// Visual handoff 0.3.20: persist directly, then kick the visual worker in background.
+const serverVisualPersist = generationWorker.indexOf("await persistContextSceneVisualJob(");
 const serverCompleteItem = generationWorker.indexOf('admin.rpc("complete_assessment_generation_item"');
-if (serverVisualEnsure < 0 || serverCompleteItem < 0 || serverVisualEnsure > serverCompleteItem) {
-  failures.push("عامل المفردات لا يضمن إنشاء مهمة context_scene قبل اعتماد المفردة ready.");
+if (serverVisualPersist < 0 || serverCompleteItem < 0 || serverVisualPersist > serverCompleteItem) {
+  failures.push("عامل المفردات لا يحفظ Visual Job الدائمة قبل اعتماد المفردة ready.");
 }
-if (!/QUESTION_VISUAL_JOBS_ENDPOINT/u.test(generationWorker) || !/VISUAL_JOB_NOT_CREATED/u.test(generationWorker)) {
-  failures.push("ضمان Visual Job الخادمي أو فشل jobs=[] الصريح مفقود من Worker.");
+if (!/QUESTION_VISUAL_JOBS_TABLE/u.test(generationWorker)
+  || !/VISUAL_JOB_PERSIST_TIMEOUT_MS\s*=\s*8_000/u.test(generationWorker)
+  || !/scheduleContextSceneVisualKick/u.test(generationWorker)
+  || !/EdgeRuntime\.waitUntil\(task\)/u.test(generationWorker)) {
+  failures.push("التسليم غير الحاجب لمرئيات 2D أو مهلة حفظ المهمة مفقودة من Worker.");
+}
+const persistStart = generationWorker.indexOf("async function persistContextSceneVisualJob(");
+const kickStart = generationWorker.indexOf("async function kickContextSceneVisualQueue(");
+const persistBody = persistStart >= 0 && kickStart > persistStart ? generationWorker.slice(persistStart, kickStart) : "";
+if (!persistBody || /await fetch\(QUESTION_VISUAL_JOBS_ENDPOINT/u.test(persistBody)) {
+  failures.push("مسار حفظ السؤال عاد ينتظر Edge Function الصور عبر الشبكة.");
 }
 const visualJobsClient = await readFile(join(ROOT, "src/visual-jobs.ts"), "utf8");
 if (!/returnedPlanItemIds/u.test(visualJobsClient) || !/missing\.length/u.test(visualJobsClient)) {
