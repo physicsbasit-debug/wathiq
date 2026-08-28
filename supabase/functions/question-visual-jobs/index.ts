@@ -10,6 +10,14 @@ const QUESTION_VISUAL_BUCKET = "wathiq-question-visuals";
 const MAX_ITEMS = 20;
 const STALE_JOB_MS = 5 * 60_000;
 const INTERNAL_GENERATION_TIMEOUT_MS = 165_000;
+const HEARTBEAT_INTERVAL_MS = 15_000;
+const WORKER_LEASE_TIMEOUT_MS = 45_000;
+const WORKER_LOST_LEASE_OR_SUPERSEDED_ERROR = "WORKER_LOST_LEASE_OR_SUPERSEDED";
+
+function isWorkerLostLeaseOrSupersededError(error: unknown): boolean {
+  return error instanceof Error
+    && error.message === WORKER_LOST_LEASE_OR_SUPERSEDED_ERROR;
+}
 
 const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
@@ -198,18 +206,40 @@ async function findJob(ownerId: string, draftId: string, planItemId: string): Pr
 }
 
 async function recoverStaleJobs(ownerId: string, draftId: string): Promise<void> {
-  const staleBefore = new Date(Date.now() - STALE_JOB_MS).toISOString();
-  const { error } = await admin.from(TABLE).update({
+  // Fast path: lease recovery (WORKER_LEASE_TIMEOUT_MS)
+  const leaseBefore = new Date(Date.now() - WORKER_LEASE_TIMEOUT_MS).toISOString();
+  const { error: leaseRecoveryError } = await admin.from(TABLE).update({
     status: "retry_pending",
     error_code: "STALE_WORKER_RECOVERED",
     error_message: "انقطع عامل توليد الصورة؛ أعاد واثق المهمة تلقائيًا إلى طابور التنفيذ.",
     worker_id: null,
     heartbeat_at: null,
-  }).eq("owner_id", ownerId)
+  })
+    .eq("owner_id", ownerId)
+    .eq("draft_id", draftId)
+    .in("status", ["generating", "validating"])
+    .not("worker_id", "is", null)
+    .or(`heartbeat_at.is.null,heartbeat_at.lt.${leaseBefore}`);
+  if (leaseRecoveryError) {
+    throw new Error(`تعذر استعادة مهام الصور المتقطعة: ${leaseRecoveryError.message}`);
+  }
+
+  // Fallback: STALE_JOB_MS (catastrophic)
+  const staleBefore = new Date(Date.now() - STALE_JOB_MS).toISOString();
+  const { error: fallbackRecoveryError } = await admin.from(TABLE).update({
+    status: "retry_pending",
+    error_code: "STALE_WORKER_RECOVERED",
+    error_message: "انقطع عامل توليد الصورة؛ أعاد واثق المهمة تلقائيًا إلى طابور التنفيذ.",
+    worker_id: null,
+    heartbeat_at: null,
+  })
+    .eq("owner_id", ownerId)
     .eq("draft_id", draftId)
     .in("status", ["generating", "validating"])
     .lt("updated_at", staleBefore);
-  if (error) throw new Error(`تعذر استعادة مهام الصور المتوقفة: ${error.message}`);
+  if (fallbackRecoveryError) {
+    throw new Error(`تعذر استعادة مهام الصور المتقطعة: ${fallbackRecoveryError.message}`);
+  }
 }
 
 async function resetJobForRetry(ownerId: string, jobId: string): Promise<JobRow> {
@@ -269,6 +299,7 @@ function scheduleBackground(promise: Promise<unknown>): void {
 async function processJob(jobId: string, accessToken: string, requestId: string): Promise<void> {
   const workerId = crypto.randomUUID();
   let row: JobRow | null = null;
+  let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   try {
     const { data: current, error: currentError } = await admin.from(TABLE).select("*").eq("id", jobId).maybeSingle();
     if (currentError || !current) return;
@@ -312,7 +343,42 @@ async function processJob(jobId: string, accessToken: string, requestId: string)
     row = claimed as JobRow;
 
     console.log(JSON.stringify({ event: "wathiq_visual_job_started", requestId, jobId, attempt }));
-    const response = await invokeGenerator({ ...row.request_payload, requiredMode: "replace" }, accessToken, row.id);
+
+    // Start heartbeat updates (serial, in-flight guard)
+    let inFlight = false;
+    heartbeatInterval = setInterval(async () => {
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        const { data: heartbeatData, error: heartbeatError } = await admin.from(TABLE).update({
+          heartbeat_at: new Date().toISOString(),
+        }).eq("id", jobId).eq("worker_id", workerId).select("id").maybeSingle();
+        if (heartbeatError) {
+          // Transient DB/network error – log and keep ticking
+          console.warn("Heartbeat update error:", heartbeatError);
+        } else if (!heartbeatData) {
+          // Lease lost or superseded – stop heartbeat
+          if (heartbeatInterval !== null) {
+            clearInterval(heartbeatInterval);
+            heartbeatInterval = null;
+          }
+        }
+      } catch (err) {
+        // If heartbeat update fails, log and keep ticking (do not stop interval)
+        console.warn("Heartbeat update catch error:", err);
+      } finally {
+        inFlight = false;
+      }
+    }, HEARTBEAT_INTERVAL_MS);
+
+    const response = await invokeGenerator({ ...row.request_payload, requiredMode: "replace" }, accessToken, row.id, workerId);
+
+    // Stop heartbeat after invokeGenerator returns (success or science/provider failure)
+    if (heartbeatInterval !== null) {
+      clearInterval(heartbeatInterval);
+      heartbeatInterval = null;
+    }
+
     if (response.status === "ready" && response.illustration) {
       if (response.illustration.renderMode !== "replace") {
         throw httpError("عاد مولد الصور بنمط عرض قديم غير مدعوم.", 502);
@@ -337,10 +403,39 @@ async function processJob(jobId: string, accessToken: string, requestId: string)
       return;
     }
 
-    await handleRetryOrFailure(row, workerId, "VISUAL_VALIDATION_FAILED", response.reason || "لم تجتز الصورة التدقيق العلمي.", accessToken, requestId);
+    // Science/provider failure (response.status === "failed")
+    const { data: failedData, error: failedError } = await admin.from(TABLE).update({
+      status: "failed",
+      asset: null,
+      error_code: null,
+      error_message: response.reason,
+      worker_id: null,
+      heartbeat_at: new Date().toISOString(),
+      completed_at: new Date().toISOString(),
+    }).eq("id", row.id).eq("worker_id", workerId).select("id").maybeSingle();
+    if (failedError || !failedData) {
+      // Worker lost lease or superseded – nothing more to do
+      return;
+    }
+    return;
   } catch (error) {
+    // Stop heartbeat before handling retry/failure
+    if (heartbeatInterval !== null) {
+      clearInterval(heartbeatInterval);
+      heartbeatInterval = null;
+    }
     if (!row) return;
+    if (isWorkerLostLeaseOrSupersededError(error)) {
+      console.log(JSON.stringify({ event: "wathiq_visual_job_superseded", requestId, jobId }));
+      return;
+    }
     await handleRetryOrFailure(row, workerId, errorCode(error), errorMessage(error), accessToken, requestId);
+  } finally {
+    // Ensure heartbeat interval is cleared on any exit path
+    if (heartbeatInterval !== null) {
+      clearInterval(heartbeatInterval);
+      heartbeatInterval = null;
+    }
   }
 }
 
@@ -352,7 +447,8 @@ async function handleRetryOrFailure(
   accessToken: string,
   requestId: string,
 ): Promise<void> {
-  const shouldRetry = row.attempt_count < row.max_attempts;
+  const retryableInfrastructureCodes = new Set(["GENERATION_TIMEOUT", "RATE_LIMITED", "UPSTREAM_UNAVAILABLE"]);
+  const shouldRetry = retryableInfrastructureCodes.has(code) && row.attempt_count < row.max_attempts;
   const status: JobStatus = shouldRetry ? "retry_pending" : "failed";
   const completedAt = shouldRetry ? null : new Date().toISOString();
   const { data } = await admin.from(TABLE).update({
@@ -373,14 +469,23 @@ async function invokeGenerator(
   input: VisualJobInput,
   accessToken: string,
   jobId: string,
+  workerId: string,
 ): Promise<{ status: "ready" | "failed"; illustration?: VisualAsset; reason: string }> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), INTERNAL_GENERATION_TIMEOUT_MS);
   try {
-    await admin.from(TABLE).update({
+    const { data: validatingData, error: validatingError } = await admin.from(TABLE).update({
       status: "validating",
       heartbeat_at: new Date().toISOString(),
-    }).eq("id", jobId).eq("status", "generating");
+    }).eq("id", jobId).eq("status", "generating").eq("worker_id", workerId).select("id").maybeSingle();
+    if (validatingError) {
+      // Infrastructure/DB failure – treat as retryable infrastructure error
+      throw new Error("INFRASTRUCTURE_ERROR_IN_VALIDATING");
+    }
+    if (!validatingData) {
+      // No error but no data → worker lost lease or superseded
+      throw new Error(WORKER_LOST_LEASE_OR_SUPERSEDED_ERROR);
+    }
 
     const response = await fetch(GENERATION_ENDPOINT, {
       method: "POST",
