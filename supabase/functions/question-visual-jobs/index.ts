@@ -594,6 +594,10 @@ function requireUuid(value: unknown, message: string): string {
   return value;
 }
 
+function textField(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
 function httpError(message: string, status: number): Error & { status: number } {
   const error = new Error(message) as Error & { status: number };
   error.status = status;

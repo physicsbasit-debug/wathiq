@@ -1,7 +1,8 @@
 import { readFile, readdir, access } from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const ROOT = new URL("../", import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const SCAN_ROOTS = ["src", "supabase/functions"];
 const SINGLE_FILES = [
   "supabase/schema-current.sql",

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { visualJobItems, VisualJobService } from "../dist/assets/visual-jobs.js";
+import { readFileSync } from "node:fs";
 
 function draftWithVisual(type, extra = {}) {
   return {
@@ -58,5 +59,59 @@ test("VisualJobService لا يعتبر jobs=[] نجاحًا عندما توجد 
   await assert.rejects(
     () => service.enqueue("draft-1", visualJobItems(draftWithVisual("context_scene"), "الفيزياء")),
     /لم تنشئ منظومة الصور 1 مهمة ثنائية الأبعاد مطلوبة/,
+  );
+});
+
+// Regression test for textField helper function fix
+test("textField helper function is correctly defined in question-visual-jobs Edge Function", () => {
+  const edgeFunctionPath = "supabase/functions/question-visual-jobs/index.ts";
+  const content = readFileSync(edgeFunctionPath, "utf8");
+
+  // Verify textField function is defined locally (not imported)
+  assert.ok(
+    content.includes("function textField(value: unknown): string"),
+    "textField function should be defined locally in the Edge Function"
+  );
+
+  // Verify the function implementation is correct
+  assert.ok(
+    content.includes("return typeof value === \"string\" ? value.trim() : \"\";"),
+    "textField function should trim strings and return empty string for non-strings"
+  );
+
+  // Verify there's no export of textField (to maintain encapsulation)
+  assert.ok(
+    !content.includes("export { textField"),
+    "textField should not be exported from the Edge Function"
+  );
+
+  // Verify all three usages of textField exist
+  assert.ok(
+    content.split("textField(").length >= 4, // function definition + 3 usages
+    "textField should be used in all three required locations"
+  );
+
+  // Verify context_scene check is present
+  assert.ok(
+    content.includes('textField(row.request_payload.visual.type) !== "context_scene"'),
+    "context_scene check should be present in processJob"
+  );
+
+  // Verify isContextSceneJobInput uses textField
+  assert.ok(
+    content.includes("return textField(visual?.type) === \"context_scene\";"),
+    "isContextSceneJobInput should use textField"
+  );
+
+  // Verify parseJobInput uses textField for validation
+  assert.ok(
+    content.includes('if (textField(visual.type) !== "context_scene") throw httpError'),
+    "parseJobInput should use textField to validate visual type"
+  );
+
+  // Verify STRUCTURED_VISUAL_RENDERED_LOCALLY error path is preserved
+  assert.ok(
+    content.includes('error_code: "STRUCTURED_VISUAL_RENDERED_LOCALLY"'),
+    "STRUCTURED_VISUAL_RENDERED_LOCALLY error path should be preserved"
   );
 });
