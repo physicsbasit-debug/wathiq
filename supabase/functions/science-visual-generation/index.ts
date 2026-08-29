@@ -22,11 +22,9 @@ const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 });
 
 type RequiredMode = "replace";
-
 type VisualRecord = Record<string, unknown>;
 
-interface VisualIllustrationRequest {
-  action: "generate_visual_illustration";
+interface VisualRequestBase {
   draftId: string;
   planItemId: string;
   programmeId: "primary" | "lower_secondary" | "igcse";
@@ -36,18 +34,26 @@ interface VisualIllustrationRequest {
   lessonLabel: string;
   questionText: string;
   reviewSupport: string;
-  previousAssetPath: string;
   visual: VisualRecord;
 }
 
-interface VisualIllustrationAsset {
+interface GenerateRequest extends VisualRequestBase {
+  action: "generate_image";
+  correction: string;
+}
+
+interface ReviewRequest extends VisualRequestBase {
+  action: "review_image";
+  assetPath: string;
+}
+
+interface ProvisionalVisualAsset {
   url: string;
   assetPath: string;
   mimeType: string;
   model: string;
   generatedAt: string;
   promptVersion: string;
-  validated: true;
   assetKind: "scene_2d";
   renderMode: RequiredMode;
 }
@@ -74,26 +80,58 @@ Deno.serve(async (req) => {
   try {
     const userId = await requireUser(req);
     const payload = requireRecord(await req.json(), "الطلب غير صالح.");
-    if (payload.action !== "generate_visual_illustration") {
-      throw httpError("هذه الوظيفة مخصصة لإنشاء الأصول العلمية ثنائية الأبعاد فقط.", 404);
-    }
-    const request = parseVisualRequest(payload);
-    log(requestId, "visual_request_received", {
-      planItemId: request.planItemId,
-      model: GEMINI_IMAGE_MODEL,
-      reviewModel: GEMINI_REVIEW_MODEL,
-      visualType: textField(request.visual.type),
-    });
+    const action = payload.action;
 
-    const result = await generateReviewedIllustration(request, userId, requestId);
-    return json(req, { ...result, requestId });
+    if (action === "generate_image") {
+      const request = parseGenerateRequest(payload);
+      log(requestId, "visual_request_received", {
+        action,
+        planItemId: request.planItemId,
+        model: GEMINI_IMAGE_MODEL,
+        visualType: textField(request.visual.type),
+      });
+      const result = await handleGenerateImage(request, userId, requestId);
+      return json(req, { ...result, requestId });
+    }
+
+    if (action === "review_image") {
+      const request = parseReviewRequest(payload);
+      log(requestId, "visual_request_received", {
+        action,
+        planItemId: request.planItemId,
+        reviewModel: GEMINI_REVIEW_MODEL,
+        visualType: textField(request.visual.type),
+      });
+      const result = await handleReviewImage(request, userId, requestId);
+      return json(req, { ...result, requestId });
+    }
+
+    throw httpError("العملية المطلوبة غير مدعومة.", 404);
   } catch (error) {
-    log(requestId, "visual_request_failed", { message: errorMessage(error), status: errorStatus(error) });
+    log(requestId, "visual_request_failed", { status: errorStatus(error), category: failureCategory(error) });
     return json(req, { error: userSafeError(error), requestId }, errorStatus(error));
   }
 });
 
-function parseVisualRequest(payload: Record<string, unknown>): VisualIllustrationRequest {
+function parseGenerateRequest(payload: Record<string, unknown>): GenerateRequest {
+  const base = parseBaseRequest(payload);
+  return {
+    ...base,
+    action: "generate_image",
+    correction: typeof payload.correction === "string" ? payload.correction.trim().slice(0, 900) : "",
+  };
+}
+
+function parseReviewRequest(payload: Record<string, unknown>): ReviewRequest {
+  const base = parseBaseRequest(payload);
+  return {
+    ...base,
+    action: "review_image",
+    assetPath: requireText(payload.assetPath, "مسار الأصل غير صالح.", 500),
+  };
+}
+
+function parseBaseRequest(payload: Record<string, unknown>): VisualRequestBase {
   const visual = requireRecord(payload.visual, "مواصفة الرسم العلمي غير صالحة.");
   const visualType = textField(visual.type);
   if (!visualType || visualType === "none") throw httpError("لا توجد حاجة إلى أصل بصري ثنائي الأبعاد لهذه المفردة.", 400);
@@ -101,7 +139,6 @@ function parseVisualRequest(payload: Record<string, unknown>): VisualIllustratio
     throw httpError("وظيفة الصور تقبل المرئيات العلمية ثنائية الأبعاد فقط؛ الجداول والرسوم البيانية الرقمية تبقى حتمية داخل واثق.", 409);
   }
   return {
-    action: "generate_visual_illustration",
     draftId: requireText(payload.draftId, "معرف المسودة غير صالح.", 140),
     planItemId: requireText(payload.planItemId, "معرف المفردة غير صالح.", 140),
     programmeId: requireProgrammeId(payload.programmeId),
@@ -111,48 +148,55 @@ function parseVisualRequest(payload: Record<string, unknown>): VisualIllustratio
     lessonLabel: requireText(payload.lessonLabel, "الدرس غير محدد.", 220),
     questionText: requireText(payload.questionText, "نص السؤال غير محدد.", 2_500),
     reviewSupport: requireText(payload.reviewSupport, "سياق المراجعة غير محدد.", 6_000),
-    previousAssetPath: typeof payload.previousAssetPath === "string" ? payload.previousAssetPath.trim().slice(0, 500) : "",
     visual,
   };
 }
 
-async function generateReviewedIllustration(
-  request: VisualIllustrationRequest,
+async function handleGenerateImage(
+  request: GenerateRequest,
   userId: string,
   requestId: string,
-): Promise<{ status: "ready" | "failed"; illustration?: VisualIllustrationAsset; reason: string }> {
-  let correction = "";
-  let lastReason = "";
+): Promise<{ status: "generated"; asset: ProvisionalVisualAsset }> {
+  const image = await generateImage(request, request.correction, requestId, 1);
+  const asset = await storeProvisionalImage(request, userId, image);
+  log(requestId, "visual_generation_complete", {
+    planItemId: request.planItemId,
+    assetPath: asset.assetPath,
+  });
+  return { status: "generated", asset };
+}
 
-  for (let attempt = 1; attempt <= 2; attempt += 1) {
-    try {
-      const image = await generateImage(request, correction, requestId, attempt);
-      const review = await reviewImage(request, image, requestId, attempt);
-      if (review.approved) {
-        const illustration = await storeImage(request, userId, image);
-        return {
-          status: "ready",
-          illustration,
-          reason: `اعتمد واثق الأصل العلمي 2D بعد مراجعة علمية مستقلة (${attempt}/2).`,
-        };
-      }
-      lastReason = review.reason || "لم يجتز الأصل البصري فحص الدقة العلمية.";
-      correction = reviewerCorrection(review);
-      log(requestId, "visual_retry_requested", { attempt, reason: lastReason });
-    } catch (error) {
-      lastReason = errorMessage(error);
-      if (!isRetryableError(error) || attempt >= 2) break;
-      await delay(attempt === 1 ? 2_000 + Math.floor(Math.random() * 900) : 5_000);
-    }
+async function handleReviewImage(
+  request: ReviewRequest,
+  userId: string,
+  requestId: string,
+): Promise<{ status: "approved" | "scientific_rejection"; reason: string; correction?: string }> {
+  const owner = storageSegment(userId);
+  const expectedPathPrefix = `${owner}/${storageSegment(request.draftId)}/${storageSegment(request.planItemId)}/`;
+  if (!request.assetPath.startsWith(expectedPathPrefix)) {
+    throw httpError("الأصل لا يعود للمسودة والمفردة الحالية.", 400);
   }
 
+  const { data: fileData, error: downloadError } = await admin.storage
+    .from(QUESTION_VISUAL_BUCKET)
+    .download(request.assetPath);
+  if (downloadError || !fileData) throw httpError(`تعذر تحميل الأصل العلمي: ${downloadError?.message ?? "الملف غير موجود"}`, 500);
+
+  const bytes = new Uint8Array(await fileData.arrayBuffer());
+  const image = { data: encodeBase64(bytes), mimeType: fileData.type || "application/octet-stream" };
+  if (!image.mimeType.startsWith("image/")) throw httpError("نوع الأصل العلمي المخزن غير صالح.", 400);
+  if (!image.data || image.data.length > MAX_IMAGE_BASE64_CHARACTERS) throw httpError("حجم الأصل العلمي غير صالح للمراجعة.", 400);
+
+  const review = await reviewImage(request, image, requestId, 1);
+  if (review.approved) return { status: "approved", reason: review.reason };
   return {
-    status: "failed",
-    reason: `${lastReason || "تعذر اعتماد الأصل العلمي 2D."} لا يستخدم واثق أي رسم خطي بديل؛ أعد إنشاء الأصل 2D.`.slice(0, 420),
+    status: "scientific_rejection",
+    reason: review.reason || "لم يجتز الأصل الفحص العلمي.",
+    correction: reviewerCorrection(review),
   };
 }
 
-function illustrationBrief(request: VisualIllustrationRequest): string {
+function illustrationBrief(request: VisualRequestBase): string {
   const visual = request.visual;
   const purpose = textField(visual.purpose);
   const altText = textField(visual.altText);
@@ -173,13 +217,7 @@ function illustrationBrief(request: VisualIllustrationRequest): string {
   ].filter(Boolean).join("\n");
 }
 
-function renderModeForVisual(_visual: VisualRecord): RequiredMode {
-  // v0.3.18: every non-data scientific visual is a complete reviewed 2D replacement.
-  // Exact tables and graphs never enter the image model.
-  return "replace";
-}
-
-function imagePrompt(request: VisualIllustrationRequest, correction: string): string {
+function imagePrompt(request: VisualRequestBase, correction: string): string {
   return [
     "أنشئ رسماً علمياً تعليمياً ثنائي الأبعاد عالي الجودة لورقة اختبار علوم مدرسية.",
     "واثق لا يستخدم مولداً تخطيطياً خطياً للمشاهد العلمية. قد يكون المطلوب زنبركاً أو جهازاً أو قوة أو دائرة أو شحنات أو بصريات أو ضغطاً أو تسلسلاً؛ مثّل المشهد كرسوم كتاب مدرسي 2D واضحة لا كهيكل خطي بدائي.",
@@ -198,7 +236,7 @@ function imagePrompt(request: VisualIllustrationRequest, correction: string): st
 }
 
 async function generateImage(
-  request: VisualIllustrationRequest,
+  request: VisualRequestBase,
   correction: string,
   requestId: string,
   attempt: number,
@@ -243,15 +281,23 @@ const REVIEW_SCHEMA = {
     reason: { type: "string" },
   },
   required: [
-    "approved", "requiredObjectsPresent", "scientificRelationshipCorrect", "spatialRelationshipsCorrect",
-    "noScientificContradiction", "noExtraScientificObjects", "clear2DComposition", "printReady",
-    "forbiddenTextDetected", "noAnswerLeakage", "reason",
+    "approved",
+    "requiredObjectsPresent",
+    "scientificRelationshipCorrect",
+    "spatialRelationshipsCorrect",
+    "noScientificContradiction",
+    "noExtraScientificObjects",
+    "clear2DComposition",
+    "printReady",
+    "forbiddenTextDetected",
+    "noAnswerLeakage",
+    "reason",
   ],
   additionalProperties: false,
-};
+} as const;
 
 async function reviewImage(
-  request: VisualIllustrationRequest,
+  request: VisualRequestBase,
   image: { data: string; mimeType: string },
   requestId: string,
   attempt: number,
@@ -287,24 +333,25 @@ async function reviewImage(
       },
     }),
   });
+
   const payload = await response.json() as unknown;
   if (!response.ok) throw providerError(payload, `تعذر تدقيق الرسم العلمي (${response.status}).`, response.status);
+
   const output = findOutputText(payload);
-  if (!output) throw httpError("لم يُرجع المراجع العلمي نتيجة قابلة للقراءة.", 502);
-  const record = requireRecord(parseJson(output), "استجابة المراجع العلمي غير صالحة.");
-  const review: VisualReview = {
-    approved: record.approved === true,
-    requiredObjectsPresent: record.requiredObjectsPresent === true,
-    scientificRelationshipCorrect: record.scientificRelationshipCorrect === true,
-    spatialRelationshipsCorrect: record.spatialRelationshipsCorrect === true,
-    noScientificContradiction: record.noScientificContradiction === true,
-    noExtraScientificObjects: record.noExtraScientificObjects === true,
-    clear2DComposition: record.clear2DComposition === true,
-    printReady: record.printReady === true,
-    forbiddenTextDetected: record.forbiddenTextDetected === true,
-    noAnswerLeakage: record.noAnswerLeakage === true,
-    reason: typeof record.reason === "string" ? record.reason.trim().slice(0, 500) : "",
-  };
+  if (!output) {
+    logReviewFailureMetadata(requestId, request.planItemId, response.status, payload, "no_output", Date.now() - startedAt);
+    throw httpError("لم يُرجع المراجع العلمي نتيجة قابلة للقراءة.", 502);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = parseJson(output);
+  } catch (error) {
+    logReviewFailureMetadata(requestId, request.planItemId, response.status, payload, "invalid_json", Date.now() - startedAt);
+    throw error;
+  }
+
+  const review = requireVisualReview(parsed);
   review.approved = review.approved
     && review.requiredObjectsPresent
     && review.scientificRelationshipCorrect
@@ -315,8 +362,47 @@ async function reviewImage(
     && review.printReady
     && !review.forbiddenTextDetected
     && review.noAnswerLeakage;
-  log(requestId, "visual_image_reviewed", { attempt, approved: review.approved, reason: review.reason, durationMs: Date.now() - startedAt });
+
+  log(requestId, "visual_image_reviewed", {
+    attempt,
+    approved: review.approved,
+    durationMs: Date.now() - startedAt,
+  });
   return review;
+}
+
+function requireVisualReview(value: unknown): VisualReview {
+  const record = asRecord(value);
+  if (!record) throw httpError("استجابة المراجع العلمي غير صالحة.", 502);
+  const booleanFields = [
+    "approved",
+    "requiredObjectsPresent",
+    "scientificRelationshipCorrect",
+    "spatialRelationshipsCorrect",
+    "noScientificContradiction",
+    "noExtraScientificObjects",
+    "clear2DComposition",
+    "printReady",
+    "forbiddenTextDetected",
+    "noAnswerLeakage",
+  ] as const;
+  for (const field of booleanFields) {
+    if (typeof record[field] !== "boolean") throw httpError(`استجابة المراجع العلمي غير صالحة: ${field}.`, 502);
+  }
+  if (typeof record.reason !== "string") throw httpError("استجابة المراجع العلمي غير صالحة: reason.", 502);
+  return {
+    approved: record.approved,
+    requiredObjectsPresent: record.requiredObjectsPresent,
+    scientificRelationshipCorrect: record.scientificRelationshipCorrect,
+    spatialRelationshipsCorrect: record.spatialRelationshipsCorrect,
+    noScientificContradiction: record.noScientificContradiction,
+    noExtraScientificObjects: record.noExtraScientificObjects,
+    clear2DComposition: record.clear2DComposition,
+    printReady: record.printReady,
+    forbiddenTextDetected: record.forbiddenTextDetected,
+    noAnswerLeakage: record.noAnswerLeakage,
+    reason: record.reason.trim().slice(0, 500),
+  };
 }
 
 function reviewerCorrection(review: VisualReview): string {
@@ -333,14 +419,12 @@ function reviewerCorrection(review: VisualReview): string {
   return `${review.reason || "أعد بناء الرسم وفق المواصفة."}${failures.length ? `؛ ${failures.join("؛ ")}` : ""}`.slice(0, 900);
 }
 
-async function storeImage(
-  request: VisualIllustrationRequest,
+async function storeProvisionalImage(
+  request: VisualRequestBase,
   userId: string,
   image: { data: string; mimeType: string },
-): Promise<VisualIllustrationAsset> {
+): Promise<ProvisionalVisualAsset> {
   await ensureBucket();
-  const renderMode = renderModeForVisual(request.visual);
-  const assetKind = "scene_2d" as const;
   const extension = image.mimeType === "image/jpeg" ? "jpg" : image.mimeType === "image/webp" ? "webp" : "png";
   const owner = storageSegment(userId);
   const assetPath = `${owner}/${storageSegment(request.draftId)}/${storageSegment(request.planItemId)}/${Date.now()}-${crypto.randomUUID()}.${extension}`;
@@ -352,12 +436,6 @@ async function storeImage(
   if (uploaded.error) throw httpError(`تعذر حفظ الأصل العلمي: ${uploaded.error.message}`, 500);
   const publicUrl = admin.storage.from(QUESTION_VISUAL_BUCKET).getPublicUrl(assetPath).data.publicUrl;
   if (!publicUrl?.startsWith("https://")) throw httpError("تعذر إنشاء رابط آمن للأصل العلمي.", 500);
-
-  const previous = request.previousAssetPath;
-  if (previous && previous !== assetPath && previous.startsWith(`${owner}/`)) {
-    void admin.storage.from(QUESTION_VISUAL_BUCKET).remove([previous]);
-  }
-
   return {
     url: publicUrl,
     assetPath,
@@ -365,9 +443,8 @@ async function storeImage(
     model: GEMINI_IMAGE_MODEL,
     generatedAt: new Date().toISOString(),
     promptVersion: VISUAL_PROMPT_VERSION,
-    validated: true,
-    assetKind,
-    renderMode,
+    assetKind: "scene_2d",
+    renderMode: "replace",
   };
 }
 
@@ -444,6 +521,33 @@ function parseJson(value: string): unknown {
   }
 }
 
+function logReviewFailureMetadata(
+  requestId: string,
+  planItemId: string,
+  status: number,
+  payload: unknown,
+  category: string,
+  durationMs: number,
+): void {
+  const root = asRecord(payload);
+  const candidates = Array.isArray(root?.candidates) ? root.candidates : [];
+  const first = asRecord(candidates[0]);
+  const content = asRecord(first?.content);
+  const parts = Array.isArray(content?.parts) ? content.parts : [];
+  const textLength = parts.reduce((sum, part) => sum + textField(asRecord(part)?.text).length, 0);
+  log(requestId, "visual_review_response_failure", {
+    planItemId,
+    httpStatus: status,
+    candidateCount: candidates.length,
+    partsCount: parts.length,
+    hasText: textLength > 0,
+    textLength,
+    finishReason: textField(first?.finishReason),
+    failureCategory: category,
+    durationMs,
+  });
+}
+
 async function requireUser(req: Request): Promise<string> {
   const authorization = req.headers.get("Authorization") ?? "";
   if (!authorization.startsWith("Bearer ")) throw httpError("يلزم تسجيل دخول مالك المنصة.", 401);
@@ -468,8 +572,12 @@ function userSafeError(error: unknown): string {
   return errorMessage(error);
 }
 
-function isRetryableError(error: unknown): boolean {
-  return [408, 429, 500, 502, 503, 504].includes(errorStatus(error));
+function failureCategory(error: unknown): string {
+  const status = errorStatus(error);
+  if (status === 408 || status === 504) return "timeout";
+  if (status === 429) return "rate_limited";
+  if (status >= 500) return "upstream_or_protocol";
+  return "request";
 }
 
 async function timedFetch(url: string, timeoutMs: number, init: RequestInit): Promise<Response> {
@@ -490,6 +598,16 @@ function decodeBase64(data: string): Uint8Array {
   const output = new Uint8Array(binary.length);
   for (let index = 0; index < binary.length; index += 1) output[index] = binary.charCodeAt(index);
   return output;
+}
+
+function encodeBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    const chunk = bytes.subarray(offset, Math.min(offset + chunkSize, bytes.length));
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
 }
 
 function storageSegment(value: string): string {
@@ -521,11 +639,6 @@ function requireText(value: unknown, message: string, maxLength: number): string
   const text = value.trim();
   if (text.length > maxLength) throw httpError(`${message} تجاوز الحد المسموح.`, 400);
   return text;
-}
-
-function requireInteger(value: unknown, message: string, minimum: number, maximum: number): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < minimum || value > maximum) throw httpError(message, 400);
-  return value;
 }
 
 function requireProgrammeId(value: unknown): "primary" | "lower_secondary" | "igcse" {
@@ -582,8 +695,4 @@ function json(req: Request, payload: unknown, status = 200): Response {
 
 function log(requestId: string, event: string, payload: Record<string, unknown> = {}): void {
   console.log(JSON.stringify({ event: `wathiq_${event}`, requestId, ...payload }));
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

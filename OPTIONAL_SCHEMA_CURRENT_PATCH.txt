@@ -1,0 +1,6 @@
+للنظافة المعمارية فقط، وليس مطلوبًا لتشغيل الإصلاح على الإنتاج الحالي:
+في supabase/schema-current.sql أضف بعد completed_at داخل question_visual_jobs:
+
+  workflow_state jsonb not null default '{"version":1,"stage":"generate_original","originalAssetPath":null,"correctedAssetPath":null,"provisionalOriginal":null,"provisionalCorrected":null,"correction":"","generationAttempts":{"original":0,"corrected":0},"reviewAttempts":{"original":0,"corrected":0}}'::jsonb,
+
+لم أضع schema-current.sql كاملًا في حزمة الرفع حتى لا نستبدل ملفًا ضخمًا غير متعلق بالإصلاح ونكرر فوضى Claude السابقة.

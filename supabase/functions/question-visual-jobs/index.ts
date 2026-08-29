@@ -9,15 +9,13 @@ const TABLE = "question_visual_jobs";
 const QUESTION_VISUAL_BUCKET = "wathiq-question-visuals";
 const MAX_ITEMS = 20;
 const STALE_JOB_MS = 5 * 60_000;
-const INTERNAL_GENERATION_TIMEOUT_MS = 165_000;
+const GENERATION_STAGE_TIMEOUT_MS = 90_000;
+const REVIEW_STAGE_TIMEOUT_MS = 60_000;
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const WORKER_LEASE_TIMEOUT_MS = 45_000;
+const MAX_STAGE_ATTEMPTS = 2;
+const MAX_APPARENT_ATTEMPTS = 8;
 const WORKER_LOST_LEASE_OR_SUPERSEDED_ERROR = "WORKER_LOST_LEASE_OR_SUPERSEDED";
-
-function isWorkerLostLeaseOrSupersededError(error: unknown): boolean {
-  return error instanceof Error
-    && error.message === WORKER_LOST_LEASE_OR_SUPERSEDED_ERROR;
-}
 
 const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
@@ -25,6 +23,7 @@ const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 
 type JobStatus = "queued" | "generating" | "validating" | "ready" | "retry_pending" | "failed" | "cancelled";
 type RequiredMode = "replace";
+type WorkflowStage = "generate_original" | "review_original" | "generate_corrected" | "review_corrected" | "ready" | "failed";
 
 interface VisualJobInput {
   draftId: string;
@@ -41,16 +40,31 @@ interface VisualJobInput {
   visual: Record<string, unknown>;
 }
 
-interface VisualAsset {
+interface ProvisionalVisualAsset {
   url: string;
   assetPath: string;
   mimeType: string;
   model: string;
   generatedAt: string;
   promptVersion: string;
+  assetKind: "scene_2d";
+  renderMode: RequiredMode;
+}
+
+interface VisualAsset extends ProvisionalVisualAsset {
   validated: true;
-  assetKind?: "scene_2d";
-  renderMode?: RequiredMode;
+}
+
+interface WorkflowState {
+  version: 1;
+  stage: WorkflowStage;
+  originalAssetPath: string | null;
+  correctedAssetPath: string | null;
+  provisionalOriginal: ProvisionalVisualAsset | null;
+  provisionalCorrected: ProvisionalVisualAsset | null;
+  correction: string;
+  generationAttempts: { original: number; corrected: number };
+  reviewAttempts: { original: number; corrected: number };
 }
 
 interface JobRow {
@@ -63,10 +77,12 @@ interface JobRow {
   status: JobStatus;
   request_payload: VisualJobInput;
   asset: VisualAsset | null;
+  workflow_state: WorkflowState | null;
   attempt_count: number;
   max_attempts: number;
   error_code: string | null;
   error_message: string | null;
+  worker_id: string | null;
   started_at: string | null;
   heartbeat_at: string | null;
   completed_at: string | null;
@@ -77,6 +93,25 @@ interface JobRow {
 interface RuntimeWithBackgroundTasks {
   EdgeRuntime?: { waitUntil(promise: Promise<unknown>): void };
 }
+
+type StageResult =
+  | { kind: "generated"; asset: ProvisionalVisualAsset }
+  | { kind: "approved"; reason: string }
+  | { kind: "scientific_rejection"; correction: string; reason: string }
+  | { kind: "transient_error"; code: string; message: string }
+  | { kind: "terminal_error"; code: string; message: string };
+
+const DEFAULT_WORKFLOW_STATE: WorkflowState = {
+  version: 1,
+  stage: "generate_original",
+  originalAssetPath: null,
+  correctedAssetPath: null,
+  provisionalOriginal: null,
+  provisionalCorrected: null,
+  correction: "",
+  generationAttempts: { original: 0, corrected: 0 },
+  reviewAttempts: { original: 0, corrected: 0 },
+};
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders(req) });
@@ -140,15 +175,21 @@ async function enqueueJobs(ownerId: string, inputs: VisualJobInput[]): Promise<J
         || existing?.request_payload.previousAssetPath
         || "",
     };
+
     if (existing && existing.visual_hash === visualHash) {
       if (existing.status === "failed" || existing.status === "cancelled") {
         rows.push(await updateJob(existing.id, ownerId, {
           status: "retry_pending",
           request_payload: effectiveInput,
           asset: null,
+          workflow_state: freshWorkflowState(),
           attempt_count: 0,
+          max_attempts: 2,
           error_code: null,
           error_message: null,
+          worker_id: null,
+          started_at: null,
+          heartbeat_at: null,
           completed_at: null,
         }));
       } else {
@@ -166,6 +207,7 @@ async function enqueueJobs(ownerId: string, inputs: VisualJobInput[]): Promise<J
       status: "queued" as JobStatus,
       request_payload: effectiveInput,
       asset: null,
+      workflow_state: freshWorkflowState(),
       attempt_count: 0,
       max_attempts: 2,
       error_code: null,
@@ -179,6 +221,9 @@ async function enqueueJobs(ownerId: string, inputs: VisualJobInput[]): Promise<J
       onConflict: "owner_id,draft_id,plan_item_id",
     }).select("*").single();
     if (error || !data) throw new Error(`تعذر حفظ مهمة الصورة: ${error?.message ?? "لا توجد بيانات"}`);
+    if (existing && existing.visual_hash !== visualHash) {
+      await cleanupKnownProvisionalAssets(ownerId, workflowStateOf(existing), []);
+    }
     rows.push(data as JobRow);
   }
   return rows;
@@ -206,12 +251,11 @@ async function findJob(ownerId: string, draftId: string, planItemId: string): Pr
 }
 
 async function recoverStaleJobs(ownerId: string, draftId: string): Promise<void> {
-  // Fast path: lease recovery (WORKER_LEASE_TIMEOUT_MS)
   const leaseBefore = new Date(Date.now() - WORKER_LEASE_TIMEOUT_MS).toISOString();
   const { error: leaseRecoveryError } = await admin.from(TABLE).update({
     status: "retry_pending",
     error_code: "STALE_WORKER_RECOVERED",
-    error_message: "انقطع عامل توليد الصورة؛ أعاد واثق المهمة تلقائيًا إلى طابور التنفيذ.",
+    error_message: "انقطع عامل الصورة؛ أعاد واثق المرحلة نفسها إلى طابور التنفيذ.",
     worker_id: null,
     heartbeat_at: null,
   })
@@ -220,16 +264,13 @@ async function recoverStaleJobs(ownerId: string, draftId: string): Promise<void>
     .in("status", ["generating", "validating"])
     .not("worker_id", "is", null)
     .or(`heartbeat_at.is.null,heartbeat_at.lt.${leaseBefore}`);
-  if (leaseRecoveryError) {
-    throw new Error(`تعذر استعادة مهام الصور المتقطعة: ${leaseRecoveryError.message}`);
-  }
+  if (leaseRecoveryError) throw new Error(`تعذر استعادة مهام الصور المتقطعة: ${leaseRecoveryError.message}`);
 
-  // Fallback: STALE_JOB_MS (catastrophic)
   const staleBefore = new Date(Date.now() - STALE_JOB_MS).toISOString();
   const { error: fallbackRecoveryError } = await admin.from(TABLE).update({
     status: "retry_pending",
     error_code: "STALE_WORKER_RECOVERED",
-    error_message: "انقطع عامل توليد الصورة؛ أعاد واثق المهمة تلقائيًا إلى طابور التنفيذ.",
+    error_message: "انقطع عامل الصورة؛ أعاد واثق المرحلة نفسها إلى طابور التنفيذ.",
     worker_id: null,
     heartbeat_at: null,
   })
@@ -237,9 +278,7 @@ async function recoverStaleJobs(ownerId: string, draftId: string): Promise<void>
     .eq("draft_id", draftId)
     .in("status", ["generating", "validating"])
     .lt("updated_at", staleBefore);
-  if (fallbackRecoveryError) {
-    throw new Error(`تعذر استعادة مهام الصور المتقطعة: ${fallbackRecoveryError.message}`);
-  }
+  if (fallbackRecoveryError) throw new Error(`تعذر استعادة مهام الصور المتقطعة: ${fallbackRecoveryError.message}`);
 }
 
 async function resetJobForRetry(ownerId: string, jobId: string): Promise<JobRow> {
@@ -255,7 +294,9 @@ async function resetJobForRetry(ownerId: string, jobId: string): Promise<JobRow>
     status: "retry_pending",
     request_payload: { ...row.request_payload, previousAssetPath },
     asset: null,
+    workflow_state: freshWorkflowState(),
     attempt_count: 0,
+    max_attempts: 2,
     error_code: null,
     error_message: null,
     worker_id: null,
@@ -266,13 +307,24 @@ async function resetJobForRetry(ownerId: string, jobId: string): Promise<JobRow>
 }
 
 async function cancelJob(ownerId: string, jobId: string): Promise<JobRow> {
-  return updateJob(jobId, ownerId, {
+  const existing = await findJobById(ownerId, jobId);
+  const state = workflowStateOf(existing);
+  const row = await updateJob(jobId, ownerId, {
     status: "cancelled",
     error_code: "CANCELLED_BY_USER",
     error_message: "ألغى المستخدم مهمة الصورة.",
     worker_id: null,
     completed_at: new Date().toISOString(),
   });
+  await cleanupKnownProvisionalAssets(existing.owner_id, state, []);
+  return row;
+}
+
+async function findJobById(ownerId: string, jobId: string): Promise<JobRow> {
+  const { data, error } = await admin.from(TABLE).select("*")
+    .eq("id", jobId).eq("owner_id", ownerId).maybeSingle();
+  if (error || !data) throw new Error(`تعذر قراءة مهمة الصورة: ${error?.message ?? "المهمة غير موجودة"}`);
+  return data as JobRow;
 }
 
 async function updateJob(jobId: string, ownerId: string, patch: Record<string, unknown>): Promise<JobRow> {
@@ -298,13 +350,15 @@ function scheduleBackground(promise: Promise<unknown>): void {
 
 async function processJob(jobId: string, accessToken: string, requestId: string): Promise<void> {
   const workerId = crypto.randomUUID();
-  let row: JobRow | null = null;
+  let claimedRow: JobRow | null = null;
   let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+
   try {
     const { data: current, error: currentError } = await admin.from(TABLE).select("*").eq("id", jobId).maybeSingle();
     if (currentError || !current) return;
-    row = current as JobRow;
+    const row = current as JobRow;
     if (row.status !== "queued" && row.status !== "retry_pending") return;
+
     if (textField(row.request_payload.visual.type) !== "context_scene") {
       await admin.from(TABLE).update({
         status: "cancelled",
@@ -312,24 +366,24 @@ async function processJob(jobId: string, accessToken: string, requestId: string)
         error_message: "هذا مخطط علمي منظم ويُرسم داخل واثق من بياناته دون إرسال إلى نموذج الصور.",
         worker_id: null,
         completed_at: new Date().toISOString(),
-      }).eq("id", row.id);
-      return;
-    }
-    if (row.attempt_count >= row.max_attempts) {
-      await admin.from(TABLE).update({
-        status: "failed",
-        error_code: "MAX_ATTEMPTS_REACHED",
-        error_message: row.error_message || "استنفدت مهمة الصورة عدد المحاولات المسموح.",
-        completed_at: new Date().toISOString(),
       }).eq("id", row.id).eq("status", row.status);
       return;
     }
 
-    const attempt = row.attempt_count + 1;
+    const state = workflowStateOf(row);
+    if (state.stage === "ready" || state.stage === "failed") return;
+
+    if (stageAttempts(state) >= MAX_STAGE_ATTEMPTS) {
+      await failWithoutClaim(row, state, "MAX_STAGE_ATTEMPTS_REACHED", "استنفدت المرحلة الحالية عدد المحاولات المسموح.");
+      return;
+    }
+
+    const claimedState = incrementStageAttempt(state);
     const now = new Date().toISOString();
+    const claimedStatus: JobStatus = isReviewStage(state.stage) ? "validating" : "generating";
     const { data: claimed, error: claimError } = await admin.from(TABLE).update({
-      status: "generating",
-      attempt_count: attempt,
+      status: claimedStatus,
+      workflow_state: claimedState,
       worker_id: workerId,
       started_at: row.started_at ?? now,
       heartbeat_at: now,
@@ -340,11 +394,16 @@ async function processJob(jobId: string, accessToken: string, requestId: string)
       .select("*")
       .maybeSingle();
     if (claimError || !claimed) return;
-    row = claimed as JobRow;
+    claimedRow = claimed as JobRow;
 
-    console.log(JSON.stringify({ event: "wathiq_visual_job_started", requestId, jobId, attempt }));
+    console.log(JSON.stringify({
+      event: "wathiq_visual_job_stage_started",
+      requestId,
+      jobId,
+      stage: claimedState.stage,
+      stageAttempt: stageAttempts(claimedState),
+    }));
 
-    // Start heartbeat updates (serial, in-flight guard)
     let inFlight = false;
     heartbeatInterval = setInterval(async () => {
       if (inFlight) return;
@@ -354,138 +413,71 @@ async function processJob(jobId: string, accessToken: string, requestId: string)
           heartbeat_at: new Date().toISOString(),
         }).eq("id", jobId).eq("worker_id", workerId).select("id").maybeSingle();
         if (heartbeatError) {
-          // Transient DB/network error – log and keep ticking
           console.warn("Heartbeat update error:", heartbeatError);
-        } else if (!heartbeatData) {
-          // Lease lost or superseded – stop heartbeat
-          if (heartbeatInterval !== null) {
-            clearInterval(heartbeatInterval);
-            heartbeatInterval = null;
-          }
+        } else if (!heartbeatData && heartbeatInterval !== null) {
+          clearInterval(heartbeatInterval);
+          heartbeatInterval = null;
         }
-      } catch (err) {
-        // If heartbeat update fails, log and keep ticking (do not stop interval)
-        console.warn("Heartbeat update catch error:", err);
+      } catch (error) {
+        console.warn("Heartbeat update catch error:", error);
       } finally {
         inFlight = false;
       }
     }, HEARTBEAT_INTERVAL_MS);
 
-    const response = await invokeGenerator({ ...row.request_payload, requiredMode: "replace" }, accessToken, row.id, workerId);
+    const result = await invokeStage(claimedRow, claimedState, accessToken);
 
-    // Stop heartbeat after invokeGenerator returns (success or science/provider failure)
     if (heartbeatInterval !== null) {
       clearInterval(heartbeatInterval);
       heartbeatInterval = null;
     }
 
-    if (response.status === "ready" && response.illustration) {
-      if (response.illustration.renderMode !== "replace") {
-        throw httpError("عاد مولد الصور بنمط عرض قديم غير مدعوم.", 502);
-      }
-      const completedAt = new Date().toISOString();
-      const { data: completed, error: completionError } = await admin.from(TABLE).update({
-        status: "ready",
-        asset: response.illustration,
-        error_code: null,
-        error_message: null,
-        heartbeat_at: completedAt,
-        completed_at: completedAt,
-        worker_id: null,
-      }).eq("id", row.id).eq("worker_id", workerId).select("id").maybeSingle();
-      if (completionError || !completed) {
-        await admin.storage.from(QUESTION_VISUAL_BUCKET).remove([response.illustration.assetPath]);
-        if (completionError) throw new Error(`تعذر ربط الصورة بالمفردة: ${completionError.message}`);
-        console.log(JSON.stringify({ event: "wathiq_visual_job_superseded", requestId, jobId, attempt }));
-        return;
-      }
-      console.log(JSON.stringify({ event: "wathiq_visual_job_ready", requestId, jobId, attempt }));
-      return;
-    }
-
-    // Science/provider failure (response.status === "failed")
-    const { data: failedData, error: failedError } = await admin.from(TABLE).update({
-      status: "failed",
-      asset: null,
-      error_code: null,
-      error_message: response.reason,
-      worker_id: null,
-      heartbeat_at: new Date().toISOString(),
-      completed_at: new Date().toISOString(),
-    }).eq("id", row.id).eq("worker_id", workerId).select("id").maybeSingle();
-    if (failedError || !failedData) {
-      // Worker lost lease or superseded – nothing more to do
-      return;
-    }
-    return;
+    await applyStageResult(claimedRow, claimedState, workerId, result, requestId);
   } catch (error) {
-    // Stop heartbeat before handling retry/failure
     if (heartbeatInterval !== null) {
       clearInterval(heartbeatInterval);
       heartbeatInterval = null;
     }
-    if (!row) return;
+    if (!claimedRow) return;
     if (isWorkerLostLeaseOrSupersededError(error)) {
       console.log(JSON.stringify({ event: "wathiq_visual_job_superseded", requestId, jobId }));
       return;
     }
-    await handleRetryOrFailure(row, workerId, errorCode(error), errorMessage(error), accessToken, requestId);
+    const state = workflowStateOf(claimedRow);
+    const result: StageResult = isTransientStatus(errorStatus(error))
+      ? { kind: "transient_error", code: errorCode(error), message: errorMessage(error) }
+      : { kind: "terminal_error", code: errorCode(error), message: errorMessage(error) };
+    await applyStageResult(claimedRow, state, workerId, result, requestId);
   } finally {
-    // Ensure heartbeat interval is cleared on any exit path
-    if (heartbeatInterval !== null) {
-      clearInterval(heartbeatInterval);
-      heartbeatInterval = null;
-    }
+    if (heartbeatInterval !== null) clearInterval(heartbeatInterval);
   }
 }
 
-async function handleRetryOrFailure(
-  row: JobRow,
-  workerId: string,
-  code: string,
-  message: string,
-  accessToken: string,
-  requestId: string,
-): Promise<void> {
-  const retryableInfrastructureCodes = new Set(["GENERATION_TIMEOUT", "RATE_LIMITED", "UPSTREAM_UNAVAILABLE"]);
-  const shouldRetry = retryableInfrastructureCodes.has(code) && row.attempt_count < row.max_attempts;
-  const status: JobStatus = shouldRetry ? "retry_pending" : "failed";
-  const completedAt = shouldRetry ? null : new Date().toISOString();
-  const { data } = await admin.from(TABLE).update({
-    status,
-    error_code: code,
-    error_message: message.slice(0, 500),
-    worker_id: null,
-    heartbeat_at: new Date().toISOString(),
-    completed_at: completedAt,
-  }).eq("id", row.id).eq("worker_id", workerId).select("*").maybeSingle();
-  if (shouldRetry && data) {
-    await delay(1_500);
-    scheduleBackground(processJob(row.id, accessToken, requestId));
-  }
-}
-
-async function invokeGenerator(
-  input: VisualJobInput,
-  accessToken: string,
-  jobId: string,
-  workerId: string,
-): Promise<{ status: "ready" | "failed"; illustration?: VisualAsset; reason: string }> {
+async function invokeStage(row: JobRow, state: WorkflowState, accessToken: string): Promise<StageResult> {
+  const action = isReviewStage(state.stage) ? "review_image" : "generate_image";
+  const timeoutMs = isReviewStage(state.stage) ? REVIEW_STAGE_TIMEOUT_MS : GENERATION_STAGE_TIMEOUT_MS;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), INTERNAL_GENERATION_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
   try {
-    const { data: validatingData, error: validatingError } = await admin.from(TABLE).update({
-      status: "validating",
-      heartbeat_at: new Date().toISOString(),
-    }).eq("id", jobId).eq("status", "generating").eq("worker_id", workerId).select("id").maybeSingle();
-    if (validatingError) {
-      // Infrastructure/DB failure – treat as retryable infrastructure error
-      throw new Error("INFRASTRUCTURE_ERROR_IN_VALIDATING");
-    }
-    if (!validatingData) {
-      // No error but no data → worker lost lease or superseded
-      throw new Error(WORKER_LOST_LEASE_OR_SUPERSEDED_ERROR);
-    }
+    const body: Record<string, unknown> = {
+      action,
+      draftId: row.request_payload.draftId,
+      planItemId: row.request_payload.planItemId,
+      programmeId: row.request_payload.programmeId,
+      syllabusCode: row.request_payload.syllabusCode,
+      stageLabel: row.request_payload.stageLabel,
+      subject: row.request_payload.subject,
+      lessonLabel: row.request_payload.lessonLabel,
+      questionText: row.request_payload.questionText,
+      reviewSupport: row.request_payload.reviewSupport,
+      visual: row.request_payload.visual,
+    };
+
+    if (state.stage === "generate_original") body.correction = "";
+    if (state.stage === "generate_corrected") body.correction = state.correction;
+    if (state.stage === "review_original") body.assetPath = requireWorkflowPath(state.provisionalOriginal, "الأصل الأولي غير موجود للمراجعة.");
+    if (state.stage === "review_corrected") body.assetPath = requireWorkflowPath(state.provisionalCorrected, "الأصل المصحح غير موجود للمراجعة.");
 
     const response = await fetch(GENERATION_ENDPOINT, {
       method: "POST",
@@ -494,43 +486,308 @@ async function invokeGenerator(
         Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        action: "generate_visual_illustration",
-        draftId: input.draftId,
-        planItemId: input.planItemId,
-        programmeId: input.programmeId,
-        syllabusCode: input.syllabusCode,
-        stageLabel: input.stageLabel,
-        subject: input.subject,
-        lessonLabel: input.lessonLabel,
-        questionText: input.questionText,
-        reviewSupport: input.reviewSupport,
-        ...(input.previousAssetPath ? { previousAssetPath: input.previousAssetPath } : {}),
-        visual: input.visual,
-      }),
+      body: JSON.stringify(body),
       signal: controller.signal,
     });
-    const text = await response.text();
+
+    const rawText = await response.text();
     let payload: Record<string, unknown> = {};
-    if (text) {
-      try { payload = requireRecord(JSON.parse(text), "استجابة مولد الصور غير صالحة."); }
-      catch { payload = { error: text }; }
+    if (rawText) {
+      try { payload = requireRecord(JSON.parse(rawText), "استجابة خدمة الصور غير صالحة."); }
+      catch { payload = { error: rawText }; }
     }
-    if (!response.ok) throw httpError(errorMessage(payload) || `تعذر تشغيل مولد الصور (${response.status}).`, response.status);
-    const status = payload.status === "ready" ? "ready" : "failed";
-    const illustration = parseVisualAsset(payload.illustration);
-    const reason = typeof payload.reason === "string" ? payload.reason : "";
-    return { status, ...(illustration ? { illustration } : {}), reason };
+
+    if (!response.ok) {
+      const message = errorMessage(payload) || `تعذر تشغيل خدمة الصور (${response.status}).`;
+      if (isTransientStatus(response.status)) return { kind: "transient_error", code: errorCodeFromStatus(response.status), message };
+      return { kind: "terminal_error", code: errorCodeFromStatus(response.status), message };
+    }
+
+    if (payload.status === "generated") {
+      const asset = parseProvisionalVisualAsset(payload.asset);
+      if (!asset) return { kind: "transient_error", code: "INVALID_STAGE_RESPONSE", message: "أعادت خدمة الصور أصلاً مؤقتاً غير صالح." };
+      return { kind: "generated", asset };
+    }
+    if (payload.status === "approved") {
+      return { kind: "approved", reason: textField(payload.reason) };
+    }
+    if (payload.status === "scientific_rejection") {
+      const correction = textField(payload.correction);
+      const reason = textField(payload.reason) || "لم يجتز الأصل الفحص العلمي.";
+      if (!correction) return { kind: "transient_error", code: "INVALID_REVIEW_RESPONSE", message: "لم يُرجع المراجع العلمي تعليمات التصحيح المطلوبة." };
+      return { kind: "scientific_rejection", correction, reason };
+    }
+    return { kind: "transient_error", code: "INVALID_STAGE_RESPONSE", message: "استجابة خدمة الصور لا تطابق عقد المرحلة." };
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
-      throw httpError("تجاوز توليد الصورة المدة القصوى للخدمة الخلفية.", 504);
+      return { kind: "transient_error", code: "STAGE_TIMEOUT", message: "تجاوزت مرحلة الصورة المدة القصوى المسموح بها." };
     }
-    throw error;
+    if (isTransientStatus(errorStatus(error))) {
+      return { kind: "transient_error", code: errorCode(error), message: errorMessage(error) };
+    }
+    return { kind: "terminal_error", code: errorCode(error), message: errorMessage(error) };
   } finally {
     clearTimeout(timeout);
   }
 }
 
+async function applyStageResult(
+  row: JobRow,
+  state: WorkflowState,
+  workerId: string,
+  result: StageResult,
+  requestId: string,
+): Promise<void> {
+  if (result.kind === "generated") {
+    const next = cloneWorkflowState(state);
+    if (state.stage === "generate_original") {
+      next.provisionalOriginal = result.asset;
+      next.originalAssetPath = result.asset.assetPath;
+      next.stage = "review_original";
+    } else if (state.stage === "generate_corrected") {
+      next.provisionalCorrected = result.asset;
+      next.correctedAssetPath = result.asset.assetPath;
+      next.stage = "review_corrected";
+    } else {
+      await terminalFailure(row, state, workerId, "INVALID_STAGE_TRANSITION", "وصل أصل مولد إلى مرحلة لا تقبل التوليد.");
+      return;
+    }
+    const transitioned = await fencedStageUpdate(row.id, workerId, {
+      status: "retry_pending",
+      workflow_state: next,
+      worker_id: null,
+      heartbeat_at: new Date().toISOString(),
+      error_code: null,
+      error_message: null,
+      completed_at: null,
+    });
+    if (!transitioned) {
+      await removeOwnedPaths(row.owner_id, [result.asset.assetPath]);
+    }
+    return;
+  }
+
+  if (result.kind === "approved") {
+    const provisional = state.stage === "review_original" ? state.provisionalOriginal
+      : state.stage === "review_corrected" ? state.provisionalCorrected : null;
+    if (!provisional) {
+      await terminalFailure(row, state, workerId, "MISSING_APPROVED_ASSET", "تعذر العثور على الأصل الذي اجتاز المراجعة.");
+      return;
+    }
+    const finalAsset: VisualAsset = { ...provisional, validated: true };
+    const finalState = cloneWorkflowState(state);
+    finalState.stage = "ready";
+    const completedAt = new Date().toISOString();
+    const updated = await fencedStageUpdate(row.id, workerId, {
+      status: "ready",
+      asset: finalAsset,
+      workflow_state: finalState,
+      error_code: null,
+      error_message: null,
+      worker_id: null,
+      heartbeat_at: completedAt,
+      completed_at: completedAt,
+    });
+    if (!updated) return;
+
+    const cleanup: string[] = [];
+    if (state.stage === "review_corrected" && state.provisionalOriginal?.assetPath) cleanup.push(state.provisionalOriginal.assetPath);
+    if (row.request_payload.previousAssetPath && row.request_payload.previousAssetPath !== finalAsset.assetPath) cleanup.push(row.request_payload.previousAssetPath);
+    await cleanupKnownProvisionalAssets(row.owner_id, state, cleanup, finalAsset.assetPath);
+    console.log(JSON.stringify({ event: "wathiq_visual_job_ready", requestId, jobId: row.id, stage: state.stage }));
+    return;
+  }
+
+  if (result.kind === "scientific_rejection") {
+    if (state.stage === "review_original") {
+      const next = cloneWorkflowState(state);
+      next.correction = result.correction.slice(0, 900);
+      next.stage = "generate_corrected";
+      await fencedStageUpdate(row.id, workerId, {
+        status: "retry_pending",
+        workflow_state: next,
+        error_code: null,
+        error_message: result.reason.slice(0, 500),
+        worker_id: null,
+        heartbeat_at: new Date().toISOString(),
+        completed_at: null,
+      });
+      return;
+    }
+    await terminalFailure(row, state, workerId, "SCIENTIFIC_REJECTION", result.reason);
+    return;
+  }
+
+  if (result.kind === "transient_error") {
+    const consumed = stageAttempts(state);
+    if (consumed >= MAX_STAGE_ATTEMPTS) {
+      await terminalFailure(row, state, workerId, result.code, result.message);
+      return;
+    }
+    await fencedStageUpdate(row.id, workerId, {
+      status: "retry_pending",
+      workflow_state: state,
+      error_code: result.code,
+      error_message: result.message.slice(0, 500),
+      worker_id: null,
+      heartbeat_at: new Date().toISOString(),
+      completed_at: null,
+    });
+    return;
+  }
+
+  await terminalFailure(row, state, workerId, result.code, result.message);
+}
+
+async function terminalFailure(row: JobRow, state: WorkflowState, workerId: string, code: string, message: string): Promise<void> {
+  const failedState = cloneWorkflowState(state);
+  failedState.stage = "failed";
+  const completedAt = new Date().toISOString();
+  const updated = await fencedStageUpdate(row.id, workerId, {
+    status: "failed",
+    asset: null,
+    workflow_state: failedState,
+    error_code: code,
+    error_message: message.slice(0, 500),
+    worker_id: null,
+    heartbeat_at: completedAt,
+    completed_at: completedAt,
+  });
+  if (!updated) return;
+  await cleanupKnownProvisionalAssets(row.owner_id, state, []);
+}
+
+async function failWithoutClaim(row: JobRow, state: WorkflowState, code: string, message: string): Promise<void> {
+  const failedState = cloneWorkflowState(state);
+  failedState.stage = "failed";
+  const completedAt = new Date().toISOString();
+  const { data } = await admin.from(TABLE).update({
+    status: "failed",
+    asset: null,
+    workflow_state: failedState,
+    error_code: code,
+    error_message: message.slice(0, 500),
+    worker_id: null,
+    heartbeat_at: completedAt,
+    completed_at: completedAt,
+  }).eq("id", row.id).eq("status", row.status).select("id").maybeSingle();
+  if (data) await cleanupKnownProvisionalAssets(row.owner_id, state, []);
+}
+
+async function fencedStageUpdate(jobId: string, workerId: string, patch: Record<string, unknown>): Promise<boolean> {
+  const { data, error } = await admin.from(TABLE).update(patch)
+    .eq("id", jobId)
+    .eq("worker_id", workerId)
+    .select("id")
+    .maybeSingle();
+  if (error) throw new Error(`تعذر تحديث مرحلة الصورة: ${error.message}`);
+  return Boolean(data);
+}
+
+async function cleanupKnownProvisionalAssets(
+  ownerId: string,
+  state: WorkflowState,
+  extraPaths: string[],
+  keepPath = "",
+): Promise<void> {
+  const ownerPrefix = `${storageSegment(ownerId)}/`;
+  const candidates = new Set<string>([
+    state.provisionalOriginal?.assetPath ?? "",
+    state.provisionalCorrected?.assetPath ?? "",
+    ...extraPaths,
+  ].filter(Boolean));
+  const paths = [...candidates].filter((path) => path !== keepPath && path.startsWith(ownerPrefix));
+  if (!paths.length) return;
+  const { error } = await admin.storage.from(QUESTION_VISUAL_BUCKET).remove(paths);
+  if (error) console.warn("Visual cleanup error:", error.message);
+}
+
+async function removeOwnedPaths(ownerId: string, paths: string[]): Promise<void> {
+  const ownerPrefix = `${storageSegment(ownerId)}/`;
+  const safePaths = [...new Set(paths.filter((path) => path && path.startsWith(ownerPrefix)))];
+  if (!safePaths.length) return;
+  const { error } = await admin.storage.from(QUESTION_VISUAL_BUCKET).remove(safePaths);
+  if (error) console.warn("Visual cleanup error:", error.message);
+}
+
+function freshWorkflowState(): WorkflowState {
+  return cloneWorkflowState(DEFAULT_WORKFLOW_STATE);
+}
+
+function cloneWorkflowState(state: WorkflowState): WorkflowState {
+  return {
+    ...state,
+    generationAttempts: { ...state.generationAttempts },
+    reviewAttempts: { ...state.reviewAttempts },
+    provisionalOriginal: state.provisionalOriginal ? { ...state.provisionalOriginal } : null,
+    provisionalCorrected: state.provisionalCorrected ? { ...state.provisionalCorrected } : null,
+  };
+}
+
+function workflowStateOf(row: JobRow): WorkflowState {
+  const raw = asRecord(row.workflow_state);
+  if (!raw) return freshWorkflowState();
+  const generation = asRecord(raw.generationAttempts);
+  const review = asRecord(raw.reviewAttempts);
+  const stage = isWorkflowStage(raw.stage) ? raw.stage : "generate_original";
+  return {
+    version: 1,
+    stage,
+    originalAssetPath: typeof raw.originalAssetPath === "string" ? raw.originalAssetPath : null,
+    correctedAssetPath: typeof raw.correctedAssetPath === "string" ? raw.correctedAssetPath : null,
+    provisionalOriginal: parseProvisionalVisualAsset(raw.provisionalOriginal) ?? null,
+    provisionalCorrected: parseProvisionalVisualAsset(raw.provisionalCorrected) ?? null,
+    correction: typeof raw.correction === "string" ? raw.correction.slice(0, 900) : "",
+    generationAttempts: {
+      original: safeAttempt(generation?.original),
+      corrected: safeAttempt(generation?.corrected),
+    },
+    reviewAttempts: {
+      original: safeAttempt(review?.original),
+      corrected: safeAttempt(review?.corrected),
+    },
+  };
+}
+
+function isWorkflowStage(value: unknown): value is WorkflowStage {
+  return value === "generate_original" || value === "review_original" || value === "generate_corrected"
+    || value === "review_corrected" || value === "ready" || value === "failed";
+}
+
+function safeAttempt(value: unknown): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) return 0;
+  return Math.min(value, MAX_STAGE_ATTEMPTS);
+}
+
+function stageAttempts(state: WorkflowState): number {
+  if (state.stage === "generate_original") return state.generationAttempts.original;
+  if (state.stage === "generate_corrected") return state.generationAttempts.corrected;
+  if (state.stage === "review_original") return state.reviewAttempts.original;
+  if (state.stage === "review_corrected") return state.reviewAttempts.corrected;
+  return MAX_STAGE_ATTEMPTS;
+}
+
+function incrementStageAttempt(state: WorkflowState): WorkflowState {
+  const next = cloneWorkflowState(state);
+  if (next.stage === "generate_original") next.generationAttempts.original += 1;
+  else if (next.stage === "generate_corrected") next.generationAttempts.corrected += 1;
+  else if (next.stage === "review_original") next.reviewAttempts.original += 1;
+  else if (next.stage === "review_corrected") next.reviewAttempts.corrected += 1;
+  return next;
+}
+
+function isReviewStage(stage: WorkflowStage): boolean {
+  return stage === "review_original" || stage === "review_corrected";
+}
+
+function requireWorkflowPath(asset: ProvisionalVisualAsset | null, message: string): string {
+  if (!asset?.assetPath) throw httpError(message, 409);
+  return asset.assetPath;
+}
+
+function isWorkerLostLeaseOrSupersededError(error: unknown): boolean {
+  return error instanceof Error && error.message === WORKER_LOST_LEASE_OR_SUPERSEDED_ERROR;
+}
 
 function isContextSceneJobInput(value: unknown): boolean {
   const record = asRecord(value);
@@ -560,7 +817,7 @@ function parseJobInput(value: unknown, draftId: string): VisualJobInput {
   };
 }
 
-function parseVisualAsset(value: unknown): VisualAsset | undefined {
+function parseProvisionalVisualAsset(value: unknown): ProvisionalVisualAsset | undefined {
   const record = asRecord(value);
   if (!record) return undefined;
   if (typeof record.url !== "string" || !record.url.startsWith("https://")
@@ -569,9 +826,9 @@ function parseVisualAsset(value: unknown): VisualAsset | undefined {
     || typeof record.model !== "string" || !record.model
     || typeof record.generatedAt !== "string" || !record.generatedAt
     || typeof record.promptVersion !== "string" || !record.promptVersion
-    || record.validated !== true) return undefined;
-  const renderMode: RequiredMode = "replace";
-  const assetKind = "scene_2d" as const;
+    || record.assetKind !== "scene_2d"
+    || record.renderMode !== "replace"
+    || record.validated === true) return undefined;
   return {
     url: record.url,
     assetPath: record.assetPath,
@@ -579,13 +836,17 @@ function parseVisualAsset(value: unknown): VisualAsset | undefined {
     model: record.model,
     generatedAt: record.generatedAt,
     promptVersion: record.promptVersion,
-    validated: true,
-    assetKind,
-    renderMode,
+    assetKind: "scene_2d",
+    renderMode: "replace",
   };
 }
 
 function toSnapshot(row: JobRow): Record<string, unknown> {
+  const workflowState = workflowStateOf(row);
+  const attemptCount = workflowState.generationAttempts.original
+    + workflowState.generationAttempts.corrected
+    + workflowState.reviewAttempts.original
+    + workflowState.reviewAttempts.corrected;
   return {
     id: row.id,
     draftId: row.draft_id,
@@ -593,8 +854,8 @@ function toSnapshot(row: JobRow): Record<string, unknown> {
     visualHash: row.visual_hash,
     requiredMode: "replace",
     status: row.status,
-    attemptCount: row.attempt_count,
-    maxAttempts: row.max_attempts,
+    attemptCount,
+    maxAttempts: MAX_APPARENT_ATTEMPTS,
     errorCode: row.error_code ?? "",
     errorMessage: row.error_message ?? "",
     ...(row.asset ? { asset: row.asset } : {}),
@@ -687,11 +948,6 @@ function requireText(value: unknown, message: string, maxLength: number): string
   return text;
 }
 
-function requireInteger(value: unknown, message: string, minimum: number, maximum: number): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < minimum || value > maximum) throw httpError(message, 400);
-  return value;
-}
-
 function requireUuid(value: unknown, message: string): string {
   if (typeof value !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
     throw httpError(message, 400);
@@ -716,12 +972,19 @@ function errorStatus(error: unknown): number {
 }
 
 function errorCode(error: unknown): string {
-  const status = errorStatus(error);
+  return errorCodeFromStatus(errorStatus(error));
+}
+
+function errorCodeFromStatus(status: number): string {
   if (status === 401) return "AUTHENTICATION_FAILED";
-  if (status === 408 || status === 504) return "GENERATION_TIMEOUT";
+  if (status === 408 || status === 504) return "STAGE_TIMEOUT";
   if (status === 429) return "RATE_LIMITED";
   if (status >= 500) return "UPSTREAM_UNAVAILABLE";
-  return "VISUAL_GENERATION_FAILED";
+  return "VISUAL_STAGE_FAILED";
+}
+
+function isTransientStatus(status: number): boolean {
+  return [408, 429, 500, 502, 503, 504].includes(status);
 }
 
 function errorMessage(error: unknown): string {
@@ -733,6 +996,6 @@ function errorMessage(error: unknown): string {
   return "حدث خطأ غير متوقع في منظومة الصور.";
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function storageSegment(value: string): string {
+  return value.replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "item";
 }

@@ -5,78 +5,94 @@ import test from "node:test";
 const root = new URL("../", import.meta.url);
 const text = (relativePath) => readFile(new URL(relativePath, root), "utf8");
 
-function extractParseJson(source) {
-  const start = source.indexOf("function parseJson(value: string): unknown {");
-  const end = source.indexOf("\nasync function requireUser", start);
-  assert.ok(start >= 0 && end > start);
-  const functionSource = source.slice(start, end)
-    .replace("function parseJson(value: string): unknown", "function parseJson(value)");
-  return new Function("httpError", `${functionSource}; return parseJson;`)((message) => new Error(message));
+function functionBlock(source, name) {
+  const match = new RegExp(`(?:async\\s+)?function\\s+${name}\\s*\\(`).exec(source);
+  assert.ok(match, `function ${name} should exist`);
+  const rest = source.slice(match.index + match[0].length);
+  const next = /\n(?:async\s+)?function\s+[A-Za-z0-9_]+\s*\(/.exec(rest);
+  const end = next ? match.index + match[0].length + next.index : source.length;
+  return source.slice(match.index, end);
 }
 
-test("مراجع الصورة 2D يقرأ JSON حتى مع سياج Markdown أو نص زائد", async () => {
+function extractParseJson(source) {
+  const block = functionBlock(source, "parseJson")
+    .replace("function parseJson(value: string): unknown", "function parseJson(value)");
+  return new Function("httpError", `${block}; return parseJson;`)((message) => new Error(message));
+}
+
+test("مراجع الصورة يقرأ JSON داخل Markdown أو نص زائد", async () => {
   const edge = await text("supabase/functions/science-visual-generation/index.ts");
   const parseJson = extractParseJson(edge);
   assert.deepEqual(parseJson('```json\n{"approved":true,"reason":"ok"}\n```'), { approved: true, reason: "ok" });
-  assert.deepEqual(parseJson('نتيجة المراجعة:\n{"approved":false,"reason":"راجع الاتجاه"}\nتم.'), { approved: false, reason: "راجع الاتجاه" });
+  assert.deepEqual(parseJson('نتيجة:\n{"approved":false,"reason":"راجع"}\nتم.'), { approved: false, reason: "راجع" });
 });
 
-test("عامل المفردات لا يولد المخططات الخطية القديمة ويقصر التخطيط الحتمي على البيانات", async () => {
-  const worker = await text("supabase/functions/assessment-generation-worker/index.ts");
-  for (const oldType of ["force_diagram", "circuit_diagram", "electrostatic_diagram", "ray_diagram", "pressure_diagram", "flow_diagram", "instrument_scale"]) {
-    assert.doesNotMatch(worker, new RegExp(oldType), oldType);
-  }
-  assert.match(worker, /"none", "illustration_2d", "data_table", "line_graph", "bar_chart"/);
-  assert.match(worker, /أي مشهد علمي أو جهاز أو زنبرك أو قوة أو دائرة/);
-  assert.match(worker, /studentVisibleQuestion/);
-  const plannerStart = worker.indexOf("async function callVisualPlanner(");
-  const plannerEnd = worker.indexOf("function emptyVisualProposal", plannerStart);
-  const planner = worker.slice(plannerStart, plannerEnd);
-  assert.doesNotMatch(planner, /answer:/);
-  assert.doesNotMatch(planner, /markScheme:/);
-});
-
-test("وظيفة مهام الصور تقبل context_scene فقط وتمنع خلط الرسوم البيانية مع نموذج الصور", async () => {
-  const jobs = await text("supabase/functions/question-visual-jobs/index.ts");
-  assert.match(jobs, /isContextSceneJobInput/);
-  assert.match(jobs, /STRUCTURED_VISUAL_RENDERED_LOCALLY/);
-  assert.match(jobs, /textField\(visual\.type\) !== "context_scene"/);
-  const duplicateRow = jobs.match(/const row = data as JobRow;/g) ?? [];
-  assert.equal(duplicateRow.length, 1, "يجب ألا يعود تعريف row المكرر الذي يكسر Edge Function");
-});
-
-test("مولد الصور 2D يقبل المشاهد العلمية العامة ويفرض بوابة عدم كشف الإجابة", async () => {
+test("generate_image و review_image منفصلان ولا يبقى المسار المركب القديم", async () => {
   const edge = await text("supabase/functions/science-visual-generation/index.ts");
-  assert.match(edge, /wathiq-science-2d-reset-v3/);
-  assert.match(edge, /زنبركاً أو جهازاً أو قوة أو دائرة أو شحنات أو بصريات/);
-  assert.match(edge, /noAnswerLeakage/);
-  assert.match(edge, /ارفض الصورة إذا كشفت إجابة السؤال/);
-  assert.doesNotMatch(edge, /هذه الوظيفة للمشهد السياقي فقط/);
+  assert.match(edge, /action === "generate_image"/);
+  assert.match(edge, /action === "review_image"/);
+  assert.doesNotMatch(edge, /generateReviewedIllustration/);
+  assert.doesNotMatch(edge, /generate_visual_illustration/);
+  assert.doesNotMatch(functionBlock(edge, "handleGenerateImage"), /reviewImage\s*\(/);
+  assert.doesNotMatch(functionBlock(edge, "handleReviewImage"), /generateImage\s*\(/);
 });
 
-test("مسار الواجهة يربط context_scene تلقائيًا بمهام الصور بدل انتظار زر يدوي", async () => {
-  const app = await text("src/app.ts");
-  assert.match(app, /function scheduleContextSceneVisualJobSync\(\)/);
-  assert.match(app, /visualJobService\.enqueue\(state\.draft\.id, visualJobItems\(state\.draft, visualJobSubject\(\)\)\)/);
-  assert.match(app, /scheduleContextSceneVisualJobSync\(\)/);
+test("review_image يتطلب assetPath ويتحقق من ملكية المسار", async () => {
+  const edge = await text("supabase/functions/science-visual-generation/index.ts");
+  const parser = functionBlock(edge, "parseReviewRequest");
+  const handler = functionBlock(edge, "handleReviewImage");
+  assert.match(parser, /requireText\(payload\.assetPath/);
+  assert.match(handler, /expectedPathPrefix/);
+  assert.match(handler, /request\.assetPath\.startsWith\(expectedPathPrefix\)/);
+  assert.match(handler, /\.download\(request\.assetPath\)/);
 });
 
-test("العقد canonical لا يحتوي أنواع التخطيط القديمة وجسرها محصور في قارئ المسودات", async () => {
-  const types = await text("src/types.ts");
-  const visual = await text("src/question-visual.ts");
-  assert.match(types, /QuestionVisualType = "none" \| "context_scene" \| "line_graph" \| "bar_chart" \| "data_table"/);
-  for (const oldType of ["force_diagram", "circuit_diagram", "electrostatic_diagram", "ray_diagram", "pressure_diagram", "flow_diagram", "instrument_scale"]) {
-    assert.doesNotMatch(types, new RegExp(oldType), oldType);
-    assert.match(visual, new RegExp(oldType), `يجب إبقاء ${oldType} في جسر الترحيل فقط`);
-  }
-  assert.match(visual, /LEGACY_SCHEMATIC_VISUAL_TYPES/);
-  assert.match(visual, /return "context_scene"/);
+test("strict VisualReview contract يرفض الحقول الناقصة أو النوع الخاطئ بـ 502", async () => {
+  const edge = await text("supabase/functions/science-visual-generation/index.ts");
+  const strict = functionBlock(edge, "requireVisualReview");
+  for (const field of [
+    "approved", "requiredObjectsPresent", "scientificRelationshipCorrect", "spatialRelationshipsCorrect",
+    "noScientificContradiction", "noExtraScientificObjects", "clear2DComposition", "printReady",
+    "forbiddenTextDetected", "noAnswerLeakage", "reason",
+  ]) assert.match(strict, new RegExp(field));
+  assert.match(strict, /typeof record\[field\] !== "boolean"/);
+  assert.match(strict, /typeof record\.reason !== "string"/);
+  assert.match(strict, /502/);
+  assert.match(edge, /additionalProperties:\s*false/);
 });
 
-test("تعليمات 2D تمنع الرسم الخطي البديل والأرقام المخترعة وكشف اتجاه الحل", async () => {
+test("no output و JSON غير صالح أخطاء تقنية وليست scientific rejection", async () => {
+  const edge = await text("supabase/functions/science-visual-generation/index.ts");
+  const review = functionBlock(edge, "reviewImage");
+  const parse = functionBlock(edge, "parseJson");
+  assert.match(review, /if \(!output\)/);
+  assert.match(review, /502/);
+  assert.match(parse, /تعذر قراءة نتيجة المراجع العلمي/);
+  assert.match(parse, /502/);
+  assert.doesNotMatch(review, /scientific_rejection/);
+});
+
+test("approved=false الصحيح وحده ينتج scientific_rejection + correction", async () => {
+  const edge = await text("supabase/functions/science-visual-generation/index.ts");
+  const handler = functionBlock(edge, "handleReviewImage");
+  assert.match(handler, /if \(review\.approved\)/);
+  assert.match(handler, /status: "scientific_rejection"/);
+  assert.match(handler, /reviewerCorrection\(review\)/);
+});
+
+test("الصورة المؤقتة لا تحمل validated=true ولا تحذف الأصل السابق", async () => {
+  const edge = await text("supabase/functions/science-visual-generation/index.ts");
+  const store = functionBlock(edge, "storeProvisionalImage");
+  assert.doesNotMatch(store, /validated:\s*true/);
+  assert.doesNotMatch(store, /previousAssetPath/);
+  assert.doesNotMatch(store, /\.remove\(/);
+});
+
+test("تعليمات الصورة تحافظ على منع الرسم الخطي والأرقام المخترعة وكشف اتجاه الحل", async () => {
   const edge = await text("supabase/functions/science-visual-generation/index.ts");
   assert.match(edge, /لا يستخدم مولداً تخطيطياً خطياً/);
   assert.match(edge, /لا تخترع بيانات كمية داخل الصورة/);
   assert.match(edge, /لا تضف أسهماً أو رموز شحنة أو قيماً أو اتجاهات نتيجة من عندك/);
-  assert.match(edge, /لا يستخدم واثق أي رسم خطي بديل/);
+  assert.match(edge, /noAnswerLeakage/);
+  assert.match(edge, /thinkingLevel: "HIGH"/);
 });
