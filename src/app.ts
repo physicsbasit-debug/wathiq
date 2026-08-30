@@ -789,7 +789,26 @@ function selectedPaperItems(): SelectedPaperItem[] {
 
 function visualSignature(item: PlanItem): string {
   if (!item.visual || item.visual.type === "none") return "";
-  const { visualId: _visualId, title: _title, altText: _altText, purpose: _purpose, illustration: _illustration, ...structural } = item.visual;
+
+  // المشاهد السياقية 2D ليست رسومات بنيوية حتمية.
+  // بعد اعتماد الصورة تكون هوية الأصل نفسه هي بصمة التفرّد.
+  // قبل اكتمال الصورة نستخدم معرف المفردة، بينما contextScenesReady
+  // يبقى مسؤولًا عن منع الاعتماد والتصدير حتى اكتمال الأصل.
+  if (questionVisualExternalAsset(item.visual).needed) {
+    return `context_scene:${item.visual.illustration?.assetPath || item.id}`;
+  }
+
+  // يبقى كشف التكرار البنيوي للرسوم الحتمية:
+  // الجداول والرسوم البيانية الخطية ورسوم الأعمدة.
+  const {
+    visualId: _visualId,
+    title: _title,
+    altText: _altText,
+    purpose: _purpose,
+    illustration: _illustration,
+    ...structural
+  } = item.visual;
+
   return JSON.stringify(structural);
 }
 
