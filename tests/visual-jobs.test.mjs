@@ -128,3 +128,30 @@ test("snapshot يعرض مجموع المحاولات و maxAttempts=8", async (
   assert.match(snapshot, /reviewAttempts\.corrected/);
   assert.match(snapshot, /maxAttempts:\s*MAX_APPARENT_ATTEMPTS/);
 });
+
+test("الخادم يكمل مراحل الصورة دون انتظار polling من المتصفح", async () => {
+  const source = await text("supabase/functions/question-visual-jobs/index.ts");
+  const process = functionBlock(source, "processJob");
+  const continuation = functionBlock(source, "continueServerDrivenWorkflow");
+
+  const calls = process.match(/await continueServerDrivenWorkflow\(/g) ?? [];
+  assert.equal(calls.length, 2, "يجب متابعة المسار بعد النتيجة العادية وبعد مسار catch");
+  assert.match(continuation, /row\.status !== "retry_pending"/);
+  assert.match(continuation, /state\.stage === "ready" \|\| state\.stage === "failed"/);
+  assert.match(continuation, /await processJob\(jobId, accessToken, requestId\)/);
+  assert.doesNotMatch(continuation, /scheduleRows\(/);
+});
+
+test("إعادة المرحلة المؤقتة داخل الخادم قصيرة ومحدودة بعدادات المرحلة", async () => {
+  const source = await text("supabase/functions/question-visual-jobs/index.ts");
+  const continuation = functionBlock(source, "continueServerDrivenWorkflow");
+  const process = functionBlock(source, "processJob");
+
+  assert.match(source, /SERVER_DRIVEN_TRANSIENT_RETRY_DELAY_MS = 1_000/);
+  assert.match(
+    continuation,
+    /result\.kind === "transient_error"[^]*delay\(SERVER_DRIVEN_TRANSIENT_RETRY_DELAY_MS\)/,
+  );
+  assert.match(process, /stageAttempts\(state\) >= MAX_STAGE_ATTEMPTS/);
+  assert.match(source, /MAX_STAGE_ATTEMPTS = 2/);
+});

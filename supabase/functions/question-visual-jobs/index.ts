@@ -15,6 +15,7 @@ const HEARTBEAT_INTERVAL_MS = 15_000;
 const WORKER_LEASE_TIMEOUT_MS = 45_000;
 const MAX_STAGE_ATTEMPTS = 2;
 const MAX_APPARENT_ATTEMPTS = 8;
+const SERVER_DRIVEN_TRANSIENT_RETRY_DELAY_MS = 1_000;
 const WORKER_LOST_LEASE_OR_SUPERSEDED_ERROR = "WORKER_LOST_LEASE_OR_SUPERSEDED";
 
 const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
@@ -348,6 +349,35 @@ function scheduleBackground(promise: Promise<unknown>): void {
   else void promise;
 }
 
+async function continueServerDrivenWorkflow(
+  jobId: string,
+  accessToken: string,
+  requestId: string,
+  result: StageResult,
+): Promise<void> {
+  if (result.kind === "approved" || result.kind === "terminal_error") return;
+  if (result.kind === "transient_error") await delay(SERVER_DRIVEN_TRANSIENT_RETRY_DELAY_MS);
+
+  const { data, error } = await admin.from(TABLE).select("*").eq("id", jobId).maybeSingle();
+  if (error || !data) return;
+
+  const row = data as JobRow;
+  if (row.status !== "retry_pending") return;
+
+  const state = workflowStateOf(row);
+  if (state.stage === "ready" || state.stage === "failed") return;
+
+  console.log(JSON.stringify({
+    event: "wathiq_visual_job_continuing",
+    requestId,
+    jobId,
+    stage: state.stage,
+    stageAttempt: stageAttempts(state) + 1,
+  }));
+
+  await processJob(jobId, accessToken, requestId);
+}
+
 async function processJob(jobId: string, accessToken: string, requestId: string): Promise<void> {
   const workerId = crypto.randomUUID();
   let claimedRow: JobRow | null = null;
@@ -433,6 +463,7 @@ async function processJob(jobId: string, accessToken: string, requestId: string)
     }
 
     await applyStageResult(claimedRow, claimedState, workerId, result, requestId);
+    await continueServerDrivenWorkflow(jobId, accessToken, requestId, result);
   } catch (error) {
     if (heartbeatInterval !== null) {
       clearInterval(heartbeatInterval);
@@ -448,6 +479,7 @@ async function processJob(jobId: string, accessToken: string, requestId: string)
       ? { kind: "transient_error", code: errorCode(error), message: errorMessage(error) }
       : { kind: "terminal_error", code: errorCode(error), message: errorMessage(error) };
     await applyStageResult(claimedRow, state, workerId, result, requestId);
+    await continueServerDrivenWorkflow(jobId, accessToken, requestId, result);
   } finally {
     if (heartbeatInterval !== null) clearInterval(heartbeatInterval);
   }
@@ -994,6 +1026,10 @@ function errorMessage(error: unknown): string {
     if (typeof record?.[key] === "string" && record[key]) return record[key] as string;
   }
   return "حدث خطأ غير متوقع في منظومة الصور.";
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function storageSegment(value: string): string {
